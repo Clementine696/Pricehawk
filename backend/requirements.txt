@@ -10,7 +10,7 @@ python-dotenv>=1.0.0
 click>=8.0.0
 rich>=13.0.0
 # crawl4ai>=0.3.0
-# playwright>=1.40.0
+playwright>=1.40.0
 crawl4ai>=0.7.7
-playwright-aws-lambda
+# playwright-aws-lambda
 httpx

@@ -1,8 +1,1 @@
-{
-  "/comparison/page": "app/comparison/page.js",
-  "/products/page": "app/products/page.js",
-  "/products/[id]/page": "app/products/[id]/page.js",
-  "/login/page": "app/login/page.js",
-  "/dashboard/page": "app/dashboard/page.js",
-  "/manual-add/page": "app/manual-add/page.js"
-}
+{}

@@ -16,10 +16,13 @@ from database import get_user_by_username, get_db
 
 app = FastAPI(title="PriceHawk API")
 
-# CORS for Next.js frontend
+# CORS configuration - supports multiple origins via environment variable
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:3000")
+cors_origins_list = [origin.strip() for origin in CORS_ORIGINS.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

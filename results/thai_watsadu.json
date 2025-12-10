@@ -1,24 +1,24 @@
 [
   {
-    "name": "คีมล๊อคปากตรง SOLO รุ่น 2000 ขนาด 10 นิ้ว สีเงิน",
+    "name": "คลิปรัดท่อชุบรุ้งทอง ORBIT รุ่น 1X ขนาด 28 - 41 มม. สีซิงค์รุ้ง",
     "retailer": "Thai Watsadu",
-    "url": "https://www.thaiwatsadu.com/th/product/%E0%B8%84%E0%B8%B5%E0%B8%A1%E0%B8%A5%E0%B9%8A%E0%B8%AD%E0%B8%84%E0%B8%9B%E0%B8%B2%E0%B8%81%E0%B8%95%E0%B8%A3%E0%B8%87-SOLO-%E0%B8%A3%E0%B8%B8%E0%B9%88%E0%B8%99-2000-%E0%B8%82%E0%B8%99%E0%B8%B2%E0%B8%94-10-%E0%B8%99%E0%B8%B4%E0%B9%89%E0%B8%A7-%E0%B8%AA%E0%B8%B5%E0%B9%80%E0%B8%87%E0%B8%B4%E0%B8%99-60272160",
+    "url": "https://www.thaiwatsadu.com/th/sku/60260253",
     "description": null,
-    "product_key": "32683a75f4c06bec",
-    "current_price": 255.0,
-    "original_price": 255.0,
+    "product_key": "1a0151094b85719b",
+    "current_price": 12.0,
+    "original_price": 13.0,
     "has_discount": false,
     "discount_percent": 0.0,
     "discount_amount": 0.0,
-    "brand": "SOLO",
-    "model": "2000",
-    "sku": "60272160",
-    "category": "เครื่องมือช่าง / อุปกรณ์ก่อสร้าง",
+    "brand": "ORBIT",
+    "model": "1X",
+    "sku": "60260253",
+    "category": "ฮาร์ดแวร์ เคมีภัณฑ์",
     "volume": "4",
-    "dimensions": "18 x 2 x 13",
-    "material": "คุณภาพสูงแข็งแรง ทนทาน สามารถใช้งานได้ยาวนาน",
-    "color": "เงิน",
+    "dimensions": "1.2 x 5 x 6",
+    "material": null,
+    "color": "ซิงค์รุ้ง",
     "images": [],
-    "scraped_at": "2025-12-10T03:02:15.885512"
+    "scraped_at": "2025-12-10T12:52:05.213036"
   }
 ]

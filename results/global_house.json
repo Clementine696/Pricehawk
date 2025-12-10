@@ -1,29 +1,35 @@
 [
   {
-    "name": "SOLO คีมย้ำรีเวท ขนาด 10 นิ้ว รุ่น HR-002 ด้ามฟ้า",
+    "name": "SAMSUNG เครื่องเสียง MX-ST40B/XT สีดำ",
     "retailer": "Global House",
-    "url": "https://globalhouse.co.th/product/SOLO-%E0%B8%84%E0%B8%B5%E0%B8%A1%E0%B8%A2%E0%B9%89%E0%B8%B3%E0%B8%A3%E0%B8%B5%E0%B9%80%E0%B8%A7%E0%B8%97-%E0%B8%82%E0%B8%99%E0%B8%B2%E0%B8%94-10-%E0%B8%99%E0%B8%B4%E0%B9%89%E0%B8%A7-%E0%B8%A3%E0%B8%B8%E0%B9%88%E0%B8%99-HR002-%E0%B8%94%E0%B9%89%E0%B8%B2%E0%B8%A1%E0%B8%9F%E0%B9%89%E0%B8%B2-i.8852198064096",
-    "description": "คีมย้ำรีเวท ผ่านกระบวนการผลิตมาตรฐาน ผลิตจากเหล็ก CRV คุณภาพ เนื้อเหล็กแข็งแรง พร้อมชุบแข็ง ทนทานต่อการใช้งานสูง สำหรับกด และย้ำลูกรีเวท เหมาะกับงานที่ต้องการเชื่อมติด หรือประกอบชิ้นส่วนเข้าด้วยกัน ส่วนด้ามจับหุ้มยาง ช่วยเพิ่มความกระชับมือระหว่างใช้งาน",
-    "product_key": "738111b3d4da72bf",
-    "current_price": 345.0,
-    "original_price": 1900.0,
+    "url": "https://globalhouse.co.th/product/SAMSUNG-%E0%B9%80%E0%B8%84%E0%B8%A3%E0%B8%B7%E0%B9%88%E0%B8%AD%E0%B8%87%E0%B9%80%E0%B8%AA%E0%B8%B5%E0%B8%A2%E0%B8%87-MXST40BXT-%E0%B8%AA%E0%B8%B5%E0%B8%94%E0%B8%B3-i.8806094342581",
+    "description": "มาพร้อมกับระบบเสียง 2.0 CH &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; High Power 160W พลังเสียงหนักแน่นทรงพลัง 160 วัตถ์ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; Bi-Directional Sound ประสบการณ์ใหม่แห่งพลังเสียง 2 ทิศทาง คลุบคลุมพื้นที่ได้กว้างกว่า &nbsp; &nbsp; Bass Booster : ปรับเสียงเบสให้กระหึ่ม&nbsp; Built-in Battery ใช้เพื่อความบันเทิงนอกสถานที่ได้อย่างต่อเนื่องยาวนานถึง 12 ชั่วโมง &nbsp; &nbsp; Party Lights+ เพลิดเพลินไปกับ LED Lights ช่วยให้งานปาร์ตี้ของคุณสนุกยิ่งขึ้น &nbsp; &nbsp; DJ Ef",
+    "product_key": "3eaae7f1432480dc",
+    "current_price": 15990.0,
+    "original_price": 2990.0,
     "has_discount": false,
     "discount_percent": 0.0,
     "discount_amount": 0.0,
-    "brand": "SOLO",
-    "model": "HR-002 SOLO ",
-    "sku": "8852198064096",
-    "category": "ไขควง / คีม / น๊อต / สกรู",
+    "brand": "SAMSUNG",
+    "model": "MX-ST40B/XT",
+    "sku": "8806094342581",
+    "category": "ชุดลำโพง",
     "volume": null,
-    "dimensions": "8.00 x 25.50 x 3.00 cm",
+    "dimensions": "34.2 x 36 x 60 cm",
     "material": null,
-    "color": null,
+    "color": "สียง",
     "images": [
-      "https://www.image-gbh.com/uploads/thumbnail/001120_8852198064096_20210819031720.jpg",
-      "https://www.image-gbh.com/uploads/medium/001120_8852198064096_20210819031720.jpg",
-      "https://www.image-gbh.com/uploads/large/001120_8852198064096_20210819031720.jpg",
-      "https://www.image-gbh.com/uploads/thumbnail/gbh_001120_24729_20210818113418.jpg"
+      "https://www.image-gbh.com/uploads/thumbnail/iKj67Zmby1kX.png",
+      "https://www.image-gbh.com/uploads/medium/iKj67Zmby1kX.png",
+      "https://www.image-gbh.com/uploads/thumbnail/uHCpxEXq9oVW.png",
+      "https://www.image-gbh.com/uploads/medium/uHCpxEXq9oVW.png",
+      "https://www.image-gbh.com/uploads/thumbnail/9fUqD4jsuBMr.png",
+      "https://www.image-gbh.com/uploads/medium/9fUqD4jsuBMr.png",
+      "https://www.image-gbh.com/uploads/thumbnail/PivwHLItdfb6.png",
+      "https://www.image-gbh.com/uploads/medium/PivwHLItdfb6.png",
+      "https://www.image-gbh.com/uploads/thumbnail/UtL8meMIs_zK.png",
+      "https://www.image-gbh.com/uploads/medium/UtL8meMIs_zK.png"
     ],
-    "scraped_at": "2025-12-10T03:02:26.405891"
+    "scraped_at": "2025-12-10T12:52:10.292061"
   }
 ]

@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { apiFetch } from '@/lib/api';
 
 interface User {
   username: string;
@@ -25,23 +26,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function checkAuth() {
     try {
-      const res = await fetch('/api/auth/me', { credentials: 'include' });
+      const res = await apiFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
         setUser(data);
       }
     } catch (error) {
-      console.error('Auth check failed:', error);
+      // 401 is expected when not logged in, don't log it
+      if (error instanceof Error && error.message !== 'Unauthorized') {
+        console.error('Auth check failed:', error);
+      }
     } finally {
       setLoading(false);
     }
   }
 
   async function login(username: string, password: string) {
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({ username, password }),
     });
 
@@ -55,9 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function logout() {
-    await fetch('/api/auth/logout', {
+    await apiFetch('/api/auth/logout', {
       method: 'POST',
-      credentials: 'include',
     });
     setUser(null);
   }

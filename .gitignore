@@ -18,3 +18,5 @@ venv
 # Next.js
 .next
 out
+
+ui/.next

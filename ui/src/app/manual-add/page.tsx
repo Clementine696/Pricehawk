@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Plus, RotateCcw, Check, X, ExternalLink, Info, CheckCircle } from 'lucide-react';
@@ -333,7 +333,7 @@ function CompetitorInputCard({
   );
 }
 
-export default function ManualAddPage() {
+function ManualAddContent() {
   const searchParams = useSearchParams();
 
   // Stage management
@@ -1366,5 +1366,19 @@ export default function ManualAddPage() {
       </div>
 
     </MainLayout>
+  );
+}
+
+export default function ManualAddPage() {
+  return (
+    <Suspense fallback={
+      <MainLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
+        </div>
+      </MainLayout>
+    }>
+      <ManualAddContent />
+    </Suspense>
   );
 }

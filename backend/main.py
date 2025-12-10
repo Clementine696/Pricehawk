@@ -639,10 +639,26 @@ def scrape_urls(
     Scrape product data from URLs using the Python scraper script.
     Returns scraped product data for each URL.
     """
-    print(f"\n=== DEBUG: /api/scrape called ===")
+    print(f"\n{'='*60}")
+    print(f"=== DEBUG: /api/scrape called ===")
+    print(f"{'='*60}")
     print(f"  URLs to scrape: {data.urls}")
+    print(f"  BACKEND_DIR: {BACKEND_DIR}")
     print(f"  SCRAPER_SCRIPT: {SCRAPER_SCRIPT}")
+    print(f"  RESULTS_DIR: {RESULTS_DIR}")
     print(f"  Script exists: {os.path.exists(SCRAPER_SCRIPT)}")
+
+    # Check scraper directory structure
+    scraper_dir = os.path.dirname(SCRAPER_SCRIPT)
+    print(f"  Scraper dir: {scraper_dir}")
+    print(f"  Scraper dir exists: {os.path.exists(scraper_dir)}")
+    if os.path.exists(scraper_dir):
+        print(f"  Scraper dir contents: {os.listdir(scraper_dir)}")
+
+    # Check Python and playwright
+    import shutil
+    print(f"  Python executable: {shutil.which('python')}")
+    print(f"  Playwright installed: {shutil.which('playwright')}")
 
     results = []
     errors = []
@@ -682,15 +698,23 @@ def scrape_urls(
             )
 
             print(f"  Return code: {process.returncode}")
+            if process.stdout:
+                print(f"  Stdout (first 1000 chars): {process.stdout[:1000]}")
             if process.stderr:
-                print(f"  Stderr: {process.stderr[:500]}")
+                print(f"  Stderr (first 1000 chars): {process.stderr[:1000]}")
 
             if process.returncode != 0:
+                error_msg = process.stderr or process.stdout or 'Unknown error'
+                print(f"  !!! SCRAPER FAILED for {url}")
+                print(f"  Full error: {error_msg}")
                 errors.append({
                     "url": url,
-                    "error": f"Scraper failed: {process.stderr or 'Unknown error'}"
+                    "error": f"Scraper failed: {error_msg[:500]}"
                 })
                 continue
+
+            # List files in results directory after scrape
+            print(f"  Results dir contents after scrape: {os.listdir(RESULTS_DIR) if os.path.exists(RESULTS_DIR) else 'DIR NOT FOUND'}")
 
             # The scraper saves files by retailer name (e.g., mega_home.json, thai_watsadu.json)
             # in the output directory, NOT the specified output file
@@ -746,6 +770,10 @@ def scrape_urls(
                     print(f"  Error reading output file: {e}")
 
             if not found_data:
+                print(f"  !!! No data found for {url}")
+                print(f"  Checked retailer files: {retailer_files}")
+                print(f"  Output dir: {output_dir}")
+                print(f"  Output dir contents: {os.listdir(output_dir) if os.path.exists(output_dir) else 'DIR NOT FOUND'}")
                 errors.append({
                     "url": url,
                     "error": "Scraper output file not found or URL not matched"

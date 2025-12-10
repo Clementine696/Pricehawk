@@ -48,6 +48,14 @@ except ImportError:
     LLMConfig = None
     CrawlerRunConfig = None
 
+# Try to import playwright-aws-lambda for serverless environments
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_AWS_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AWS_AVAILABLE = False
+    async_playwright = None
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -138,10 +146,25 @@ class Crawl4AIWrapper:
     async def initialize(self):
         """Initialize the crawler instance."""
         try:
+            # For serverless environments (Railway, AWS Lambda, etc.)
+            # we need to launch browser with special args
+            browser_config = {
+                "headless": self.config.headless,
+                "args": [
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                    "--no-zygote",
+                ]
+            }
+
             self.crawler = AsyncWebCrawler(
                 headless=self.config.headless,
                 verbose=self.config.verbose,
                 user_agent=self.config.user_agent,
+                browser_config=browser_config,
             )
             await self.crawler.start()
             logger.info("Crawl4AI crawler initialized successfully")

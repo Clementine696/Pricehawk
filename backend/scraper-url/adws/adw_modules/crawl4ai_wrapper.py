@@ -75,7 +75,7 @@ class ScrapingConfig:
 
     # Anti-bot measures
     respect_robots_txt: bool = True
-    use_browser: bool = True
+    use_browser: bool = False
     simulate_user: bool = True
 
     # Content filtering

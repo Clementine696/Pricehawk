@@ -3,12 +3,20 @@
  */
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
+// Debug: Log the API_BASE_URL (will show in browser console)
+if (typeof window !== 'undefined') {
+  console.log('[api.ts] API_BASE_URL:', API_BASE_URL || '(empty - using same origin)');
+}
+
 /**
  * API utility that handles 401 Unauthorized errors by redirecting to login
  */
 export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
   // Prepend API base URL for production deployment
   const fullUrl = url.startsWith('/api') ? `${API_BASE_URL}${url}` : url;
+
+  // Debug: Log the actual URL being called
+  console.log('[api.ts] Fetching:', fullUrl);
 
   const response = await fetch(fullUrl, {
     ...options,

@@ -85,13 +85,15 @@ def login(data: LoginRequest, response: Response):
     }
 
     # Set HTTP-only cookie
+    # For cross-origin (Vercel frontend -> Railway backend), need SameSite=None + Secure=True
+    is_production = os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("PRODUCTION")
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
         max_age=SESSION_EXPIRE_MINUTES * 60,
-        samesite="lax",
-        secure=False,  # Set True in production with HTTPS
+        samesite="none" if is_production else "lax",
+        secure=True if is_production else False,
     )
 
     return {"message": "Login successful", "username": user["username"]}
@@ -103,7 +105,12 @@ def logout(response: Response, session_token: Optional[str] = Cookie(None, alias
     if session_token and session_token in sessions:
         del sessions[session_token]
 
-    response.delete_cookie(key=COOKIE_NAME)
+    is_production = os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("PRODUCTION")
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        samesite="none" if is_production else "lax",
+        secure=True if is_production else False,
+    )
     return {"message": "Logged out"}
 
 

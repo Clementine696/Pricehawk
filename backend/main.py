@@ -586,10 +586,11 @@ def verify_match(
 
 # ============== Scraping API ==============
 
-# Base directory for the project (parent of backend folder)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRAPER_SCRIPT = os.path.join(BASE_DIR, "scraper-url", "adws", "adw_ecommerce_product_scraper.py")
-RESULTS_DIR = os.path.join(BASE_DIR, "results")
+# Backend directory (where this file is located)
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+# scraper-url is now inside backend folder
+SCRAPER_SCRIPT = os.path.join(BACKEND_DIR, "scraper-url", "adws", "adw_ecommerce_product_scraper.py")
+RESULTS_DIR = os.path.join(BACKEND_DIR, "results")
 
 
 class ScrapeUrlRequest(BaseModel):
@@ -674,7 +675,7 @@ def scrape_urls(
                 capture_output=True,
                 text=True,
                 timeout=60,  # 60 second timeout per URL
-                cwd=BASE_DIR,
+                cwd=BACKEND_DIR,
                 env=env,
                 encoding="utf-8",
                 errors="replace"

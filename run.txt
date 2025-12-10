@@ -1,0 +1,18 @@
+C:\Users\kanat\Desktop\PriceHawk\_PROD
+
+Backend:
+cd backend
+pip install -r requirements.txt
+python main.py
+
+Frontend:
+cd ui
+npm install
+npm run dev
+
+docker-compose up -d
+docker-compose down -v
+python ./backend/seed.py
+    python ./seeder/seed_products.py
+python ./scraper/sample_upload.py
+python ./scraper/seed_all_data.py

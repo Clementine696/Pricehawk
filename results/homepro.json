@@ -1,0 +1,35 @@
+[
+  {
+    "name": "สเปรย์ทำความสะอาดตู้เย็น HG 500ml",
+    "retailer": "HomePro",
+    "url": "https://www.homepro.co.th/p/246513",
+    "description": "สเปรย์ทำความสะอาดตู้เย็น HG 500ml, HG, HG 55288",
+    "product_key": "72fd9a5ae430bfeb",
+    "current_price": 50.0,
+    "original_price": 500.0,
+    "has_discount": true,
+    "discount_percent": 90.0,
+    "discount_amount": 450.0,
+    "brand": "HG",
+    "model": null,
+    "sku": "246513",
+    "category": null,
+    "volume": null,
+    "dimensions": "17x11x10",
+    "material": null,
+    "color": null,
+    "images": [
+      "https://cdn.homepro.co.th/ART_IMAGE/02/465/246513/1000x1000/15062023_246513$Imagec1.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Menu_Cover_01-Construction_800x600.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Menu_Cover_02-WaterSystem_800x600.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Menu_Cover_03-Electrical_800x600.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Memu_Cover_04-Roof_800x600.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Menu_Cover_05-Wall&amp;Floor_800x600.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Menu_Cover_06-Bathroom_800x600.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Menu_Cover_07-Doors&amp;Windows_800x600.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Menu_Cover_08-Paint_800x600.jpg",
+      "https://static.homepro.co.th/technicianproducts/7jan2025/Menu_Cover_09-Kitchen_800x600.jpg"
+    ],
+    "scraped_at": "2025-12-08T16:50:48.017212"
+  }
+]

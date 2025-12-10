@@ -1,0 +1,59 @@
+{
+  "task": "ecommerce_product_scraping",
+  "adw_id": "d6ecb8b6",
+  "tool": "crawl4ai_with_product_extractor",
+  "config": {
+    "max_concurrent": 3,
+    "delay_between_requests": 1.0,
+    "timeout": 30,
+    "user_agent": "Mozilla/5.0 (compatible; Crawl4AI/1.0)",
+    "headless": true,
+    "verbose": false,
+    "retry_attempts": 3,
+    "retry_delay": 2.0,
+    "respect_robots_txt": true,
+    "use_browser": true,
+    "simulate_user": true,
+    "min_content_length": 100,
+    "max_content_length": 1000000,
+    "include_links": true,
+    "include_images": true,
+    "include_metadata": true
+  },
+  "products_scraped": 1,
+  "products_extracted": 1,
+  "input_source": "single URL: https://www.dohome.co.th/product/nippon-paint-junior-new-mortar-primer-5-gal-10026550",
+  "summary_stats": {
+    "total_products": 1,
+    "price_statistics": {},
+    "discount_statistics": {},
+    "field_completeness": {
+      "name": 1,
+      "brand": 1,
+      "model": 0,
+      "sku": 1,
+      "category": 1,
+      "volume": 1,
+      "dimensions": 1,
+      "material": 1,
+      "color": 1,
+      "description": 1
+    },
+    "retailer_distribution": {
+      "DoHome": 1
+    },
+    "processing_time": "2025-12-09T11:38:01.127744"
+  },
+  "output_file": "C:\\Users\\kanat\\Desktop\\PriceHawk\\_PROD\\results\\scrape_3bc29d6ac13e4786a988d35b6a78c24a.json",
+  "output_structure": {
+    "base_folder": "./agents/d6ecb8b6/ecommerce_scraper",
+    "organization": "legacy",
+    "structured_outputs": {
+      "raw_jsonl": "C:\\Users\\kanat\\Desktop\\PriceHawk\\_PROD\\results\\cc_raw_output.jsonl",
+      "raw_json": "C:\\Users\\kanat\\Desktop\\PriceHawk\\_PROD\\results\\cc_raw_output.json",
+      "final_object": "C:\\Users\\kanat\\Desktop\\PriceHawk\\_PROD\\results\\cc_final_object.json",
+      "summary": "C:\\Users\\kanat\\Desktop\\PriceHawk\\_PROD\\results\\custom_summary_output.json"
+    }
+  },
+  "success": true
+}

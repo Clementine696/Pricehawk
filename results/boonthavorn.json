@@ -1,0 +1,30 @@
+[
+  {
+    "name": "BT-6032 อ่างอาบน้ำ CAZA 150CM ขาว",
+    "retailer": "Boonthavorn",
+    "url": "https://www.boonthavorn.com/bathbath-1265620",
+    "description": "อ่างอาบน้ำ BATH&BATH รุ่น BT-6032 CAZA",
+    "product_key": "3435b0706e65de08",
+    "current_price": 12900.0,
+    "original_price": 32900.0,
+    "has_discount": false,
+    "discount_percent": 0.0,
+    "discount_amount": 0.0,
+    "brand": "BATH&BATH",
+    "model": "BT-6032 CAZA",
+    "sku": "1265620",
+    "category": "อ่างธรรมดา",
+    "volume": null,
+    "dimensions": "150 x 70 x 57",
+    "material": "ปิดผิวและตกแต่ง",
+    "color": "ขาว",
+    "images": [
+      "https://www.boonthavorn.com/media/catalog/product/cache/5b8859dbbecb10682908c6f6092bf248/r/e/resto2_1_2_1265620-1744103858579.jpeg",
+      "https://www.boonthavorn.com/media/catalog/product/r/e/resto2_1_2_1265620-1744103858579.jpeg?auto=webp&amp;format=pjpg&amp;width=580",
+      "https://www.boonthavorn.com/media/catalog/product/r/e/resto2_1_2_1265620-1744103864796.jpeg?auto=webp&amp;format=pjpg&amp;width=580",
+      "https://www.boonthavorn.com/media/catalog/product/r/e/resto2_1_2_1265620-1756779856798.jpeg?auto=webp&amp;format=pjpg&amp;width=580",
+      "https://www.boonthavorn.com/media/catalog/product/cache/5b8859dbbecb10682908c6f6092bf248/r/e/resto2_1_2_1265620-1744103858579.jpeg?auto=webp&amp;format=pjpg&amp;width=184&amp;height=184&amp;fit=cover"
+    ],
+    "scraped_at": "2025-12-10T02:01:07.736104"
+  }
+]

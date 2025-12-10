@@ -26,7 +26,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function checkAuth() {
     try {
-      const res = await apiFetch('/api/auth/me');
+      // skipAuthRedirect: true because 401 is expected when not logged in
+      const res = await apiFetch('/api/auth/me', { skipAuthRedirect: true });
       if (res.ok) {
         const data = await res.json();
         setUser(data);

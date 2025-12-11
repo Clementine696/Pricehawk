@@ -149,16 +149,15 @@ class Crawl4AIWrapper:
             # For crawl4ai v0.7.x+ use BrowserConfig
             if BrowserConfig is not None:
                 # v0.7.x+ API - use BrowserConfig class
+                # Note: removed --single-process and --no-zygote as they can cause crashes
                 browser_cfg = BrowserConfig(
-                    headless=self.config.headless,
+                    headless=True,
                     verbose=self.config.verbose,
                     extra_args=[
                         "--no-sandbox",
                         "--disable-setuid-sandbox",
                         "--disable-dev-shm-usage",
                         "--disable-gpu",
-                        "--single-process",
-                        "--no-zygote",
                     ]
                 )
                 self.crawler = AsyncWebCrawler(config=browser_cfg)

@@ -1031,20 +1031,26 @@ class ThaiWatsaduExtractor(ProductExtractor):
             if model_match:
                 product.model = model_match.group(1).strip()
 
-        # 5b. Extract brand from HTML brand link (most reliable for Thai Watsadu)
-        if not product.brand:
-            # Thai Watsadu shows brand as: <a href="/th/brand/WAVE">WAVE</a>
-            # Use the anchor text (group 2) not href (group 1) to avoid URL-encoding
-            brand_link_match = re.search(r'href="/th/brand/([^"]+)"[^>]*>([^<]+)</a>', html_content)
-            if brand_link_match:
-                product.brand = brand_link_match.group(2).strip()
-
-        # 5c. Extract brand from product name if not found
+        # 5b. Extract brand from product name if not found in specs
+        # Common brands in Thai hardware stores often appear as UPPERCASE before "รุ่น"
         if not product.brand and product.name:
             # Common brand patterns: MAKITA รุ่น, BOSCH รุ่น, etc.
             brand_match = re.search(r'([A-Z][A-Z0-9]+)\s+รุ่น', product.name)
             if brand_match:
                 product.brand = brand_match.group(1).strip()
+            else:
+                # Try to find known brands in the name
+                known_brands = ['MAKITA', 'BOSCH', 'DEWALT', 'MILWAUKEE', 'HITACHI', 'TOSHIBA',
+                               'PHILIPS', 'PANASONIC', 'SAMSUNG', 'LG', 'SONY', 'TCL', 'HAIER',
+                               'ELECTROLUX', 'MITSUBISHI', 'DAIKIN', 'CARRIER', 'SHARP',
+                               'TOA', 'BEGER', 'NIPPON', 'JOTUN', 'DULUX', 'NIPPON',
+                               'AMERICAN STANDARD', 'COTTO', 'KOHLER', 'GROHE', 'TOTO',
+                               'YALE', 'HAFELE', 'YALE', 'SCHLAGE',
+                               'THE TREE', 'ZD', 'GTS', 'SCG', 'THAI WATSADU']
+                for brand in known_brands:
+                    if brand.upper() in product.name.upper():
+                        product.brand = brand
+                        break
 
         # 6. Extract color from product name or HTML
         color = self._extract_color(html_content)
@@ -1089,9 +1095,9 @@ class ThaiWatsaduExtractor(ProductExtractor):
         if not product.volume:
             product.volume = self._extract_volume(html_content)
 
-        # 10. Extract images - Thai Watsadu uses Next.js image format
+        # 10. Extract images if not found
         if not product.images:
-            product.images = self._extract_thaiwatsadu_images(html_content, product.sku)
+            product.images = self._extract_images(html_content)
 
         # 11. Fallback: use base extraction for missing fields
         if not product.name or not product.current_price:
@@ -1135,46 +1141,6 @@ class ThaiWatsaduExtractor(ProductExtractor):
 
         return text if text else None
 
-    def _extract_thaiwatsadu_images(self, html_content: str, sku: str = None) -> List[str]:
-        """Extract product images from Thai Watsadu Next.js image format.
-
-        Thai Watsadu uses Next.js images like:
-        /_next/image?url=https://pim.thaiwatsadu.com/TWDPIM/web/Thumbnail/Image/0204/60265581r.jpg&w=1920&q=75
-        """
-        from urllib.parse import unquote
-        images = []
-
-        # Pattern 1: Find Next.js images with pim.thaiwatsadu URLs containing the SKU
-        if sku:
-            sku_pattern = rf'src="(/_next/image\?url=[^"]*{sku}[^"]*)"'
-            matches = re.findall(sku_pattern, html_content, re.IGNORECASE)
-            for match in matches:
-                # Extract the actual URL from the Next.js wrapper
-                url_match = re.search(r'url=([^&]+)', match)
-                if url_match:
-                    actual_url = unquote(url_match.group(1))
-                    if actual_url and actual_url not in images:
-                        images.append(actual_url)
-
-        # Pattern 2: Find all pim.thaiwatsadu.com images
-        if not images:
-            pim_pattern = r'src="/_next/image\?url=(https%3A%2F%2Fpim\.thaiwatsadu\.com[^&]+)'
-            matches = re.findall(pim_pattern, html_content, re.IGNORECASE)
-            for match in matches[:10]:
-                actual_url = unquote(match)
-                if actual_url and actual_url not in images:
-                    images.append(actual_url)
-
-        # Pattern 3: Direct pim.thaiwatsadu.com URLs (if not Next.js wrapped)
-        if not images:
-            direct_pattern = r'src="(https://pim\.thaiwatsadu\.com[^"]+)"'
-            matches = re.findall(direct_pattern, html_content, re.IGNORECASE)
-            for match in matches[:10]:
-                if match not in images:
-                    images.append(match)
-
-        return images[:10]  # Limit to 10 images
-
     def _extract_thaiwatsadu_category(self, html_content: str) -> Optional[str]:
         """Extract category from Thai Watsadu breadcrumb or JSON-LD."""
         # 1. Try Thai Watsadu specific categoryBar pattern first (most reliable)
@@ -1185,8 +1151,8 @@ class ThaiWatsaduExtractor(ProductExtractor):
             re.IGNORECASE
         )
         if categorybar_links:
-            # Return the last category (most specific/smallest)
-            return categorybar_links[-1].strip()
+            # Return the first category (most general/biggest)
+            return categorybar_links[0].strip()
 
         # 2. Try JSON-LD BreadcrumbList
         try:
@@ -2019,25 +1985,13 @@ class MegaHomeExtractor(ProductExtractor):
         if brand_match:
             product.brand = brand_match.group(1).strip()
 
-        # 3. Extract price from discount-price, scale-price, or gtmPrice hidden input
-        # Pattern 1: Normal discount price
+        # 3. Extract price from discount-price span.amount or gtmPrice hidden input
         price_match = re.search(r'<div class="discount-price">.*?<span class="amount">([0-9,.]+)</span>', html_content, re.DOTALL)
         if price_match:
             try:
                 product.current_price = float(price_match.group(1).replace(',', ''))
             except ValueError:
                 pass
-
-        # Pattern 2: Scale price (bulk pricing) - get the first/lowest price
-        # Format: <span class="scale-price">...<span class="amount">199</span> บาท - <span class="amount">209</span> บาท
-        if not product.current_price:
-            scale_price_match = re.search(r'<span class="scale-price">.*?<span class="amount">([0-9,.]+)</span>', html_content, re.DOTALL)
-            if scale_price_match:
-                try:
-                    product.current_price = float(scale_price_match.group(1).replace(',', ''))
-                except ValueError:
-                    pass
-
         # Fallback to hidden gtmPrice input
         if not product.current_price:
             gtm_price = re.search(r'<input[^>]*id="gtmPrice-\d+"[^>]*value="([0-9.]+)"', html_content)
@@ -2214,9 +2168,6 @@ class DoHomeExtractor(ProductExtractor):
         # 4. Extract original price
         if not product.original_price:
             orig_patterns = [
-                # DoHome 2024 pattern - strikethrough <s> tag for original price
-                # Format: <s class="text-[16px] text-[#343A40] font-light">฿937.00</s>
-                r'<s[^>]*>฿?([\d,]+(?:\.\d{2})?)</s>',
                 r'<span[^>]*class="[^"]*old-price[^"]*"[^>]*>(.*?)</span>',
                 r'<span[^>]*class="[^"]*regular-price[^"]*"[^>]*>(.*?)</span>',
                 r'ราคาปกติ[:\s]*([฿]?[\d,]+\.?\d*)',
@@ -2464,17 +2415,17 @@ class GlobalHouseExtractor(ProductExtractor):
                         product.current_price = price
                         break
 
-        # 4. Extract original price (only if "ราคาเดิม" is present)
+        # 4. Extract original price
         if not product.original_price:
             orig_patterns = [
-                # GlobalHouse 2024 pattern - ราคาเดิม followed by line-through price
-                # Format: <span>ราคาเดิม</span><span class="line-through">฿35,990</span>
-                r'ราคาเดิม</span>\s*<span[^>]*class="[^"]*line-through[^"]*"[^>]*>฿?([\d,]+)</span>',
-                # Thai word for original price with nearby number
-                r'ราคาเดิม.*?฿([\d,]+)',
+                # GlobalHouse 2024 pattern - line-through for original price
+                r'<span[^>]*class="[^"]*line-through[^"]*"[^>]*>฿?([\d,]+)</span>',
+                # Thai word for original price
+                r'ราคาเดิม.*?฿?([\d,]+)',
                 # Legacy patterns
                 r'<span[^>]*class="[^"]*price[^"]*original[^"]*"[^>]*>(.*?)</span>',
                 r'<span[^>]*class="[^"]*was-price[^"]*"[^>]*>(.*?)</span>',
+                r'<del[^>]*>(.*?)</del>',
                 r'ราคาปกติ[:\s]*([฿]?[\d,]+\.?\d*)',
             ]
             for pattern in orig_patterns:

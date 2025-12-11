@@ -22,6 +22,13 @@ import logging
 try:
     from crawl4ai import AsyncWebCrawler
     from crawl4ai.extraction_strategy import LLMExtractionStrategy, JsonCssExtractionStrategy
+
+    # Import BrowserConfig for v0.7.x+
+    try:
+        from crawl4ai import BrowserConfig
+    except ImportError:
+        BrowserConfig = None
+
     try:
         from crawl4ai.crawler_strategy import CrawlerRunConfig
     except ImportError:
@@ -47,14 +54,7 @@ except ImportError:
     RegexChunking = None
     LLMConfig = None
     CrawlerRunConfig = None
-
-# Try to import playwright-aws-lambda for serverless environments
-try:
-    from playwright.async_api import async_playwright
-    PLAYWRIGHT_AWS_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AWS_AVAILABLE = False
-    async_playwright = None
+    BrowserConfig = None
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -146,26 +146,29 @@ class Crawl4AIWrapper:
     async def initialize(self):
         """Initialize the crawler instance."""
         try:
-            # For serverless environments (Railway, AWS Lambda, etc.)
-            # we need to launch browser with special args
-            browser_config = {
-                "headless": self.config.headless,
-                "args": [
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--single-process",
-                    "--no-zygote",
-                ]
-            }
+            # For crawl4ai v0.7.x+ use BrowserConfig
+            if BrowserConfig is not None:
+                # v0.7.x+ API - use BrowserConfig class
+                browser_cfg = BrowserConfig(
+                    headless=self.config.headless,
+                    verbose=self.config.verbose,
+                    extra_args=[
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--single-process",
+                        "--no-zygote",
+                    ]
+                )
+                self.crawler = AsyncWebCrawler(config=browser_cfg)
+            else:
+                # Fallback for older versions - simple initialization
+                self.crawler = AsyncWebCrawler(
+                    headless=self.config.headless,
+                    verbose=self.config.verbose,
+                )
 
-            self.crawler = AsyncWebCrawler(
-                headless=self.config.headless,
-                verbose=self.config.verbose,
-                user_agent=self.config.user_agent,
-                browser_config=browser_config,
-            )
             await self.crawler.start()
             logger.info("Crawl4AI crawler initialized successfully")
         except Exception as e:

@@ -26,12 +26,12 @@ const menuItems = [
     href: '/comparison',
     label: 'Manual Comparison',
     icon: GitCompare,
-  },
-  {
-    href: '/settings',
-    label: 'Scraping Settings',
-    icon: Settings,
-  },
+  }
+  // {
+  //   href: '/settings',
+  //   label: 'Scraping Settings',
+  //   icon: Settings,
+  // },
 ];
 
 export const Sidebar: React.FC = () => {

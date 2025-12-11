@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Download, ExternalLink } from 'lucide-react';
+import { Search, RotateCcw, Download, ExternalLink, Loader2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
 interface RetailerPrice {
@@ -43,6 +43,7 @@ export default function ProductsPage() {
   const [category, setCategory] = useState('');
   const [brand, setBrand] = useState('');
   const [page, setPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
   const pageSize = 10;
 
   useEffect(() => {
@@ -87,6 +88,35 @@ export default function ProductsPage() {
     setBrand('');
     setPage(1);
     fetchProducts();
+  };
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (search) params.append('search', search);
+      if (category) params.append('category', category);
+      if (brand) params.append('brand', brand);
+
+      const response = await apiFetch(`/api/products/export?${params}`);
+      if (!response.ok) {
+        throw new Error('Failed to export products');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'products_export.csv';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting products:', error);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const formatPrice = (price: number | null) => {
@@ -196,10 +226,21 @@ export default function ProductsPage() {
               Reset
             </button>
             <button
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors"
+              onClick={handleExport}
+              disabled={isExporting}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Download className="w-4 h-4" />
-              Export
+              {isExporting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Export
+                </>
+              )}
             </button>
           </div>
         </div>

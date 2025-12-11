@@ -11,6 +11,8 @@ import json
 import os
 import uuid
 import tempfile
+import csv
+import io
 
 from database import get_user_by_username, get_db
 
@@ -267,6 +269,137 @@ def get_products(
                 "categories": categories,
                 "brands": brands
             }
+
+
+@app.get("/api/products/export")
+def export_products(
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    brand: Optional[str] = None,
+    user: dict = Depends(get_current_user)
+):
+    """Export products to CSV with price comparison across retailers"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get Thai Watsadu retailer ID (base retailer)
+            cur.execute("SELECT retailer_id FROM retailers WHERE name = 'Thai Watsadu'")
+            base_retailer = cur.fetchone()
+            if not base_retailer:
+                # Return empty CSV if no base retailer
+                output = io.StringIO()
+                output.write('\ufeff')  # UTF-8 BOM for Excel
+                writer = csv.writer(output)
+                writer.writerow(['Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
+                                'HomePro Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'])
+                return Response(
+                    content=output.getvalue(),
+                    media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=products_export.csv"}
+                )
+            base_retailer_id = base_retailer["retailer_id"]
+
+            # Build query for Thai Watsadu products (same logic as /api/products but without pagination)
+            query = """
+                SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link
+                FROM products p
+                WHERE p.retailer_id = %s
+            """
+            params = [base_retailer_id]
+
+            if search:
+                query += " AND (p.name ILIKE %s OR p.sku ILIKE %s OR p.brand ILIKE %s)"
+                search_param = f"%{search}%"
+                params.extend([search_param, search_param, search_param])
+
+            if category:
+                query += " AND p.category = %s"
+                params.append(category)
+
+            if brand:
+                query += " AND p.brand = %s"
+                params.append(brand)
+
+            query += " ORDER BY p.product_id"
+
+            cur.execute(query, params)
+            base_products = cur.fetchall()
+
+            # Prepare CSV output with UTF-8 BOM for Excel compatibility with Thai characters
+            output = io.StringIO()
+            output.write('\ufeff')  # UTF-8 BOM
+            writer = csv.writer(output)
+
+            # Write header row
+            writer.writerow([
+                'Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
+                'HomePro Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'
+            ])
+
+            # Define retailer order for columns (excluding Thai Watsadu which is base)
+            retailer_order = ['HomePro', 'Do Home', 'Boonthavorn', 'Global House']
+
+            # Process each product
+            for bp in base_products:
+                base_price = float(bp["current_price"]) if bp["current_price"] else None
+
+                # Get verified correct matches from other retailers
+                cur.execute("""
+                    SELECT DISTINCT ON (r.retailer_id)
+                        r.name as retailer_name,
+                        p2.current_price
+                    FROM product_matches pm
+                    JOIN products p2 ON pm.candidate_product_id = p2.product_id
+                    JOIN retailers r ON p2.retailer_id = r.retailer_id
+                    WHERE pm.base_product_id = %s
+                      AND pm.verified_by_user = TRUE
+                      AND pm.is_same = TRUE
+                    ORDER BY r.retailer_id, pm.confidence_score DESC NULLS LAST
+                """, (bp["product_id"],))
+
+                matches = cur.fetchall()
+                retailer_prices = {}
+                for match in matches:
+                    retailer_prices[match["retailer_name"]] = float(match["current_price"]) if match["current_price"] else None
+
+                # Determine status
+                status = ''
+                if base_price:
+                    all_prices = [base_price]
+                    for rp in retailer_prices.values():
+                        if rp:
+                            all_prices.append(rp)
+
+                    min_price = min(all_prices)
+                    if base_price == min_price and len(all_prices) > 1:
+                        if all(p == min_price for p in all_prices):
+                            status = 'same'
+                        else:
+                            status = 'cheapest'
+                    elif base_price > min_price:
+                        status = 'higher'
+
+                # Build row
+                row = [
+                    bp["name"] or '',
+                    bp["sku"] or '',
+                    bp["brand"] or '',
+                    bp["category"] or '',
+                    base_price if base_price else '',
+                ]
+
+                # Add retailer prices in order
+                for retailer in retailer_order:
+                    price = retailer_prices.get(retailer)
+                    row.append(price if price else '')
+
+                row.append(status)
+                writer.writerow(row)
+
+            return Response(
+                content=output.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=products_export.csv"}
+            )
 
 
 @app.get("/api/products/{product_id}")

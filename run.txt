@@ -16,3 +16,5 @@ python ./backend/seed.py
     python ./seeder/seed_products.py
 python ./scraper/sample_upload.py
 python ./scraper/seed_all_data.py
+
+hello

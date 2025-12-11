@@ -858,9 +858,15 @@ def scrape_urls(
             found_data = False
 
             # Look for retailer-specific output files
+            # Note: scraper may use different naming conventions (e.g., "dohome" vs "do_home")
             retailer_files = [
-                "mega_home.json", "thai_watsadu.json", "homepro.json",
-                "do_home.json", "boonthavorn.json", "global_house.json", "unknown.json"
+                "mega_home.json", "megahome.json",
+                "thai_watsadu.json", "thaiwatsadu.json",
+                "homepro.json", "home_pro.json",
+                "do_home.json", "dohome.json",
+                "boonthavorn.json",
+                "global_house.json", "globalhouse.json",
+                "unknown.json"
             ]
 
             for retailer_file in retailer_files:

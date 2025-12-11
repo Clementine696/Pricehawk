@@ -227,10 +227,11 @@ class Crawl4AIWrapper:
                     # Ensure clean state before retry
                     await self._cleanup_browser()
 
+                    # crawl4ai v0.7.x uses extra_args for browser arguments
                     browser_cfg = BrowserConfig(
                         headless=True,
                         verbose=self.config.verbose,
-                        browser_args=[
+                        extra_args=[
                             "--no-sandbox",
                             "--disable-setuid-sandbox",
                             "--disable-dev-shm-usage",

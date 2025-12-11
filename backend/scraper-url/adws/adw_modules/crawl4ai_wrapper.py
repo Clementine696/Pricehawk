@@ -147,29 +147,43 @@ class Crawl4AIWrapper:
         """Initialize the crawler instance."""
         try:
             # For crawl4ai v0.7.x+ use BrowserConfig
+            if BrowserConfig is not None and self.config.use_browser:
+                # v0.7.x+ API - use BrowserConfig class with browser
+                try:
+                    browser_cfg = BrowserConfig(
+                        headless=True,
+                        verbose=self.config.verbose,
+                        browser_args=[
+                            "--no-sandbox",
+                            "--disable-setuid-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                        ]
+                    )
+                    self.crawler = AsyncWebCrawler(config=browser_cfg)
+                    await self.crawler.start()
+                    logger.info("Crawl4AI crawler initialized with browser")
+                    return
+                except Exception as browser_err:
+                    logger.warning(f"Browser mode failed, trying text mode: {browser_err}")
+
+            # Text mode (no browser) - works for most sites
             if BrowserConfig is not None:
-                # v0.7.x+ API - use BrowserConfig class
-                # Note: removed --single-process and --no-zygote as they can cause crashes
                 browser_cfg = BrowserConfig(
                     headless=True,
+                    text_mode=True,  # Use HTTP-only mode without browser
                     verbose=self.config.verbose,
-                    extra_args=[
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                    ]
                 )
                 self.crawler = AsyncWebCrawler(config=browser_cfg)
             else:
-                # Fallback for older versions - simple initialization
+                # Fallback for older versions
                 self.crawler = AsyncWebCrawler(
                     headless=self.config.headless,
                     verbose=self.config.verbose,
                 )
 
             await self.crawler.start()
-            logger.info("Crawl4AI crawler initialized successfully")
+            logger.info("Crawl4AI crawler initialized in text mode (no browser)")
         except Exception as e:
             logger.error(f"Failed to initialize Crawl4AI crawler: {e}")
             raise

@@ -805,17 +805,15 @@ def scrape_urls(
             output_file = os.path.join(RESULTS_DIR, f"scrape_{uuid.uuid4().hex}.json")
 
             # Run the scraper script
-            # Use --no-browser on Railway/production to avoid browser crashes
-            is_railway = os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID")
+            # Playwright is installed during build phase via nixpacks.toml
+            # Browser mode enabled for full scraping capability (including anti-bot bypass)
             cmd = [
                 "python",
                 SCRAPER_SCRIPT,
                 "--url", url,
                 "--output-file", output_file
             ]
-            if is_railway:
-                cmd.append("--no-browser")
-                print(f"  Running in Railway mode (--no-browser)")
+            print(f"  Running with browser mode (Playwright)")
 
             print(f"\n  Running: {' '.join(cmd)}")
 

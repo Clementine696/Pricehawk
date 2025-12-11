@@ -2,32 +2,43 @@
 # Installs system dependencies required by Playwright/Chromium
 
 [phases.setup]
+# Core system libraries required by Chromium browser
 nixPkgs = [
-  "glib",
-  "nss",
-  "nspr",
-  "atk",
-  "cups",
-  "dbus",
-  "expat",
-  "libdrm",
-  "libxkbcommon",
-  "pango",
-  "cairo",
-  "alsa-lib",
-  "mesa",
-  "gtk3",
-  "xorg.libX11",
-  "xorg.libXcomposite",
-  "xorg.libXdamage",
-  "xorg.libXext",
-  "xorg.libXfixes",
-  "xorg.libXrandr",
-  "xorg.libxcb",
-  "freetype",
-  "fontconfig",
-  "gdk-pixbuf"
+  "glib",          # Provides libglib-2.0.so.0 - core library for GNOME applications
+  "nss",           # Network Security Services - provides libnss3
+  "nspr",          # Netscape Portable Runtime - required by NSS
+  "atk",           # Accessibility Toolkit - libatk1.0
+  "cups",          # CUPS library - libcups2 for printing support
+  "dbus",          # D-Bus message bus system
+  "expat",         # XML parsing library
+  "libdrm",        # Direct Rendering Manager library
+  "libxkbcommon",  # Keyboard handling library
+  "pango",         # Text rendering library - libpango-1.0
+  "cairo",         # 2D graphics library - libcairo2
+  "alsa-lib",      # Advanced Linux Sound Architecture - libasound2
+  "mesa",          # Graphics library - provides libgbm1 (Graphics Buffer Manager)
+  "gtk3",          # GTK+ 3 toolkit
+  "xorg.libX11",   # X11 client library
+  "xorg.libXcomposite",  # X11 Composite extension
+  "xorg.libXdamage",     # X11 Damage extension
+  "xorg.libXext",        # X11 extensions library
+  "xorg.libXfixes",      # X11 Fixes extension
+  "xorg.libXrandr",      # X11 RandR extension - libxrandr2
+  "xorg.libxcb",         # X11 C Binding library
+  "freetype",      # Font rendering library
+  "fontconfig",    # Font configuration library
+  "gdk-pixbuf"     # Image loading library
+]
+
+[phases.build]
+# Install Playwright system dependencies and Chromium browser during build
+# This ensures all dependencies are installed before the application starts
+cmds = [
+  "playwright install-deps",
+  "playwright install chromium"
 ]
 
 [start]
-cmd = "playwright install chromium && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
+# Start the FastAPI server
+# Playwright is already installed during build phase, so just run the server
+cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"

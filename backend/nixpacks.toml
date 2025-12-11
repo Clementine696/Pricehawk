@@ -1,8 +1,33 @@
 # Nixpacks configuration for Railway
 # Installs system dependencies required by Playwright/Chromium
 
-[variables]
-NIXPACKS_PKGS = "glib nss nspr atk cups dbus expat libdrm xorg.libxcb libxkbcommon pango cairo alsa-lib mesa gtk3 xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext xorg.libXfixes xorg.libXrandr freetype fontconfig gdk-pixbuf"
+[phases.setup]
+nixPkgs = [
+  "glib",
+  "nss",
+  "nspr",
+  "atk",
+  "cups",
+  "dbus",
+  "expat",
+  "libdrm",
+  "libxkbcommon",
+  "pango",
+  "cairo",
+  "alsa-lib",
+  "mesa",
+  "gtk3",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+  "xorg.libxcb",
+  "freetype",
+  "fontconfig",
+  "gdk-pixbuf"
+]
 
 [phases.install]
 cmds = [
@@ -10,5 +35,4 @@ cmds = [
 ]
 
 [start]
-# Install browser at startup (persists in runtime container)
 cmd = "playwright install chromium && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"

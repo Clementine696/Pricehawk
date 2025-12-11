@@ -19,6 +19,19 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import logging
 
+# HTTP fallback imports
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
+
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+
 try:
     from crawl4ai import AsyncWebCrawler
     from crawl4ai.extraction_strategy import LLMExtractionStrategy, JsonCssExtractionStrategy
@@ -137,8 +150,9 @@ class Crawl4AIWrapper:
             )
 
         self.crawler = None
-        self._current_mode = None  # Track current mode: 'browser' or 'text'
+        self._current_mode = None  # Track current mode: 'browser', 'text', or 'http'
         self._browser_reinit_attempts = 0  # Track reinitialization attempts during scraping
+        self._use_http_fallback = False  # Use pure HTTP when browser unavailable
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -190,6 +204,17 @@ class Crawl4AIWrapper:
         Args:
             force_text_mode: If True, skip browser mode and use text mode directly.
         """
+        # If use_browser is False, use pure HTTP fallback (no crawl4ai at all)
+        if not self.config.use_browser:
+            if HTTPX_AVAILABLE:
+                logger.info("Browser disabled - using pure HTTP fallback mode (no Playwright)")
+                self._use_http_fallback = True
+                self._current_mode = 'http'
+                self.crawler = None
+                return
+            else:
+                logger.warning("httpx not available, will try crawl4ai text mode")
+
         # Clean up any existing browser first
         await self._cleanup_browser()
 
@@ -362,6 +387,101 @@ class Crawl4AIWrapper:
             "page.goto: Target closed" in error_str
         )
 
+    async def _scrape_url_http(self, url: str) -> ScrapingResult:
+        """Scrape a URL using pure HTTP (no browser).
+
+        This is a fallback for when Playwright/browser is not available.
+        Works for static content but may miss JavaScript-rendered content.
+        """
+        result = ScrapingResult(url=url, success=False)
+
+        if not HTTPX_AVAILABLE:
+            result.error_message = "httpx not available for HTTP fallback"
+            return result
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.config.timeout,
+                follow_redirects=True,
+                headers={
+                    'User-Agent': self.config.user_agent,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5,th;q=0.3',
+                }
+            ) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+
+                html_content = response.text
+                result.html = html_content
+                result.status_code = response.status_code
+                result.success = True
+
+                # Parse with BeautifulSoup if available
+                if BS4_AVAILABLE:
+                    soup = BeautifulSoup(html_content, 'html.parser')
+
+                    # Remove script and style elements
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+
+                    # Get text content
+                    result.content = soup.get_text(separator=' ', strip=True)
+
+                    # Extract title
+                    title_tag = soup.find('title')
+                    title = title_tag.get_text(strip=True) if title_tag else ''
+
+                    # Extract images
+                    if self.config.include_images:
+                        result.images = []
+                        for img in soup.find_all('img', src=True):
+                            src = img.get('src', '')
+                            if src:
+                                # Convert relative URLs to absolute
+                                if src.startswith('/'):
+                                    parsed = urllib.parse.urlparse(url)
+                                    src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                                result.images.append(src)
+
+                    # Extract links
+                    if self.config.include_links:
+                        result.links = []
+                        for a in soup.find_all('a', href=True):
+                            href = a.get('href', '')
+                            if href and not href.startswith('#'):
+                                result.links.append(href)
+
+                    result.metadata = {
+                        'title': title,
+                        'status_code': response.status_code,
+                        'url': url,
+                        'word_count': len(result.content.split()) if result.content else 0,
+                        'extraction_method': 'http_fallback',
+                    }
+                else:
+                    result.content = html_content
+                    result.metadata = {
+                        'status_code': response.status_code,
+                        'url': url,
+                        'extraction_method': 'http_fallback_raw',
+                    }
+
+                logger.info(f"Successfully scraped {url} via HTTP fallback")
+
+        except httpx.TimeoutException:
+            result.error_message = f"HTTP request timed out after {self.config.timeout}s"
+            logger.warning(f"Timeout scraping {url}")
+        except httpx.HTTPStatusError as e:
+            result.error_message = f"HTTP error {e.response.status_code}"
+            result.status_code = e.response.status_code
+            logger.warning(f"HTTP error scraping {url}: {e}")
+        except Exception as e:
+            result.error_message = f"HTTP scraping error: {str(e)}"
+            logger.error(f"Error scraping {url} via HTTP: {e}")
+
+        return result
+
     async def scrape_url(
         self,
         url: str,
@@ -390,10 +510,17 @@ class Crawl4AIWrapper:
 
         url = normalized_url_or_error
 
+        # Use HTTP fallback if configured
+        if self._use_http_fallback:
+            return await self._scrape_url_http(url)
+
         # Check if browser is alive, reinitialize if needed
         if not self._is_browser_alive():
             logger.debug("Browser not alive, reinitializing...")
             await self.initialize()
+            # After reinitialize, check if we switched to HTTP fallback
+            if self._use_http_fallback:
+                return await self._scrape_url_http(url)
 
         result = ScrapingResult(url=url, success=False)
         max_browser_reinit = 2  # Maximum number of browser reinitialization attempts per URL

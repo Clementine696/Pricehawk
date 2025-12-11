@@ -11,12 +11,10 @@ This module wraps the crawl4ai library to provide:
 
 import asyncio
 import json
-import re
 import time
 import urllib.parse
-from typing import List, Dict, Any, Optional, Union, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
-from pathlib import Path
 import logging
 
 # HTTP fallback imports
@@ -57,14 +55,12 @@ try:
         except ImportError:
             LLMConfig = None
 
-    from crawl4ai.chunking_strategy import RegexChunking
     CRAWL4AI_AVAILABLE = True
 except ImportError:
     CRAWL4AI_AVAILABLE = False
     AsyncWebCrawler = None
     LLMExtractionStrategy = None
     JsonCssExtractionStrategy = None
-    RegexChunking = None
     LLMConfig = None
     CrawlerRunConfig = None
     BrowserConfig = None

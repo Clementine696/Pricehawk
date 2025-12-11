@@ -1145,7 +1145,7 @@ function ManualAddContent() {
 
         {/* STAGE 4: RESULTS */}
         {stage === 'results' && comparisonResult && (
-          <div className="mx-auto max-w-6xl space-y-6">
+          <div className="mx-auto max-w-full space-y-6">
             {/* Apple-style Comparison Table */}
             <div className="bg-white rounded-xl shadow-lg overflow-hidden">
               <div className="overflow-x-auto">

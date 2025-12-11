@@ -1090,13 +1090,20 @@ function ManualAddContent() {
                     <div className="space-y-2 max-h-64 overflow-y-auto">
                       {scrapedProducts.map((product, index) => (
                         <div key={index} className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                          {product.images && product.images[0] && (
-                            <img
-                              src={product.images[0]}
-                              alt=""
-                              className="w-12 h-12 object-contain rounded bg-white"
-                            />
-                          )}
+                          <div className="w-12 h-12 flex-shrink-0">
+                            {product.images && product.images[0] ? (
+                              <img
+                                src={product.images[0]}
+                                alt=""
+                                className="w-12 h-12 object-contain rounded bg-white"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.style.display = 'none';
+                                }}
+                              />
+                            ) : null}
+                          </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 line-clamp-1">{product.name || 'Unknown'}</p>
                             <p className="text-xs text-gray-500">{product.retailer} | SKU: {product.sku || '-'}</p>
@@ -1186,17 +1193,31 @@ function ManualAddContent() {
                       </td>
                       {comparisonResult.results?.map((result: any, index: number) => (
                         <td key={index} className="px-6 py-6 text-center">
-                          {result.image ? (
-                            <img
-                              src={result.image}
-                              alt={result.name || 'Product'}
-                              className="w-24 h-24 object-contain mx-auto rounded-lg bg-gray-50"
-                            />
-                          ) : (
-                            <div className="w-24 h-24 mx-auto bg-gray-100 rounded-lg flex items-center justify-center">
-                              <span className="text-gray-400 text-xs">No Image</span>
-                            </div>
-                          )}
+                          <div className="w-24 h-24 mx-auto relative">
+                            {result.image ? (
+                              <>
+                                <img
+                                  src={result.image}
+                                  alt={result.name || 'Product'}
+                                  className="w-24 h-24 object-contain rounded-lg bg-gray-50"
+                                  referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    const target = e.target as HTMLImageElement;
+                                    target.style.display = 'none';
+                                    const fallback = target.nextElementSibling as HTMLElement;
+                                    if (fallback) fallback.style.display = 'flex';
+                                  }}
+                                />
+                                <div className="w-24 h-24 bg-gray-100 rounded-lg items-center justify-center absolute top-0 left-0 hidden">
+                                  <span className="text-gray-400 text-xs">No Image</span>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center">
+                                <span className="text-gray-400 text-xs">No Image</span>
+                              </div>
+                            )}
+                          </div>
                           <p className="mt-2 text-sm font-medium text-gray-900 line-clamp-2">
                             {result.name || 'Product'}
                           </p>

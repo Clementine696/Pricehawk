@@ -192,17 +192,31 @@ export default function ComparisonPage() {
                       Base Product
                     </div>
                     <div className="flex items-start gap-3">
-                      {match.base_product.image ? (
-                        <img
-                          src={match.base_product.image}
-                          alt=""
-                          className="w-16 h-16 object-cover rounded"
-                        />
-                      ) : (
-                        <div className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
-                          <span className="text-gray-400 text-xs">No img</span>
-                        </div>
-                      )}
+                      <div className="w-16 h-16 relative flex-shrink-0">
+                        {match.base_product.image ? (
+                          <>
+                            <img
+                              src={match.base_product.image}
+                              alt=""
+                              className="w-16 h-16 object-cover rounded"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                const fallback = target.nextElementSibling as HTMLElement;
+                                if (fallback) fallback.style.display = 'flex';
+                              }}
+                            />
+                            <div className="w-16 h-16 bg-gray-200 rounded items-center justify-center absolute top-0 left-0 hidden">
+                              <span className="text-gray-400 text-xs">No img</span>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
+                            <span className="text-gray-400 text-xs">No img</span>
+                          </div>
+                        )}
+                      </div>
                       <div className="flex-1">
                         <div className="font-medium text-gray-900 line-clamp-2">
                           {match.base_product.name}
@@ -228,17 +242,31 @@ export default function ComparisonPage() {
                       Matched Product
                     </div>
                     <div className="flex items-start gap-3">
-                      {match.candidate_product.image ? (
-                        <img
-                          src={match.candidate_product.image}
-                          alt=""
-                          className="w-16 h-16 object-cover rounded"
-                        />
-                      ) : (
-                        <div className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
-                          <span className="text-gray-400 text-xs">No img</span>
-                        </div>
-                      )}
+                      <div className="w-16 h-16 relative flex-shrink-0">
+                        {match.candidate_product.image ? (
+                          <>
+                            <img
+                              src={match.candidate_product.image}
+                              alt=""
+                              className="w-16 h-16 object-cover rounded"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                const fallback = target.nextElementSibling as HTMLElement;
+                                if (fallback) fallback.style.display = 'flex';
+                              }}
+                            />
+                            <div className="w-16 h-16 bg-gray-200 rounded items-center justify-center absolute top-0 left-0 hidden">
+                              <span className="text-gray-400 text-xs">No img</span>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
+                            <span className="text-gray-400 text-xs">No img</span>
+                          </div>
+                        )}
+                      </div>
                       <div className="flex-1">
                         <div className="font-medium text-gray-900 line-clamp-2">
                           {match.candidate_product.name}

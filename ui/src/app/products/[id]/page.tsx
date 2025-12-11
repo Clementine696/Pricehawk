@@ -202,17 +202,31 @@ export default function ProductDetailPage() {
 
             {/* Product Card */}
             <div className="bg-white rounded-b-lg shadow p-6 -mt-4">
-              {product.image ? (
-                <img
-                  src={product.image}
-                  alt={product.name}
-                  className="w-full h-64 object-contain bg-gray-50 rounded-lg mb-4"
-                />
-              ) : (
-                <div className="w-full h-64 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
-                  <span className="text-gray-400">No image available</span>
-                </div>
-              )}
+              <div className="w-full h-64 relative mb-4">
+                {product.image ? (
+                  <>
+                    <img
+                      src={product.image}
+                      alt={product.name}
+                      className="w-full h-64 object-contain bg-gray-50 rounded-lg"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.style.display = 'none';
+                        const fallback = target.nextElementSibling as HTMLElement;
+                        if (fallback) fallback.style.display = 'flex';
+                      }}
+                    />
+                    <div className="w-full h-64 bg-gray-100 rounded-lg items-center justify-center absolute top-0 left-0 hidden">
+                      <span className="text-gray-400">No image available</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="w-full h-64 bg-gray-100 rounded-lg flex items-center justify-center">
+                    <span className="text-gray-400">No image available</span>
+                  </div>
+                )}
+              </div>
 
               <h2 className="text-xl font-semibold text-gray-900 mb-2">{product.name}</h2>
 
@@ -328,17 +342,31 @@ export default function ProductDetailPage() {
                         retailerMatches.map((match) => (
                           <div key={match.match_id} className="p-4 hover:bg-gray-50 transition-colors">
                             <div className="flex gap-4">
-                              {match.product.image ? (
-                                <img
-                                  src={match.product.image}
-                                  alt={match.product.name}
-                                  className="w-20 h-20 object-contain bg-gray-50 rounded flex-shrink-0"
-                                />
-                              ) : (
-                                <div className="w-20 h-20 bg-gray-100 rounded flex items-center justify-center flex-shrink-0">
-                                  <span className="text-gray-400 text-xs">No img</span>
-                                </div>
-                              )}
+                              <div className="w-20 h-20 flex-shrink-0 relative">
+                                {match.product.image ? (
+                                  <>
+                                    <img
+                                      src={match.product.image}
+                                      alt={match.product.name}
+                                      className="w-20 h-20 object-contain bg-gray-50 rounded"
+                                      referrerPolicy="no-referrer"
+                                      onError={(e) => {
+                                        const target = e.target as HTMLImageElement;
+                                        target.style.display = 'none';
+                                        const fallback = target.nextElementSibling as HTMLElement;
+                                        if (fallback) fallback.style.display = 'flex';
+                                      }}
+                                    />
+                                    <div className="w-20 h-20 bg-gray-100 rounded items-center justify-center absolute top-0 left-0 hidden">
+                                      <span className="text-gray-400 text-xs">No img</span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="w-20 h-20 bg-gray-100 rounded flex items-center justify-center">
+                                    <span className="text-gray-400 text-xs">No img</span>
+                                  </div>
+                                )}
+                              </div>
 
                               <div className="flex-1 min-w-0">
                                 <h4 className="font-medium text-gray-900 line-clamp-2">{match.product.name}</h4>

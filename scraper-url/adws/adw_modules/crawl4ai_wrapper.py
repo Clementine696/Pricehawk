@@ -65,6 +65,10 @@ class ScrapingConfig:
     retry_attempts: int = 3
     retry_delay: float = 2.0
 
+    # Browser launch retry settings
+    browser_launch_retries: int = 3
+    browser_launch_retry_delay: float = 2.0
+
     # Anti-bot measures
     respect_robots_txt: bool = True
     use_browser: bool = True
@@ -125,6 +129,8 @@ class Crawl4AIWrapper:
             )
 
         self.crawler = None
+        self._current_mode = None  # Track current mode: 'browser' or 'text'
+        self._browser_reinit_attempts = 0  # Track reinitialization attempts during scraping
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -135,28 +141,123 @@ class Crawl4AIWrapper:
         """Async context manager exit."""
         await self.close()
 
-    async def initialize(self):
-        """Initialize the crawler instance."""
+    async def _cleanup_browser(self):
+        """Private method for consistent browser cleanup across the class."""
+        if self.crawler:
+            try:
+                await self.crawler.close()
+                logger.debug("Browser cleanup successful")
+            except Exception as e:
+                # Ignore errors during cleanup - browser may already be closed
+                logger.debug(f"Browser cleanup note (may be already closed): {e}")
+            finally:
+                self.crawler = None
+                self._current_mode = None
+
+    def _is_browser_alive(self) -> bool:
+        """Check if the browser instance is still valid and alive.
+
+        Returns:
+            True if browser appears to be alive, False otherwise.
+        """
+        if self.crawler is None:
+            return False
+
+        # Check if crawler has browser context attributes that indicate it's alive
         try:
+            # For crawl4ai, check if the crawler object exists and has expected attributes
+            if hasattr(self.crawler, 'browser_context') and self.crawler.browser_context is None:
+                return False
+            if hasattr(self.crawler, 'browser') and self.crawler.browser is None:
+                return False
+            # If we can access the crawler without exception, assume it's alive
+            return True
+        except Exception as e:
+            logger.debug(f"Browser state check failed: {e}")
+            return False
+
+    async def initialize(self, force_text_mode: bool = False):
+        """Initialize the crawler instance with retry logic.
+
+        Args:
+            force_text_mode: If True, skip browser mode and use text mode directly.
+        """
+        # Clean up any existing browser first
+        await self._cleanup_browser()
+
+        last_error = None
+
+        # Try browser mode if requested and not forcing text mode
+        if self.config.use_browser and not force_text_mode:
+            for attempt in range(self.config.browser_launch_retries):
+                try:
+                    # Ensure clean state before retry
+                    await self._cleanup_browser()
+
+                    self.crawler = AsyncWebCrawler(
+                        headless=self.config.headless,
+                        verbose=self.config.verbose,
+                        user_agent=self.config.user_agent,
+                    )
+                    await self.crawler.start()
+                    self._current_mode = 'browser'
+                    logger.info(f"Crawl4AI crawler initialized with browser (attempt {attempt + 1})")
+                    return
+                except Exception as browser_err:
+                    last_error = browser_err
+                    error_str = str(browser_err)
+
+                    # Check for specific browser closure errors
+                    is_browser_closed_error = (
+                        "Target page, context or browser has been closed" in error_str or
+                        "BrowserType.launch" in error_str or
+                        "Browser closed" in error_str or
+                        "Connection closed" in error_str
+                    )
+
+                    if is_browser_closed_error:
+                        logger.warning(
+                            f"Browser launch failed (attempt {attempt + 1}/{self.config.browser_launch_retries}): {browser_err}"
+                        )
+                    else:
+                        logger.warning(f"Browser mode failed (attempt {attempt + 1}): {browser_err}")
+
+                    # Ensure cleanup before retry
+                    await self._cleanup_browser()
+
+                    # Add delay before retry with exponential backoff
+                    if attempt < self.config.browser_launch_retries - 1:
+                        delay = self.config.browser_launch_retry_delay * (2 ** attempt)
+                        logger.debug(f"Waiting {delay}s before browser launch retry...")
+                        await asyncio.sleep(delay)
+
+            # All browser mode attempts failed, fall back to text mode
+            logger.warning(f"Browser mode failed after {self.config.browser_launch_retries} attempts, falling back to text mode")
+
+        # Text mode fallback - use crawler without browser features
+        try:
+            await self._cleanup_browser()
+
             self.crawler = AsyncWebCrawler(
                 headless=self.config.headless,
                 verbose=self.config.verbose,
                 user_agent=self.config.user_agent,
             )
             await self.crawler.start()
-            logger.info("Crawl4AI crawler initialized successfully")
+            self._current_mode = 'text'
+            logger.info("Crawl4AI crawler initialized in text mode (no browser)")
         except Exception as e:
-            logger.error(f"Failed to initialize Crawl4AI crawler: {e}")
+            logger.error(f"Failed to initialize Crawl4AI crawler in text mode: {e}")
+            await self._cleanup_browser()
+            # Re-raise the original browser error if text mode also fails
+            if last_error:
+                raise last_error
             raise
 
     async def close(self):
-        """Close the crawler instance."""
-        if self.crawler:
-            try:
-                await self.crawler.close()
-                logger.info("Crawl4AI crawler closed successfully")
-            except Exception as e:
-                logger.error(f"Error closing Crawl4AI crawler: {e}")
+        """Close the crawler instance safely."""
+        await self._cleanup_browser()
+        logger.info("Crawl4AI crawler closed successfully")
 
     def validate_url(self, url: str) -> Tuple[bool, Optional[str]]:
         """Validate and normalize URL.
@@ -219,6 +320,25 @@ class Crawl4AIWrapper:
             logger.warning(f"Failed to check e-commerce URL {url}: {e}")
             return False
 
+    def _is_browser_closed_error(self, error: Exception) -> bool:
+        """Check if an exception indicates the browser was closed.
+
+        Args:
+            error: The exception to check.
+
+        Returns:
+            True if this appears to be a browser closure error.
+        """
+        error_str = str(error)
+        return (
+            "Target page, context or browser has been closed" in error_str or
+            "BrowserType.launch" in error_str or
+            "Browser closed" in error_str or
+            "Connection closed" in error_str or
+            "Browser has been closed" in error_str or
+            "page.goto: Target closed" in error_str
+        )
+
     async def scrape_url(
         self,
         url: str,
@@ -247,10 +367,13 @@ class Crawl4AIWrapper:
 
         url = normalized_url_or_error
 
-        if not self.crawler:
+        # Check if browser is alive, reinitialize if needed
+        if not self._is_browser_alive():
+            logger.debug("Browser not alive, reinitializing...")
             await self.initialize()
 
         result = ScrapingResult(url=url, success=False)
+        max_browser_reinit = 2  # Maximum number of browser reinitialization attempts per URL
 
         for attempt in range(self.config.retry_attempts):
             try:
@@ -463,10 +586,40 @@ class Crawl4AIWrapper:
                 result.error_message = f"Scraping error: {str(e)}"
                 logger.error(f"Error scraping {url} (attempt {attempt + 1}): {e}")
 
+                # Check if this is a browser closure error
+                if self._is_browser_closed_error(e):
+                    if self._browser_reinit_attempts < max_browser_reinit:
+                        self._browser_reinit_attempts += 1
+                        logger.warning(
+                            f"Browser closed during scraping, reinitializing "
+                            f"(reinit attempt {self._browser_reinit_attempts}/{max_browser_reinit})..."
+                        )
+                        try:
+                            # Try to reinitialize browser
+                            await self.initialize()
+                            # Don't count this as a retry attempt - continue loop
+                            continue
+                        except Exception as reinit_err:
+                            logger.error(f"Failed to reinitialize browser: {reinit_err}")
+                            # Fall back to text mode if browser keeps failing
+                            if self._current_mode != 'text':
+                                logger.warning("Attempting to fall back to text mode...")
+                                try:
+                                    await self.initialize(force_text_mode=True)
+                                    continue
+                                except Exception as text_mode_err:
+                                    logger.error(f"Text mode fallback also failed: {text_mode_err}")
+                    else:
+                        logger.warning(
+                            f"Max browser reinitialization attempts ({max_browser_reinit}) reached for this URL"
+                        )
+
                 if attempt == self.config.retry_attempts - 1:
                     # Final attempt failed
                     break
 
+        # Reset reinit counter after completing URL processing
+        self._browser_reinit_attempts = 0
         return result
 
     async def scrape_urls(

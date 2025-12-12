@@ -1,8 +1,0 @@
-{
-  "/products/page": "app/products/page.js",
-  "/comparison/page": "app/comparison/page.js",
-  "/login/page": "app/login/page.js",
-  "/dashboard/page": "app/dashboard/page.js",
-  "/manual-add/page": "app/manual-add/page.js",
-  "/products/[id]/page": "app/products/[id]/page.js"
-}

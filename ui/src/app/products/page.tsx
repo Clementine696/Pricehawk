@@ -47,9 +47,19 @@ function ProductsContent() {
   const [category, setCategory] = useState(searchParams.get('category') || '');
   const [brand, setBrand] = useState(searchParams.get('brand') || '');
   const [verificationFilter, setVerificationFilter] = useState(searchParams.get('verified') || '');
+  const [retailerFilter, setRetailerFilter] = useState(searchParams.get('retailer') || '');
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [isExporting, setIsExporting] = useState(false);
   const pageSize = 10;
+
+  // Retailer options for filter (excluding Thai Watsadu which is the base)
+  const RETAILER_FILTER_OPTIONS = [
+    { id: 'hp', name: 'HomePro' },
+    { id: 'mgh', name: 'MegaHome' },
+    { id: 'dh', name: 'DoHome' },
+    { id: 'btv', name: 'Boonthavorn' },
+    { id: 'gbh', name: 'Global House' },
+  ];
 
   // Update URL when filters change
   const updateURL = (newParams: Record<string, string | number>) => {
@@ -59,6 +69,7 @@ function ProductsContent() {
       category,
       brand,
       verified: verificationFilter,
+      retailer: retailerFilter,
       page,
       ...newParams
     };
@@ -75,7 +86,7 @@ function ProductsContent() {
 
   useEffect(() => {
     fetchProducts();
-  }, [page, category, brand, verificationFilter]);
+  }, [page, category, brand, verificationFilter, retailerFilter]);
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -88,6 +99,7 @@ function ProductsContent() {
       if (category) params.append('category', category);
       if (brand) params.append('brand', brand);
       if (verificationFilter) params.append('verified', verificationFilter);
+      if (retailerFilter) params.append('retailer', retailerFilter);
 
       const response = await apiFetch(`/api/products?${params}`);
       if (!response.ok) throw new Error('Failed to fetch products');
@@ -116,6 +128,7 @@ function ProductsContent() {
     setCategory('');
     setBrand('');
     setVerificationFilter('');
+    setRetailerFilter('');
     setPage(1);
     router.push('/products', { scroll: false });
     fetchProducts();
@@ -126,6 +139,7 @@ function ProductsContent() {
       category: setCategory,
       brand: setBrand,
       verified: setVerificationFilter,
+      retailer: setRetailerFilter,
     };
     setters[filterName]?.(value);
     setPage(1);
@@ -145,6 +159,7 @@ function ProductsContent() {
       if (category) params.append('category', category);
       if (brand) params.append('brand', brand);
       if (verificationFilter) params.append('verified', verificationFilter);
+      if (retailerFilter) params.append('retailer', retailerFilter);
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {
@@ -274,6 +289,16 @@ function ProductsContent() {
               <option value="">All Status</option>
               <option value="true">Verified</option>
               <option value="false">Unverified</option>
+            </select>
+            <select
+              value={retailerFilter}
+              onChange={(e) => handleFilterChange('retailer', e.target.value)}
+              className="w-[160px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
+            >
+              <option value="">All Retailers</option>
+              {RETAILER_FILTER_OPTIONS.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
             </select>
             <button
               onClick={handleReset}

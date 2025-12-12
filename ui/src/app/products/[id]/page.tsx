@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
 interface Product {
@@ -108,6 +108,31 @@ export default function ProductDetailPage() {
       });
     } catch (err) {
       console.error('Error verifying match:', err);
+    }
+  };
+
+  const handleUndo = async (matchId: number) => {
+    try {
+      const response = await apiFetch(`/api/matches/${matchId}/undo`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) throw new Error('Failed to undo verification');
+
+      // Update local state - reset to unverified
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          matches: prev.matches.map((m) =>
+            m.match_id === matchId
+              ? { ...m, verified_by_user: false, is_same: null }
+              : m
+          ),
+        };
+      });
+    } catch (err) {
+      console.error('Error undoing verification:', err);
     }
   };
 
@@ -353,6 +378,9 @@ export default function ProductDetailPage() {
                         const allRejected = retailerMatches.length > 0 &&
                           retailerMatches.every((m) => m.verified_by_user && m.is_same === false);
 
+                        // Check if any match is already marked as correct BY USER for this retailer
+                        const hasCorrectMatch = retailerMatches.some((m) => m.is_same === true && m.verified_by_user === true);
+
                         if (retailerMatches.length === 0) {
                           return (
                             <div className="p-6 text-center">
@@ -447,19 +475,28 @@ export default function ProductDetailPage() {
                                 {/* Verification Actions */}
                                 <div className="mt-4 pt-3 border-t border-gray-100 flex justify-end gap-3">
                                   {match.verified_by_user ? (
-                                    <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${match.is_same ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                      {match.is_same ? (
-                                        <>
-                                          <Check className="w-4 h-4" />
-                                          <span className="font-medium">Correct Match</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <X className="w-4 h-4" />
-                                          <span className="font-medium">Incorrect Match</span>
-                                        </>
-                                      )}
-                                    </div>
+                                    <>
+                                      <button
+                                        onClick={() => handleUndo(match.match_id)}
+                                        className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
+                                      >
+                                        <RotateCcw className="w-4 h-4" />
+                                        Undo
+                                      </button>
+                                      <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${match.is_same ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                        {match.is_same ? (
+                                          <>
+                                            <Check className="w-4 h-4" />
+                                            <span className="font-medium">Correct Match</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <X className="w-4 h-4" />
+                                            <span className="font-medium">Incorrect Match</span>
+                                          </>
+                                        )}
+                                      </div>
+                                    </>
                                   ) : (
                                     <>
                                       <button
@@ -471,7 +508,12 @@ export default function ProductDetailPage() {
                                       </button>
                                       <button
                                         onClick={() => handleVerify(match.match_id, true)}
-                                        className="flex items-center gap-2 px-4 py-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors border border-green-200"
+                                        disabled={hasCorrectMatch}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors border ${
+                                          hasCorrectMatch
+                                            ? 'text-gray-400 border-gray-200 bg-gray-50 cursor-not-allowed'
+                                            : 'text-green-600 hover:bg-green-50 border-green-200'
+                                        }`}
                                       >
                                         <Check className="w-4 h-4" />
                                         Correct

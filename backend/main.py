@@ -137,6 +137,7 @@ def get_products(
     category: Optional[str] = None,
     brand: Optional[str] = None,
     verified: Optional[str] = None,
+    retailer: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """Get Thai Watsadu products with price comparison across retailers"""
@@ -245,6 +246,17 @@ def get_products(
                           AND pm3.verified_by_user = FALSE
                     )
                 )"""
+
+            # Filter by specific retailer match (only products with verified match for this retailer)
+            if retailer:
+                query += """ AND EXISTS (
+                    SELECT 1 FROM product_matches pm
+                    WHERE pm.base_product_id = p.product_id
+                    AND pm.retailer_id = %s
+                    AND pm.verified_by_user = TRUE
+                    AND pm.is_same = TRUE
+                )"""
+                params.append(retailer)
 
             # Get total count
             count_query = query.replace("SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link", "SELECT COUNT(*)")
@@ -364,6 +376,7 @@ def export_products(
     category: Optional[str] = None,
     brand: Optional[str] = None,
     verified: Optional[str] = None,
+    retailer: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """Export products to CSV with price comparison across retailers"""
@@ -418,6 +431,17 @@ def export_products(
                     SELECT 1 FROM product_matches pm
                     WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
                 )"""
+
+            # Filter by specific retailer match
+            if retailer:
+                query += """ AND EXISTS (
+                    SELECT 1 FROM product_matches pm
+                    WHERE pm.base_product_id = p.product_id
+                    AND pm.retailer_id = %s
+                    AND pm.verified_by_user = TRUE
+                    AND pm.is_same = TRUE
+                )"""
+                params.append(retailer)
 
             query += " ORDER BY p.product_id"
 
@@ -866,6 +890,29 @@ def verify_match(
                 raise HTTPException(status_code=404, detail="Match not found")
 
             return {"message": "Match verified", "match_id": match_id, "is_same": data.is_same}
+
+
+@app.post("/api/matches/{match_id}/undo")
+def undo_match_verification(
+    match_id: int,
+    user: dict = Depends(get_current_user)
+):
+    """Undo verification of a product match - set back to unverified state"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE product_matches
+                SET verified_by_user = FALSE,
+                    verified_result = NULL,
+                    verified_at = NULL,
+                    is_same = NULL
+                WHERE match_id = %s
+            """, (match_id,))
+
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Match not found")
+
+            return {"message": "Verification undone", "match_id": match_id}
 
 
 # ============== Scraping API ==============

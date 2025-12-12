@@ -201,7 +201,7 @@ export default function ProductsPage() {
             <select
               value={category}
               onChange={(e) => { setCategory(e.target.value); setPage(1); }}
-              className="min-w-[200px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
+              className="w-[250px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
             >
               <option value="">All Categories</option>
               {categories.map((cat) => (
@@ -211,7 +211,7 @@ export default function ProductsPage() {
             <select
               value={brand}
               onChange={(e) => { setBrand(e.target.value); setPage(1); }}
-              className="min-w-[180px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
+              className="w-[200px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
             >
               <option value="">All Brands</option>
               {brands.map((b) => (

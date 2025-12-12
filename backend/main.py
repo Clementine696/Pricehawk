@@ -559,24 +559,38 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
 
 @app.get("/api/dashboard/stats")
 def get_dashboard_stats(user: dict = Depends(get_current_user)):
-    """Get dashboard statistics"""
+    """Get dashboard statistics - Thai Watsadu centric"""
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Total products
-            cur.execute("SELECT COUNT(*) as count FROM products")
+            # Get Thai Watsadu retailer ID
+            cur.execute("SELECT retailer_id FROM retailers WHERE name = 'Thai Watsadu'")
+            twd = cur.fetchone()
+            twd_id = twd["retailer_id"] if twd else None
+
+            # Total products (Thai Watsadu only)
+            cur.execute(
+                "SELECT COUNT(*) as count FROM products WHERE retailer_id = %s",
+                (twd_id,)
+            )
             total_products = cur.fetchone()["count"]
 
             # Total retailers
             cur.execute("SELECT COUNT(*) as count FROM retailers")
             total_retailers = cur.fetchone()["count"]
 
-            # Total matches
-            cur.execute("SELECT COUNT(*) as count FROM product_matches")
-            total_matches = cur.fetchone()["count"]
-
-            # Pending reviews
-            cur.execute("SELECT COUNT(*) as count FROM product_matches WHERE verified_by_user = FALSE")
+            # Pending Reviews: TWD products that have at least 1 unverified match candidate
+            cur.execute("""
+                SELECT COUNT(DISTINCT pm.base_product_id) as count
+                FROM product_matches pm
+                JOIN products p ON pm.base_product_id = p.product_id
+                WHERE p.retailer_id = %s
+                  AND pm.verified_by_user = FALSE
+            """, (twd_id,))
             pending_reviews = cur.fetchone()["count"]
+
+            # Product Matches: All TWD products that are NOT pending review
+            # This includes: fully verified products + products with no matches at all
+            total_matches = total_products - pending_reviews
 
             return {
                 "total_products": total_products,

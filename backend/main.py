@@ -914,6 +914,109 @@ def normalize_url(url: str) -> str:
     return base_url.rstrip('/')
 
 
+def scrape_single_url(url: str) -> dict:
+    """
+    Scrape a single URL and return result dict.
+    Returns {"success": True, "data": {...}} or {"success": False, "error": "..."}
+    """
+    try:
+        # Generate unique output file for this scrape
+        output_file = os.path.join(RESULTS_DIR, f"scrape_{uuid.uuid4().hex}.json")
+
+        # Run the scraper script
+        cmd = [
+            "python",
+            SCRAPER_SCRIPT,
+            "--url", url,
+            "--output-file", output_file
+        ]
+
+        print(f"\n  [PARALLEL] Scraping: {url}")
+
+        # Execute scraper with timeout
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        process = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,  # 120 second timeout per URL
+            cwd=BACKEND_DIR,
+            env=env,
+            encoding="utf-8",
+            errors="replace"
+        )
+
+        if process.returncode != 0:
+            error_msg = process.stderr or process.stdout or 'Unknown error'
+            print(f"  [PARALLEL] FAILED: {url} - {error_msg[:200]}")
+            return {"success": False, "url": url, "error": f"Scraper failed: {error_msg[:500]}"}
+
+        # Look for scraped data in retailer files
+        output_dir = os.path.dirname(output_file)
+        retailer_files = [
+            "mega_home.json", "megahome.json",
+            "thai_watsadu.json", "thaiwatsadu.json",
+            "homepro.json", "home_pro.json",
+            "do_home.json", "dohome.json",
+            "boonthavorn.json",
+            "global_house.json", "globalhouse.json",
+            "unknown.json"
+        ]
+
+        for retailer_file in retailer_files:
+            retailer_path = os.path.join(output_dir, retailer_file)
+            if os.path.exists(retailer_path):
+                try:
+                    with open(retailer_path, 'r', encoding='utf-8') as f:
+                        scraped_data = json.load(f)
+
+                    if isinstance(scraped_data, list):
+                        for product_data in scraped_data:
+                            product_url = product_data.get('url', '')
+                            if normalize_url(product_url) == normalize_url(url) or product_url == url:
+                                product_data["source_url"] = url
+                                print(f"  [PARALLEL] SUCCESS: {url} -> {product_data.get('name', 'N/A')[:40]}...")
+                                # Clean up temp file
+                                try:
+                                    if os.path.exists(output_file):
+                                        os.remove(output_file)
+                                except:
+                                    pass
+                                return {"success": True, "url": url, "data": product_data}
+                except Exception as e:
+                    print(f"  [PARALLEL] Error reading {retailer_path}: {e}")
+
+        # Check original output file as fallback
+        if os.path.exists(output_file):
+            try:
+                with open(output_file, 'r', encoding='utf-8') as f:
+                    scraped_data = json.load(f)
+                if isinstance(scraped_data, list) and len(scraped_data) > 0:
+                    product_data = scraped_data[0]
+                    product_data["source_url"] = url
+                    print(f"  [PARALLEL] SUCCESS (fallback): {url}")
+                    os.remove(output_file)
+                    return {"success": True, "url": url, "data": product_data}
+            except Exception as e:
+                print(f"  [PARALLEL] Error reading output file: {e}")
+
+        # Clean up
+        try:
+            if os.path.exists(output_file):
+                os.remove(output_file)
+        except:
+            pass
+
+        return {"success": False, "url": url, "error": "Scraper output file not found or URL not matched"}
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "url": url, "error": "Scraper timed out (120s)"}
+    except Exception as e:
+        return {"success": False, "url": url, "error": str(e)}
+
+
 @app.post("/api/scrape")
 def scrape_urls(
     data: ScrapeUrlRequest,
@@ -921,28 +1024,21 @@ def scrape_urls(
 ):
     """
     Scrape product data from URLs using the Python scraper script.
+    Scrapes URLs in PARALLEL for faster execution.
     Returns scraped product data for each URL.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import shutil
+
     print(f"\n{'='*60}")
-    print(f"=== DEBUG: /api/scrape called ===")
+    print(f"=== DEBUG: /api/scrape called (PARALLEL MODE) ===")
     print(f"{'='*60}")
     print(f"  URLs to scrape: {data.urls}")
+    print(f"  Total URLs: {len(data.urls)}")
     print(f"  BACKEND_DIR: {BACKEND_DIR}")
     print(f"  SCRAPER_SCRIPT: {SCRAPER_SCRIPT}")
-    print(f"  RESULTS_DIR: {RESULTS_DIR}")
     print(f"  Script exists: {os.path.exists(SCRAPER_SCRIPT)}")
-
-    # Check scraper directory structure
-    scraper_dir = os.path.dirname(SCRAPER_SCRIPT)
-    print(f"  Scraper dir: {scraper_dir}")
-    print(f"  Scraper dir exists: {os.path.exists(scraper_dir)}")
-    if os.path.exists(scraper_dir):
-        print(f"  Scraper dir contents: {os.listdir(scraper_dir)}")
-
-    # Check Python and playwright
-    import shutil
     print(f"  Python executable: {shutil.which('python')}")
-    print(f"  Playwright installed: {shutil.which('playwright')}")
 
     results = []
     errors = []
@@ -950,145 +1046,26 @@ def scrape_urls(
     # Ensure results directory exists
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    for url in data.urls:
-        try:
-            # Generate unique output file for this scrape
-            output_file = os.path.join(RESULTS_DIR, f"scrape_{uuid.uuid4().hex}.json")
+    # Scrape all URLs in parallel using ThreadPoolExecutor
+    # Max 4 workers to avoid overwhelming the system
+    max_workers = min(len(data.urls), 4)
+    print(f"  Starting parallel scraping with {max_workers} workers...")
 
-            # Run the scraper script
-            # Playwright is installed during build phase via nixpacks.toml
-            # Browser mode enabled for full scraping capability (including anti-bot bypass)
-            cmd = [
-                "python",
-                SCRAPER_SCRIPT,
-                "--url", url,
-                "--output-file", output_file
-            ]
-            print(f"  Running with browser mode (Playwright)")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all scrape tasks
+        future_to_url = {executor.submit(scrape_single_url, url): url for url in data.urls}
 
-            print(f"\n  Running: {' '.join(cmd)}")
-
-            # Execute scraper with timeout
-            # Set PYTHONIOENCODING to utf-8 to handle Thai characters on Windows
-            env = os.environ.copy()
-            env["PYTHONIOENCODING"] = "utf-8"
-
-            process = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,  # 60 second timeout per URL
-                cwd=BACKEND_DIR,
-                env=env,
-                encoding="utf-8",
-                errors="replace"
-            )
-
-            print(f"  Return code: {process.returncode}")
-            if process.stdout:
-                print(f"  Stdout (first 1000 chars): {process.stdout[:1000]}")
-            if process.stderr:
-                print(f"  Stderr (first 1000 chars): {process.stderr[:1000]}")
-
-            if process.returncode != 0:
-                error_msg = process.stderr or process.stdout or 'Unknown error'
-                print(f"  !!! SCRAPER FAILED for {url}")
-                print(f"  Full error: {error_msg}")
-                errors.append({
-                    "url": url,
-                    "error": f"Scraper failed: {error_msg[:500]}"
-                })
-                continue
-
-            # List files in results directory after scrape
-            print(f"  Results dir contents after scrape: {os.listdir(RESULTS_DIR) if os.path.exists(RESULTS_DIR) else 'DIR NOT FOUND'}")
-
-            # The scraper saves files by retailer name (e.g., mega_home.json, thai_watsadu.json)
-            # in the output directory, NOT the specified output file
-            output_dir = os.path.dirname(output_file)
-            found_data = False
-
-            # Look for retailer-specific output files
-            # Note: scraper may use different naming conventions (e.g., "dohome" vs "do_home")
-            retailer_files = [
-                "mega_home.json", "megahome.json",
-                "thai_watsadu.json", "thaiwatsadu.json",
-                "homepro.json", "home_pro.json",
-                "do_home.json", "dohome.json",
-                "boonthavorn.json",
-                "global_house.json", "globalhouse.json",
-                "unknown.json"
-            ]
-
-            for retailer_file in retailer_files:
-                retailer_path = os.path.join(output_dir, retailer_file)
-                if os.path.exists(retailer_path):
-                    try:
-                        with open(retailer_path, 'r', encoding='utf-8') as f:
-                            scraped_data = json.load(f)
-
-                        # Check if this file contains our URL
-                        if isinstance(scraped_data, list):
-                            for product_data in scraped_data:
-                                product_url = product_data.get('url', '')
-                                # Match by URL (normalized comparison)
-                                if normalize_url(product_url) == normalize_url(url) or product_url == url:
-                                    product_data["source_url"] = url
-                                    print(f"\n=== DEBUG: Scrape result for {url} ===")
-                                    print(f"  Found in: {retailer_file}")
-                                    print(f"  source_url: {product_data.get('source_url')}")
-                                    print(f"  url: {product_data.get('url')}")
-                                    print(f"  retailer: {product_data.get('retailer')}")
-                                    print(f"  name: {str(product_data.get('name', 'N/A'))[:50]}...")
-                                    print(f"  price: {product_data.get('current_price')}")
-                                    results.append(product_data)
-                                    found_data = True
-                                    break
-                        if found_data:
-                            break
-                    except Exception as e:
-                        print(f"  Error reading {retailer_path}: {e}")
-
-            # Also check the original output file path as fallback
-            if not found_data and os.path.exists(output_file):
-                try:
-                    with open(output_file, 'r', encoding='utf-8') as f:
-                        scraped_data = json.load(f)
-                    if isinstance(scraped_data, list) and len(scraped_data) > 0:
-                        product_data = scraped_data[0]
-                        product_data["source_url"] = url
-                        results.append(product_data)
-                        found_data = True
-                except Exception as e:
-                    print(f"  Error reading output file: {e}")
-
-            if not found_data:
-                print(f"  !!! No data found for {url}")
-                print(f"  Checked retailer files: {retailer_files}")
-                print(f"  Output dir: {output_dir}")
-                print(f"  Output dir contents: {os.listdir(output_dir) if os.path.exists(output_dir) else 'DIR NOT FOUND'}")
-                errors.append({
-                    "url": url,
-                    "error": "Scraper output file not found or URL not matched"
-                })
-
-            # Clean up temp file
+        # Collect results as they complete
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
             try:
-                if os.path.exists(output_file):
-                    os.remove(output_file)
-            except:
-                pass
-
-        except subprocess.TimeoutExpired:
-            errors.append({
-                "url": url,
-                "error": "Scraper timed out (60s)"
-            })
-        except Exception as e:
-            errors.append({
-                "url": url,
-                "error": str(e)
-            })
+                result = future.result()
+                if result["success"]:
+                    results.append(result["data"])
+                else:
+                    errors.append({"url": result["url"], "error": result["error"]})
+            except Exception as e:
+                errors.append({"url": url, "error": str(e)})
 
     response = {
         "success": len(errors) == 0,
@@ -1472,11 +1449,11 @@ def manual_comparison(
                         ))
                         comp_product = cur.fetchone()
 
-                # Create product match
+                # Create product match - manual matches are auto-verified as correct
                 cur.execute("""
-                    INSERT INTO product_matches (base_product_id, candidate_product_id, retailer_id, match_type, verified_by_user)
-                    VALUES (%s, %s, %s, 'manual', FALSE)
-                    ON CONFLICT (base_product_id, candidate_product_id) DO UPDATE SET match_type = 'manual'
+                    INSERT INTO product_matches (base_product_id, candidate_product_id, retailer_id, match_type, verified_by_user, is_same)
+                    VALUES (%s, %s, %s, 'manual', TRUE, TRUE)
+                    ON CONFLICT (base_product_id, candidate_product_id) DO UPDATE SET match_type = 'manual', verified_by_user = TRUE, is_same = TRUE
                     RETURNING match_id
                 """, (twd_product["product_id"], comp_product["product_id"], retailer_id))
 

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Search, RotateCcw, Download, ExternalLink, Loader2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
@@ -21,6 +21,7 @@ interface Product {
   base_link: string | null;
   status: 'cheapest' | 'same' | 'higher' | null;
   retailer_prices: Record<string, RetailerPrice>;
+  is_verified: boolean;
 }
 
 interface Retailer {
@@ -28,10 +29,12 @@ interface Retailer {
   name: string;
 }
 
-const RETAILER_ORDER = ['Thai Watsadu', 'HomePro', 'Do Home', 'Boonthavorn', 'Global House'];
+const RETAILER_ORDER = ['Thai Watsadu', 'HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House'];
 
 export default function ProductsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [products, setProducts] = useState<Product[]>([]);
   const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -39,16 +42,40 @@ export default function ProductsPage() {
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('');
-  const [brand, setBrand] = useState('');
-  const [page, setPage] = useState(1);
+  // Initialize state from URL params
+  const [search, setSearch] = useState(searchParams.get('search') || '');
+  const [category, setCategory] = useState(searchParams.get('category') || '');
+  const [brand, setBrand] = useState(searchParams.get('brand') || '');
+  const [verificationFilter, setVerificationFilter] = useState(searchParams.get('verified') || '');
+  const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [isExporting, setIsExporting] = useState(false);
   const pageSize = 10;
 
+  // Update URL when filters change
+  const updateURL = (newParams: Record<string, string | number>) => {
+    const params = new URLSearchParams();
+    const allParams = {
+      search,
+      category,
+      brand,
+      verified: verificationFilter,
+      page,
+      ...newParams
+    };
+
+    Object.entries(allParams).forEach(([key, value]) => {
+      if (value && value !== '' && !(key === 'page' && value === 1)) {
+        params.set(key, String(value));
+      }
+    });
+
+    const queryString = params.toString();
+    router.push(queryString ? `?${queryString}` : '/products', { scroll: false });
+  };
+
   useEffect(() => {
     fetchProducts();
-  }, [page, category, brand]);
+  }, [page, category, brand, verificationFilter]);
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -60,6 +87,7 @@ export default function ProductsPage() {
       if (search) params.append('search', search);
       if (category) params.append('category', category);
       if (brand) params.append('brand', brand);
+      if (verificationFilter) params.append('verified', verificationFilter);
 
       const response = await apiFetch(`/api/products?${params}`);
       if (!response.ok) throw new Error('Failed to fetch products');
@@ -79,6 +107,7 @@ export default function ProductsPage() {
 
   const handleSearch = () => {
     setPage(1);
+    updateURL({ search, page: 1 });
     fetchProducts();
   };
 
@@ -86,8 +115,26 @@ export default function ProductsPage() {
     setSearch('');
     setCategory('');
     setBrand('');
+    setVerificationFilter('');
     setPage(1);
+    router.push('/products', { scroll: false });
     fetchProducts();
+  };
+
+  const handleFilterChange = (filterName: string, value: string) => {
+    const setters: Record<string, (v: string) => void> = {
+      category: setCategory,
+      brand: setBrand,
+      verified: setVerificationFilter,
+    };
+    setters[filterName]?.(value);
+    setPage(1);
+    updateURL({ [filterName]: value, page: 1 });
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+    updateURL({ page: newPage });
   };
 
   const handleExport = async () => {
@@ -97,6 +144,7 @@ export default function ProductsPage() {
       if (search) params.append('search', search);
       if (category) params.append('category', category);
       if (brand) params.append('brand', brand);
+      if (verificationFilter) params.append('verified', verificationFilter);
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {
@@ -200,7 +248,7 @@ export default function ProductsPage() {
             </div>
             <select
               value={category}
-              onChange={(e) => { setCategory(e.target.value); setPage(1); }}
+              onChange={(e) => handleFilterChange('category', e.target.value)}
               className="w-[250px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
             >
               <option value="">All Categories</option>
@@ -210,13 +258,22 @@ export default function ProductsPage() {
             </select>
             <select
               value={brand}
-              onChange={(e) => { setBrand(e.target.value); setPage(1); }}
+              onChange={(e) => handleFilterChange('brand', e.target.value)}
               className="w-[200px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
             >
               <option value="">All Brands</option>
               {brands.map((b) => (
                 <option key={b} value={b}>{b}</option>
               ))}
+            </select>
+            <select
+              value={verificationFilter}
+              onChange={(e) => handleFilterChange('verified', e.target.value)}
+              className="w-[140px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
+            >
+              <option value="">All Status</option>
+              <option value="true">Verified</option>
+              <option value="false">Unverified</option>
             </select>
             <button
               onClick={handleReset}
@@ -272,6 +329,7 @@ export default function ProductsPage() {
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Review</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Thai Watsadu</th>
                       {otherRetailers.map((retailer) => (
                         <th key={retailer} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -311,6 +369,17 @@ export default function ProductsPage() {
                           </td>
                           <td className="px-4 py-2 whitespace-nowrap">
                             {getStatusBadge(product.status)}
+                          </td>
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            {product.is_verified ? (
+                              <span className="px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-700">
+                                Verified
+                              </span>
+                            ) : (
+                              <span className="px-2 py-1 rounded text-xs font-medium bg-yellow-100 text-yellow-700">
+                                Unverified
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-2 text-sm whitespace-nowrap">
                             {product.base_price ? (
@@ -360,7 +429,7 @@ export default function ProductsPage() {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    onClick={() => handlePageChange(Math.max(1, page - 1))}
                     disabled={page === 1}
                     className="px-3 py-1 border border-gray-300 rounded text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -370,7 +439,7 @@ export default function ProductsPage() {
                     Page {page} of {totalPages || 1}
                   </span>
                   <button
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    onClick={() => handlePageChange(Math.min(totalPages, page + 1))}
                     disabled={page >= totalPages}
                     className="px-3 py-1 border border-gray-300 rounded text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >

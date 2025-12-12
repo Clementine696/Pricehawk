@@ -318,13 +318,54 @@ cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
 5. Matches saved to product_matches table
 ```
 
-### Price Updates (Planned)
+### Price Updates
 ```
-1. Cron job runs daily at 2AM
-2. Fetch all products from database
-3. Scrape each product URL
-4. Update current_price in products table
+1. Cron job runs daily
+2. Fetch all products from database (grouped by retailer)
+3. Scrape each product URL using retailer-specific extractors
+4. Update current_price, lowest_price, highest_price in products table
 5. Insert record into price_history table
+```
+
+#### Price Updater CLI
+```bash
+cd backend
+
+# Update all products (sequential)
+python services/price_updater.py
+
+# Parallel processing (3 retailers at once) - recommended
+python services/price_updater.py --parallel 3
+
+# Update specific retailer only
+python services/price_updater.py --retailer twd
+
+# Custom batch size
+python services/price_updater.py --batch-size 100
+
+# Test without updating database
+python services/price_updater.py --dry-run
+
+# Full options
+python services/price_updater.py --parallel 3 --batch-size 50 --delay 1.0
+```
+
+#### CLI Options
+| Option | Description |
+|--------|-------------|
+| `--retailer, -r` | Specific retailer (twd, hp, dh, btv, gbh, mgh) |
+| `--batch-size, -b` | Products per batch (default: 50) |
+| `--delay, -d` | Delay between products in seconds (default: 1.0) |
+| `--parallel, -p` | Parallel workers: 1=sequential, 2-6=parallel (default: 1) |
+| `--dry-run` | Test without updating database |
+| `--verbose, -v` | Verbose output |
+
+#### Environment Variables (for cron)
+```env
+UPDATE_BATCH_SIZE=50
+UPDATE_DELAY=1.0
+UPDATE_PARALLEL=3
+UPDATE_RETAILER=        # Optional: specific retailer
 ```
 
 ---

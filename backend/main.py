@@ -136,6 +136,7 @@ def get_products(
     search: Optional[str] = None,
     category: Optional[str] = None,
     brand: Optional[str] = None,
+    verified: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """Get Thai Watsadu products with price comparison across retailers"""
@@ -201,6 +202,20 @@ def get_products(
                 query += " AND p.brand = %s"
                 params.append(brand)
 
+            # Filter by verification status
+            if verified == "true":
+                # Products with no unverified matches (fully verified)
+                query += """ AND NOT EXISTS (
+                    SELECT 1 FROM product_matches pm
+                    WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
+                )"""
+            elif verified == "false":
+                # Products with at least one unverified match
+                query += """ AND EXISTS (
+                    SELECT 1 FROM product_matches pm
+                    WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
+                )"""
+
             # Get total count
             count_query = query.replace("SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link", "SELECT COUNT(*)")
             cur.execute(count_query, params)
@@ -224,8 +239,19 @@ def get_products(
                     "category": bp["category"],
                     "base_price": float(bp["current_price"]) if bp["current_price"] else None,
                     "base_link": bp["link"],
-                    "retailer_prices": {}
+                    "retailer_prices": {},
+                    "is_verified": True  # Default to True, will set to False if unverified matches exist
                 }
+
+                # Check if product has any unverified match candidates
+                cur.execute("""
+                    SELECT COUNT(*) as unverified_count
+                    FROM product_matches
+                    WHERE base_product_id = %s AND verified_by_user = FALSE
+                """, (bp["product_id"],))
+                unverified = cur.fetchone()
+                if unverified and unverified["unverified_count"] > 0:
+                    product["is_verified"] = False
 
                 # Get verified correct matches from other retailers (one per retailer - the top match)
                 cur.execute("""
@@ -289,6 +315,7 @@ def export_products(
     search: Optional[str] = None,
     category: Optional[str] = None,
     brand: Optional[str] = None,
+    verified: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """Export products to CSV with price comparison across retailers"""
@@ -331,6 +358,18 @@ def export_products(
             if brand:
                 query += " AND p.brand = %s"
                 params.append(brand)
+
+            # Filter by verification status
+            if verified == "true":
+                query += """ AND NOT EXISTS (
+                    SELECT 1 FROM product_matches pm
+                    WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
+                )"""
+            elif verified == "false":
+                query += """ AND EXISTS (
+                    SELECT 1 FROM product_matches pm
+                    WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
+                )"""
 
             query += " ORDER BY p.product_id"
 

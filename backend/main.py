@@ -203,17 +203,47 @@ def get_products(
                 params.append(brand)
 
             # Filter by verification status
+            # Retailer is "done" if:
+            #   1. Has at least one verified correct match (is_same = TRUE), OR
+            #   2. ALL matches have been reviewed (even if all rejected)
+            # Retailer "needs review" if: no verified correct match AND has unreviewed matches
             if verified == "true":
-                # Products with no unverified matches (fully verified)
+                # Products where all retailers are "done" (no retailer needs review)
                 query += """ AND NOT EXISTS (
                     SELECT 1 FROM product_matches pm
-                    WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
+                    WHERE pm.base_product_id = p.product_id
+                    AND NOT EXISTS (
+                        SELECT 1 FROM product_matches pm2
+                        WHERE pm2.base_product_id = pm.base_product_id
+                          AND pm2.retailer_id = pm.retailer_id
+                          AND pm2.verified_by_user = TRUE
+                          AND pm2.is_same = TRUE
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM product_matches pm3
+                        WHERE pm3.base_product_id = pm.base_product_id
+                          AND pm3.retailer_id = pm.retailer_id
+                          AND pm3.verified_by_user = FALSE
+                    )
                 )"""
             elif verified == "false":
-                # Products with at least one unverified match
+                # Products with at least one retailer that needs review
                 query += """ AND EXISTS (
                     SELECT 1 FROM product_matches pm
-                    WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
+                    WHERE pm.base_product_id = p.product_id
+                    AND NOT EXISTS (
+                        SELECT 1 FROM product_matches pm2
+                        WHERE pm2.base_product_id = pm.base_product_id
+                          AND pm2.retailer_id = pm.retailer_id
+                          AND pm2.verified_by_user = TRUE
+                          AND pm2.is_same = TRUE
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM product_matches pm3
+                        WHERE pm3.base_product_id = pm.base_product_id
+                          AND pm3.retailer_id = pm.retailer_id
+                          AND pm3.verified_by_user = FALSE
+                    )
                 )"""
 
             # Get total count
@@ -243,14 +273,32 @@ def get_products(
                     "is_verified": True  # Default to True, will set to False if unverified matches exist
                 }
 
-                # Check if product has any unverified match candidates
+                # Check if product has any retailer that needs review
+                # Retailer is "done" if: has verified correct match OR all matches reviewed
+                # Retailer "needs review" if: no verified correct match AND has unreviewed matches
                 cur.execute("""
-                    SELECT COUNT(*) as unverified_count
-                    FROM product_matches
-                    WHERE base_product_id = %s AND verified_by_user = FALSE
+                    SELECT COUNT(*) as retailers_needing_review
+                    FROM (
+                        SELECT DISTINCT pm.retailer_id
+                        FROM product_matches pm
+                        WHERE pm.base_product_id = %s
+                        AND NOT EXISTS (
+                            SELECT 1 FROM product_matches pm2
+                            WHERE pm2.base_product_id = pm.base_product_id
+                              AND pm2.retailer_id = pm.retailer_id
+                              AND pm2.verified_by_user = TRUE
+                              AND pm2.is_same = TRUE
+                        )
+                        AND EXISTS (
+                            SELECT 1 FROM product_matches pm3
+                            WHERE pm3.base_product_id = pm.base_product_id
+                              AND pm3.retailer_id = pm.retailer_id
+                              AND pm3.verified_by_user = FALSE
+                        )
+                    ) as needs_review
                 """, (bp["product_id"],))
                 unverified = cur.fetchone()
-                if unverified and unverified["unverified_count"] > 0:
+                if unverified and unverified["retailers_needing_review"] > 0:
                     product["is_verified"] = False
 
                 # Get verified correct matches from other retailers (one per retailer - the top match)
@@ -617,13 +665,30 @@ def get_dashboard_stats(user: dict = Depends(get_current_user)):
             cur.execute("SELECT COUNT(*) as count FROM retailers")
             total_retailers = cur.fetchone()["count"]
 
-            # Pending Reviews: TWD products that have at least 1 unverified match candidate
+            # Pending Reviews: TWD products that have at least 1 retailer needing review
+            # Retailer is "done" if: has verified correct match OR all matches reviewed
+            # Retailer "needs review" if: no verified correct match AND has unreviewed matches
             cur.execute("""
-                SELECT COUNT(DISTINCT pm.base_product_id) as count
-                FROM product_matches pm
-                JOIN products p ON pm.base_product_id = p.product_id
+                SELECT COUNT(DISTINCT p.product_id) as count
+                FROM products p
                 WHERE p.retailer_id = %s
-                  AND pm.verified_by_user = FALSE
+                AND EXISTS (
+                    SELECT 1 FROM product_matches pm
+                    WHERE pm.base_product_id = p.product_id
+                    AND NOT EXISTS (
+                        SELECT 1 FROM product_matches pm2
+                        WHERE pm2.base_product_id = pm.base_product_id
+                          AND pm2.retailer_id = pm.retailer_id
+                          AND pm2.verified_by_user = TRUE
+                          AND pm2.is_same = TRUE
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM product_matches pm3
+                        WHERE pm3.base_product_id = pm.base_product_id
+                          AND pm3.retailer_id = pm.retailer_id
+                          AND pm3.verified_by_user = FALSE
+                    )
+                )
             """, (twd_id,))
             pending_reviews = cur.fetchone()["count"]
 

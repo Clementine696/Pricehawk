@@ -1488,6 +1488,7 @@ def manual_comparison(
             return {
                 "success": True,
                 "base_sku": data.thaiwatsadu.sku,
+                "twd_product_id": twd_product["product_id"],
                 "results": results,
                 "lowest_price": lowest_price,
             }

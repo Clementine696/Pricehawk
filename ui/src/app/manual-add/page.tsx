@@ -1367,7 +1367,7 @@ function ManualAddContent() {
             {/* Action Buttons */}
             <div className="flex justify-center gap-4">
               <Link
-                href="/products"
+                href={comparisonResult.twd_product_id ? `/products/${comparisonResult.twd_product_id}` : '/products'}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 px-8 py-3 font-semibold text-white transition-all hover:from-cyan-600 hover:to-blue-600 hover:shadow-lg"
               >
                 <ExternalLink className="h-5 w-5" />

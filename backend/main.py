@@ -154,17 +154,30 @@ def get_products(
             cur.execute("SELECT retailer_id, name FROM retailers ORDER BY name")
             retailers = cur.fetchall()
 
-            # Get unique categories and brands for filters (only from Thai Watsadu products)
-            cur.execute(
-                "SELECT DISTINCT category FROM products WHERE retailer_id = %s AND category IS NOT NULL ORDER BY category",
-                (base_retailer_id,)
-            )
+            # Get unique categories for filters (filtered by selected brand for cascading)
+            category_query = """
+                SELECT DISTINCT category FROM products
+                WHERE retailer_id = %s AND category IS NOT NULL
+            """
+            category_params = [base_retailer_id]
+            if brand:
+                category_query += " AND brand = %s"
+                category_params.append(brand)
+            category_query += " ORDER BY category"
+            cur.execute(category_query, category_params)
             categories = [row["category"] for row in cur.fetchall()]
 
-            cur.execute(
-                "SELECT DISTINCT brand FROM products WHERE retailer_id = %s AND brand IS NOT NULL ORDER BY brand",
-                (base_retailer_id,)
-            )
+            # Get unique brands for filters (filtered by selected category for cascading)
+            brand_query = """
+                SELECT DISTINCT brand FROM products
+                WHERE retailer_id = %s AND brand IS NOT NULL
+            """
+            brand_params = [base_retailer_id]
+            if category:
+                brand_query += " AND category = %s"
+                brand_params.append(category)
+            brand_query += " ORDER BY brand"
+            cur.execute(brand_query, brand_params)
             brands = [row["brand"] for row in cur.fetchall()]
 
             # Build query for Thai Watsadu products
@@ -571,6 +584,26 @@ def get_dashboard_stats(user: dict = Depends(get_current_user)):
                 "total_matches": total_matches,
                 "pending_reviews": pending_reviews
             }
+
+
+@app.get("/api/retailers")
+def get_retailers_with_stats(user: dict = Depends(get_current_user)):
+    """Get all retailers with product counts"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    r.retailer_id,
+                    r.name,
+                    COUNT(p.product_id) as product_count
+                FROM retailers r
+                LEFT JOIN products p ON r.retailer_id = p.retailer_id
+                GROUP BY r.retailer_id, r.name
+                ORDER BY r.name
+            """)
+            retailers = cur.fetchall()
+
+            return [dict(r) for r in retailers]
 
 
 # ============== Matches API ==============

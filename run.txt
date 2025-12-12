@@ -17,4 +17,8 @@ python ./backend/seed.py
 python ./scraper/sample_upload.py
 python ./scraper/seed_all_data.py
 
-hello
+seeder folder
+seed_users.py
+seed_product.py > all product
+seed_products_matched.py > only product that interst
+upload_matches.py > upload product pair

@@ -13,6 +13,12 @@ interface DashboardStats {
   pending_reviews: number;
 }
 
+interface Retailer {
+  retailer_id: string;
+  name: string;
+  product_count: number;
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats>({
     total_products: 0,
@@ -20,21 +26,31 @@ export default function Dashboard() {
     total_matches: 0,
     pending_reviews: 0,
   });
+  const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    fetchStats();
+    fetchData();
   }, []);
 
-  const fetchStats = async () => {
+  const fetchData = async () => {
     try {
-      const response = await apiFetch('/api/dashboard/stats');
-      if (response.ok) {
-        const data = await response.json();
+      const [statsRes, retailersRes] = await Promise.all([
+        apiFetch('/api/dashboard/stats'),
+        apiFetch('/api/retailers'),
+      ]);
+
+      if (statsRes.ok) {
+        const data = await statsRes.json();
         setStats(data);
       }
+
+      if (retailersRes.ok) {
+        const data = await retailersRes.json();
+        setRetailers(data);
+      }
     } catch (error) {
-      console.error('Error fetching stats:', error);
+      console.error('Error fetching data:', error);
     } finally {
       setIsLoading(false);
     }
@@ -137,6 +153,36 @@ export default function Dashboard() {
                 <p className="text-sm text-gray-500">Coming soon</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Retailers Section */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Retailers Overview</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {isLoading ? (
+              <div className="col-span-full text-center py-8 text-gray-500">Loading retailers...</div>
+            ) : retailers.length === 0 ? (
+              <div className="col-span-full text-center py-8 text-gray-500">No retailers found</div>
+            ) : (
+              retailers.map((retailer) => (
+                <div
+                  key={retailer.retailer_id}
+                  className="border border-gray-200 rounded-lg p-4 hover:border-cyan-300 transition-colors"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-medium text-gray-900">{retailer.name}</h3>
+                    <Store className="w-5 h-5 text-gray-400" />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">Products</span>
+                    <span className="text-lg font-semibold text-cyan-600">
+                      {retailer.product_count.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

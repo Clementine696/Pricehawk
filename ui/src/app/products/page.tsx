@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Search, RotateCcw, Download, ExternalLink, Loader2 } from 'lucide-react';
@@ -31,7 +31,7 @@ interface Retailer {
 
 const RETAILER_ORDER = ['Thai Watsadu', 'HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House'];
 
-export default function ProductsPage() {
+function ProductsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -452,5 +452,22 @@ export default function ProductsPage() {
         </div>
       </div>
     </MainLayout>
+  );
+}
+
+export default function ProductsPage() {
+  return (
+    <Suspense fallback={
+      <MainLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <Loader2 className="w-12 h-12 animate-spin text-cyan-500 mx-auto" />
+            <p className="mt-4 text-gray-600">Loading products...</p>
+          </div>
+        </div>
+      </MainLayout>
+    }>
+      <ProductsContent />
+    </Suspense>
   );
 }

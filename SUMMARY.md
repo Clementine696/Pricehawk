@@ -337,6 +337,9 @@ python services/price_updater.py
 # Parallel processing (3 retailers at once) - recommended
 python services/price_updater.py --parallel 3
 
+# or up to 20 workers
+python services/price_updater.py --parallel 20
+
 # Update specific retailer only
 python services/price_updater.py --retailer twd
 
@@ -356,7 +359,7 @@ python services/price_updater.py --parallel 3 --batch-size 50 --delay 1.0
 | `--retailer, -r` | Specific retailer (twd, hp, dh, btv, gbh, mgh) |
 | `--batch-size, -b` | Products per batch (default: 50) |
 | `--delay, -d` | Delay between products in seconds (default: 1.0) |
-| `--parallel, -p` | Parallel workers: 1=sequential, 2-6=parallel (default: 1) |
+| `--parallel, -p` | Parallel workers: 1=sequential, 2-20=parallel (default: 1) |
 | `--dry-run` | Test without updating database |
 | `--verbose, -v` | Verbose output |
 

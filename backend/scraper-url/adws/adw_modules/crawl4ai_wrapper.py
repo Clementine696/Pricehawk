@@ -7,15 +7,44 @@ This module wraps the crawl4ai library to provide:
 - Content extraction methods
 - Error handling for network issues and anti-bot measures
 - Output formatting functions
+
+Environment Variables (set in .env):
+- SCRAPER_VERBOSE: Enable verbose logging (true/false, default: false)
+- SCRAPER_ONLY_TEXT: Extract text only, no HTML structure (true/false, default: false)
+- SCRAPER_EXCLUDE_EXTERNAL_IMAGES: Skip external images (true/false, default: false)
+
+Scenarios:
+1. Scrape new product: SCRAPER_VERBOSE=true, SCRAPER_ONLY_TEXT=false, SCRAPER_EXCLUDE_EXTERNAL_IMAGES=false
+2. Re-scrape price:   SCRAPER_VERBOSE=false, SCRAPER_ONLY_TEXT=true, SCRAPER_EXCLUDE_EXTERNAL_IMAGES=true
 """
 
 import asyncio
 import json
+import os
 import time
 import urllib.parse
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 import logging
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    # Try to load from backend/.env
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), '.env')
+    load_dotenv(env_path)
+except ImportError:
+    pass  # dotenv not installed, use system env vars
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    """Get boolean value from environment variable."""
+    value = os.environ.get(key, '').lower()
+    if value in ('true', '1', 'yes', 'on'):
+        return True
+    elif value in ('false', '0', 'no', 'off'):
+        return False
+    return default
 
 # HTTP fallback imports
 try:
@@ -72,13 +101,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ScrapingConfig:
-    """Configuration for web scraping operations."""
+    """Configuration for web scraping operations.
+
+    Environment variables (from .env):
+    - SCRAPER_VERBOSE: Enable verbose logging
+    - SCRAPER_ONLY_TEXT: Extract text only (faster for price updates)
+    - SCRAPER_EXCLUDE_EXTERNAL_IMAGES: Skip loading external images
+    """
     max_concurrent: int = 3
     delay_between_requests: float = 1.0
     timeout: int = 30
     user_agent: str = "Mozilla/5.0 (compatible; Crawl4AI/1.0)"
     headless: bool = True
-    verbose: bool = False
+    verbose: bool = None  # None = use env var
     retry_attempts: int = 3
     retry_delay: float = 2.0
 
@@ -99,6 +134,19 @@ class ScrapingConfig:
     include_links: bool = True
     include_images: bool = True
     include_metadata: bool = True
+
+    # Configurable via .env for different scenarios
+    only_text: bool = None  # None = use env var
+    exclude_external_images: bool = None  # None = use env var
+
+    def __post_init__(self):
+        """Apply environment variable defaults after init."""
+        if self.verbose is None:
+            self.verbose = _env_bool('SCRAPER_VERBOSE', False)
+        if self.only_text is None:
+            self.only_text = _env_bool('SCRAPER_ONLY_TEXT', False)
+        if self.exclude_external_images is None:
+            self.exclude_external_images = _env_bool('SCRAPER_EXCLUDE_EXTERNAL_IMAGES', False)
 
 
 @dataclass
@@ -226,13 +274,13 @@ class Crawl4AIWrapper:
                     # crawl4ai v0.7.x uses extra_args for browser arguments
                     browser_cfg = BrowserConfig(
                         headless=True,
-                        verbose=self.config.verbose,
                         extra_args=[
                             "--no-sandbox",
                             "--disable-setuid-sandbox",
                             "--disable-dev-shm-usage",
                             "--disable-gpu",
-                        ]
+                        ],
+                        verbose=self.config.verbose,  # From env: SCRAPER_VERBOSE
                     )
                     self.crawler = AsyncWebCrawler(config=browser_cfg)
                     await self.crawler.start()
@@ -646,12 +694,21 @@ class Crawl4AIWrapper:
 
                 # Perform the crawl using CrawlerRunConfig if available (v0.7.x+)
                 if CrawlerRunConfig is not None and self.config.use_browser:
+                    # Log config for debugging
+                    logger.debug(f"CrawlerRunConfig: only_text={self.config.only_text}, "
+                                f"exclude_external_images={self.config.exclude_external_images}, "
+                                f"verbose={self.config.verbose}")
+
                     run_config = CrawlerRunConfig(
+                        stream=True,                                        # Process immediately
+                        only_text=self.config.only_text,                    # From env: SCRAPER_ONLY_TEXT
+                        exclude_external_images=self.config.exclude_external_images,  # From env: SCRAPER_EXCLUDE_EXTERNAL_IMAGES
+                        wait_for=None,                                      # Don't wait for JS if static
+
                         word_count_threshold=self.config.min_content_length,
                         extraction_strategy=extraction_strategy,
                         bypass_cache=False,
                         js_code=js_scroll_code,
-                        wait_for=wait_for or "() => document.readyState === 'complete' && document.body && document.body.innerText.length > 100",
                         css_selector=css_selector or "body",
                         simulate_user=self.config.simulate_user,
                         override_navigator=True,

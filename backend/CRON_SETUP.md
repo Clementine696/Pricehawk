@@ -81,37 +81,46 @@ Options:
   --retailer, -r    Specific retailer ID (twd, hp, dh, btv, gbh, mgh)
   --batch-size, -b  Batch size (default: 50)
   --delay, -d       Delay between products in seconds (default: 1.0)
-  --parallel, -p    Parallel workers: 1=sequential, 2-6=parallel (default: 1)
+  --parallel, -p    Parallel workers: 1=sequential, 2-20=parallel (default: 1)
   --dry-run         Test without updating database
   --verbose, -v     Verbose output
 ```
 
 ## Parallel Processing
 
-The price updater supports parallel processing across retailers:
+The price updater supports parallel processing with equal distribution:
 
 | Workers | Mode | Description |
 |---------|------|-------------|
-| 1 | Sequential | Process one retailer at a time (default, safest) |
-| 2-3 | Light parallel | Good balance of speed and resource usage |
-| 4-6 | Full parallel | Maximum speed, higher resource usage |
+| 1 | Sequential | Process all products one by one (default, safest) |
+| 2-5 | Light parallel | Good balance of speed and resource usage |
+| 6-10 | Medium parallel | Faster processing |
+| 10-20 | Full parallel | Maximum speed, higher resource usage |
 
 **How it works:**
-- Each worker processes one retailer independently
-- Products within each retailer are still processed sequentially (with rate limiting)
+- Products are split **equally** across all workers
+- Each worker processes their chunk independently with rate limiting
 - Thread-safe statistics tracking across all workers
-- Maximum 6 workers (one per retailer)
+- Maximum 20 workers
+
+**Example with 6000 products and --parallel 6:**
+- Worker 1: products 1-1000
+- Worker 2: products 1001-2000
+- Worker 3: products 2001-3000
+- Worker 4: products 3001-4000
+- Worker 5: products 4001-5000
+- Worker 6: products 5001-6000
 
 **Recommendations:**
 - Use `--parallel 1` for initial testing or low-resource environments
-- Use `--parallel 3` for balanced production runs
-- Use `--parallel 6` for fastest processing (requires more memory/CPU)
+- Use `--parallel 6` for balanced production runs
+- Use `--parallel 10-20` for fastest processing (requires more memory/CPU)
 
 ## What It Does
 
 1. **Fetches all products** from database (with valid URLs)
-2. **Groups by retailer** for efficient processing
-3. **Processes in batches** of 50 products
+2. **Splits equally** across workers
+3. **Processes in batches** of 50 products per worker
 4. **For each product:**
    - Calls existing scraper to get fresh price
    - Updates `products` table:

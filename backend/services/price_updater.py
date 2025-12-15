@@ -1,0 +1,625 @@
+"""
+Price Updater Service
+
+Daily service to update product prices by scraping retailer websites.
+Designed to handle ~10,000 products efficiently.
+
+Features:
+- Parallel processing across retailers (6 concurrent retailer workers)
+- Batch processing within each retailer
+- Rate limiting to avoid being blocked
+- Progress tracking and logging
+- Price history recording
+
+Usage:
+    python update_prices.py                    # Update all products
+    python update_prices.py --retailer twd     # Update specific retailer
+    python update_prices.py --batch-size 100   # Custom batch size
+    python update_prices.py --dry-run          # Test without updating DB
+    python update_prices.py --parallel 3       # 3 parallel retailer workers
+"""
+
+import os
+import sys
+import json
+import asyncio
+import subprocess
+import logging
+import concurrent.futures
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass, field
+from collections import defaultdict
+from threading import Lock
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database import get_db
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(f'price_update_{datetime.now().strftime("%Y%m%d")}.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class UpdateStats:
+    """Statistics for price update run (thread-safe)"""
+    total_products: int = 0
+    updated: int = 0
+    failed: int = 0
+    unchanged: int = 0
+    price_increased: int = 0
+    price_decreased: int = 0
+    new_lowest: int = 0
+    new_highest: int = 0
+    _lock: Lock = field(default_factory=Lock, repr=False)
+
+    def increment(self, field_name: str, value: int = 1):
+        """Thread-safe increment of a stat field"""
+        with self._lock:
+            current = getattr(self, field_name)
+            setattr(self, field_name, current + value)
+
+    def to_dict(self) -> Dict:
+        return {
+            'total_products': self.total_products,
+            'updated': self.updated,
+            'failed': self.failed,
+            'unchanged': self.unchanged,
+            'price_increased': self.price_increased,
+            'price_decreased': self.price_decreased,
+            'new_lowest': self.new_lowest,
+            'new_highest': self.new_highest,
+        }
+
+
+class PriceUpdater:
+    """
+    Service to update product prices from retailer websites.
+
+    Processes products in batches, grouped by retailer to optimize
+    browser reuse and respect rate limits.
+    """
+
+    # Scraper script path
+    SCRAPER_SCRIPT = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "scraper-url", "adws", "adw_ecommerce_product_scraper.py"
+    )
+
+    # Retailer file naming (scraper output files)
+    RETAILER_FILES = {
+        'twd': ['thai_watsadu.json', 'thaiwatsadu.json'],
+        'hp': ['homepro.json', 'home_pro.json'],
+        'dh': ['dohome.json', 'do_home.json'],
+        'btv': ['boonthavorn.json'],
+        'gbh': ['global_house.json', 'globalhouse.json'],
+        'mgh': ['mega_home.json', 'megahome.json'],
+    }
+
+    def __init__(
+        self,
+        batch_size: int = 50,
+        delay_between_batches: float = 2.0,
+        delay_between_products: float = 1.0,
+        max_retries: int = 2,
+        dry_run: bool = False,
+        parallel_workers: int = 1
+    ):
+        """
+        Initialize price updater.
+
+        Args:
+            batch_size: Products to process per batch
+            delay_between_batches: Seconds to wait between batches
+            delay_between_products: Seconds to wait between products (rate limiting)
+            max_retries: Max retry attempts for failed scrapes
+            dry_run: If True, don't update database
+            parallel_workers: Number of parallel retailer workers (1 = sequential)
+        """
+        self.batch_size = batch_size
+        self.delay_between_batches = delay_between_batches
+        self.delay_between_products = delay_between_products
+        self.max_retries = max_retries
+        self.dry_run = dry_run
+        self.parallel_workers = max(1, min(parallel_workers, 20))  # Clamp between 1-20
+        self.stats = UpdateStats()
+        self.results_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "results", "price_updates"
+        )
+        os.makedirs(self.results_dir, exist_ok=True)
+
+    def get_products_by_retailer(self, retailer_id: Optional[str] = None) -> Dict[str, List[Dict]]:
+        """
+        Get all products from database grouped by retailer.
+
+        Args:
+            retailer_id: Optional filter for specific retailer
+
+        Returns:
+            Dict mapping retailer_id to list of products
+        """
+        products_by_retailer = defaultdict(list)
+
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                query = """
+                    SELECT
+                        p.product_id, p.retailer_id, p.sku, p.name,
+                        p.link, p.current_price, p.original_price,
+                        p.lowest_price, p.highest_price, p.last_updated_at
+                    FROM products p
+                    WHERE p.link IS NOT NULL AND p.link != ''
+                """
+                params = []
+
+                if retailer_id:
+                    query += " AND p.retailer_id = %s"
+                    params.append(retailer_id)
+
+                query += " ORDER BY p.retailer_id, p.product_id"
+
+                cur.execute(query, params)
+                products = cur.fetchall()
+
+                for product in products:
+                    products_by_retailer[product['retailer_id']].append(dict(product))
+
+        return dict(products_by_retailer)
+
+    def get_all_products(self, retailer_id: Optional[str] = None) -> List[Dict]:
+        """
+        Get all products from database as a flat list.
+
+        Args:
+            retailer_id: Optional filter for specific retailer
+
+        Returns:
+            List of all products
+        """
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                query = """
+                    SELECT
+                        p.product_id, p.retailer_id, p.sku, p.name,
+                        p.link, p.current_price, p.original_price,
+                        p.lowest_price, p.highest_price, p.last_updated_at
+                    FROM products p
+                    WHERE p.link IS NOT NULL AND p.link != ''
+                """
+                params = []
+
+                if retailer_id:
+                    query += " AND p.retailer_id = %s"
+                    params.append(retailer_id)
+
+                query += " ORDER BY p.product_id"
+
+                cur.execute(query, params)
+                return [dict(p) for p in cur.fetchall()]
+
+    def process_worker_chunk(self, worker_id: int, products: List[Dict]) -> int:
+        """
+        Process a chunk of products assigned to a worker.
+
+        Args:
+            worker_id: Worker identifier (1-indexed)
+            products: List of products to process
+
+        Returns:
+            Number of successfully updated products
+        """
+        import time
+
+        logger.info(f"\n{'='*40}")
+        logger.info(f"Worker {worker_id}: Processing {len(products)} products")
+        logger.info(f"{'='*40}")
+
+        total_updated = 0
+
+        # Process in batches
+        for batch_start in range(0, len(products), self.batch_size):
+            batch_end = min(batch_start + self.batch_size, len(products))
+            batch = products[batch_start:batch_end]
+
+            logger.info(f"\n[Worker {worker_id}] Batch {batch_start//self.batch_size + 1}: "
+                       f"products {batch_start + 1}-{batch_end}")
+
+            total_updated += self.process_batch(batch)
+
+            # Delay between batches
+            if batch_end < len(products):
+                logger.info(f"[Worker {worker_id}] Waiting {self.delay_between_batches}s before next batch...")
+                time.sleep(self.delay_between_batches)
+
+        logger.info(f"\n[Worker {worker_id}] Completed: {total_updated}/{len(products)} updated")
+        return total_updated
+
+    def scrape_product(self, url: str) -> Optional[Dict]:
+        """
+        Scrape a single product URL using the existing scraper.
+
+        Args:
+            url: Product URL to scrape
+
+        Returns:
+            Scraped product data or None if failed
+        """
+        import uuid
+        import tempfile
+
+        output_file = os.path.join(self.results_dir, f"scrape_{uuid.uuid4().hex}.json")
+
+        cmd = [
+            "python", self.SCRAPER_SCRIPT,
+            "--url", url,
+            "--output-file", output_file
+        ]
+
+        try:
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',  # Handle Thai characters on Windows
+                timeout=120,  # 2 minute timeout per product
+                env=env,
+                cwd=os.path.dirname(self.SCRAPER_SCRIPT)
+            )
+
+            if result.returncode != 0:
+                logger.warning(f"Scraper failed for {url}: {result.stderr[:200]}")
+                return None
+
+            # Look for output in retailer files
+            output_dir = os.path.dirname(output_file)
+
+            for retailer_id, filenames in self.RETAILER_FILES.items():
+                for filename in filenames:
+                    filepath = os.path.join(output_dir, filename)
+                    if os.path.exists(filepath):
+                        try:
+                            with open(filepath, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+
+                            if isinstance(data, list):
+                                for product in data:
+                                    product_url = product.get('url', '')
+                                    if self._normalize_url(product_url) == self._normalize_url(url):
+                                        return product
+                        except Exception as e:
+                            logger.error(f"Error reading {filepath}: {e}")
+
+            # Also check the direct output file
+            if os.path.exists(output_file):
+                try:
+                    with open(output_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        return data[0]
+                    elif isinstance(data, dict):
+                        return data
+                except Exception as e:
+                    logger.error(f"Error reading output file: {e}")
+
+            return None
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout scraping {url}")
+            return None
+        except Exception as e:
+            logger.error(f"Error scraping {url}: {e}")
+            return None
+
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL for comparison"""
+        if not url:
+            return ""
+        url = url.lower().strip()
+        url = url.rstrip('/')
+        if url.startswith('http://'):
+            url = url.replace('http://', 'https://')
+        return url
+
+    def update_product_price(
+        self,
+        product: Dict,
+        scraped_data: Dict
+    ) -> bool:
+        """
+        Update product price in database.
+
+        Args:
+            product: Original product from database
+            scraped_data: Fresh scraped data
+
+        Returns:
+            True if updated successfully
+        """
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would update {product['sku']}: "
+                       f"{product['current_price']} -> {scraped_data.get('current_price')}")
+            return True
+
+        new_price = scraped_data.get('current_price')
+        new_original_price = scraped_data.get('original_price')
+
+        if new_price is None:
+            logger.warning(f"No price in scraped data for {product['sku']}")
+            return False
+
+        try:
+            new_price = float(new_price)
+        except (TypeError, ValueError):
+            logger.warning(f"Invalid price format for {product['sku']}: {new_price}")
+            return False
+
+        old_price = float(product['current_price']) if product['current_price'] else None
+        lowest_price = float(product['lowest_price']) if product['lowest_price'] else new_price
+        highest_price = float(product['highest_price']) if product['highest_price'] else new_price
+
+        # Track price changes (thread-safe)
+        if old_price:
+            if new_price > old_price:
+                self.stats.increment('price_increased')
+            elif new_price < old_price:
+                self.stats.increment('price_decreased')
+            else:
+                self.stats.increment('unchanged')
+
+        # Update lowest/highest
+        if new_price < lowest_price:
+            lowest_price = new_price
+            self.stats.increment('new_lowest')
+        if new_price > highest_price:
+            highest_price = new_price
+            self.stats.increment('new_highest')
+
+        try:
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    # Update product
+                    cur.execute("""
+                        UPDATE products SET
+                            current_price = %s,
+                            original_price = COALESCE(%s, original_price),
+                            lowest_price = %s,
+                            highest_price = %s,
+                            last_updated_at = NOW()
+                        WHERE product_id = %s
+                    """, (
+                        new_price,
+                        new_original_price,
+                        lowest_price,
+                        highest_price,
+                        product['product_id']
+                    ))
+
+                    # Insert price history
+                    cur.execute("""
+                        INSERT INTO price_history (product_id, price, scraped_at)
+                        VALUES (%s, %s, NOW())
+                    """, (product['product_id'], new_price))
+
+                    conn.commit()
+
+            self.stats.increment('updated')
+            return True
+
+        except Exception as e:
+            logger.error(f"Database error updating {product['sku']}: {e}")
+            self.stats.increment('failed')
+            return False
+
+    def process_batch(self, products: List[Dict]) -> int:
+        """
+        Process a batch of products.
+
+        Args:
+            products: List of products to process
+
+        Returns:
+            Number of successfully updated products
+        """
+        import time
+
+        updated = 0
+
+        for i, product in enumerate(products):
+            logger.info(f"  [{i+1}/{len(products)}] Processing {product['sku']} - {product['link'][:60]}...")
+
+            scraped = None
+            for attempt in range(self.max_retries):
+                scraped = self.scrape_product(product['link'])
+                if scraped:
+                    break
+                logger.warning(f"  Retry {attempt + 1}/{self.max_retries} for {product['sku']}")
+                time.sleep(self.delay_between_products)
+
+            if scraped:
+                if self.update_product_price(product, scraped):
+                    updated += 1
+                    logger.info(f"  Updated: {product['current_price']} -> {scraped.get('current_price')}")
+            else:
+                self.stats.increment('failed')
+                logger.error(f"  Failed to scrape {product['sku']}")
+
+            # Rate limiting
+            if i < len(products) - 1:
+                time.sleep(self.delay_between_products)
+
+        return updated
+
+    def process_retailer(self, retailer_id: str, products: List[Dict]) -> int:
+        """
+        Process all products for a single retailer.
+
+        Args:
+            retailer_id: Retailer identifier
+            products: List of products for this retailer
+
+        Returns:
+            Number of successfully updated products
+        """
+        import time
+
+        logger.info(f"\n{'='*40}")
+        logger.info(f"Processing retailer: {retailer_id} ({len(products)} products)")
+        logger.info(f"{'='*40}")
+
+        total_updated = 0
+
+        # Process in batches
+        for batch_start in range(0, len(products), self.batch_size):
+            batch_end = min(batch_start + self.batch_size, len(products))
+            batch = products[batch_start:batch_end]
+
+            logger.info(f"\n[{retailer_id}] Batch {batch_start//self.batch_size + 1}: "
+                       f"products {batch_start + 1}-{batch_end}")
+
+            total_updated += self.process_batch(batch)
+
+            # Delay between batches
+            if batch_end < len(products):
+                logger.info(f"[{retailer_id}] Waiting {self.delay_between_batches}s before next batch...")
+                time.sleep(self.delay_between_batches)
+
+        logger.info(f"\n[{retailer_id}] Completed: {total_updated}/{len(products)} updated")
+        return total_updated
+
+    def run(self, retailer_id: Optional[str] = None) -> UpdateStats:
+        """
+        Run the price update process.
+
+        Args:
+            retailer_id: Optional filter for specific retailer
+
+        Returns:
+            Update statistics
+        """
+        start_time = datetime.now()
+        logger.info("=" * 60)
+        logger.info(f"Price Update Started: {start_time}")
+        logger.info(f"Configuration: batch_size={self.batch_size}, parallel_workers={self.parallel_workers}, dry_run={self.dry_run}")
+        logger.info("=" * 60)
+
+        # Get all products as flat list
+        all_products = self.get_all_products(retailer_id)
+        total_products = len(all_products)
+        self.stats.total_products = total_products
+
+        logger.info(f"Total products to update: {total_products}")
+
+        # Count by retailer for info
+        from collections import Counter
+        retailer_counts = Counter(p['retailer_id'] for p in all_products)
+        for rid, count in sorted(retailer_counts.items()):
+            logger.info(f"  {rid}: {count} products")
+
+        # Process products
+        if self.parallel_workers == 1:
+            # Sequential processing
+            logger.info("\nRunning in SEQUENTIAL mode (1 worker)")
+            self.process_worker_chunk(1, all_products)
+        else:
+            # Parallel processing - split products equally across workers
+            logger.info(f"\nRunning in PARALLEL mode ({self.parallel_workers} workers)")
+
+            # Split products into equal chunks
+            chunk_size = (total_products + self.parallel_workers - 1) // self.parallel_workers
+            chunks = []
+            for i in range(self.parallel_workers):
+                start_idx = i * chunk_size
+                end_idx = min(start_idx + chunk_size, total_products)
+                if start_idx < total_products:
+                    chunks.append(all_products[start_idx:end_idx])
+
+            logger.info(f"Split into {len(chunks)} chunks:")
+            for i, chunk in enumerate(chunks):
+                logger.info(f"  Worker {i+1}: {len(chunk)} products")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(chunks)) as executor:
+                futures = {
+                    executor.submit(self.process_worker_chunk, i+1, chunk): i+1
+                    for i, chunk in enumerate(chunks)
+                }
+
+                for future in concurrent.futures.as_completed(futures):
+                    worker_id = futures[future]
+                    try:
+                        updated = future.result()
+                        logger.info(f"Worker {worker_id} finished with {updated} updates")
+                    except Exception as e:
+                        logger.error(f"Worker {worker_id} failed with error: {e}")
+
+        # Summary
+        end_time = datetime.now()
+        duration = end_time - start_time
+
+        logger.info("\n" + "=" * 60)
+        logger.info("PRICE UPDATE COMPLETE")
+        logger.info("=" * 60)
+        logger.info(f"Duration: {duration}")
+        logger.info(f"Parallel Workers: {self.parallel_workers}")
+        logger.info(f"Total Products: {self.stats.total_products}")
+        logger.info(f"Updated: {self.stats.updated}")
+        logger.info(f"Failed: {self.stats.failed}")
+        logger.info(f"Unchanged: {self.stats.unchanged}")
+        logger.info(f"Price Increased: {self.stats.price_increased}")
+        logger.info(f"Price Decreased: {self.stats.price_decreased}")
+        logger.info(f"New Lowest: {self.stats.new_lowest}")
+        logger.info(f"New Highest: {self.stats.new_highest}")
+        logger.info("=" * 60)
+
+        return self.stats
+
+
+def main():
+    """CLI entry point"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Update product prices')
+    parser.add_argument('--retailer', '-r', help='Specific retailer ID (twd, hp, dh, btv, gbh, mgh)')
+    parser.add_argument('--batch-size', '-b', type=int, default=50, help='Batch size (default: 50)')
+    parser.add_argument('--delay', '-d', type=float, default=1.0, help='Delay between products in seconds')
+    parser.add_argument('--parallel', '-p', type=int, default=1,
+                       help='Parallel workers: 1=sequential, 2-20=parallel (default: 1)')
+    parser.add_argument('--dry-run', action='store_true', help='Test without updating database')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    updater = PriceUpdater(
+        batch_size=args.batch_size,
+        delay_between_products=args.delay,
+        parallel_workers=args.parallel,
+        dry_run=args.dry_run
+    )
+
+    stats = updater.run(retailer_id=args.retailer)
+
+    # Exit with error code if too many failures
+    failure_rate = stats.failed / stats.total_products if stats.total_products > 0 else 0
+    if failure_rate > 0.5:
+        logger.error(f"High failure rate: {failure_rate:.1%}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

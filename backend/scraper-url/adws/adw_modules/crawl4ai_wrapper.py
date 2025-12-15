@@ -283,8 +283,8 @@ class Crawl4AIWrapper:
                             # === CRITICAL: /dev/shm workaround for containers ===
                             "--disable-dev-shm-usage",  # Don't use /dev/shm (only 64MB in Docker)
                             "--disk-cache-dir=/tmp/chrome-cache",  # Use disk cache in /tmp
-                            "--user-data-dir=/tmp/chrome-user-data",  # Store user data in /tmp
-                            "--crash-dumps-dir=/tmp/chrome-crashes",  # Crash dumps in /tmp
+                            # NOTE: Don't use --user-data-dir or --crash-dumps-dir
+                            # Playwright requires launch_persistent_context() for those, which crawl4ai doesn't use
                             # === Essential container flags ===
                             "--no-sandbox",
                             "--disable-setuid-sandbox",

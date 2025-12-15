@@ -154,8 +154,8 @@ def cleanup_chrome_temp_dirs():
     try:
         tmp_dirs = [
             '/tmp/chrome-cache',
-            '/tmp/chrome-user-data',
-            '/tmp/chrome-crashes',
+            # NOTE: Don't clean user-data-dir or crash-dumps-dir - we no longer use those flags
+            # (Playwright requires launch_persistent_context() for --user-data-dir)
         ]
 
         for tmp_dir in tmp_dirs:

@@ -488,6 +488,10 @@ class PriceUpdater:
             except Exception:
                 pass
 
+            # AGGRESSIVE cleanup: Kill any leftover browser processes after EVERY scrape
+            # This is critical for Railway where memory is limited
+            cleanup_orphan_browsers()
+
             # Force garbage collection to free memory
             gc.collect()
 
@@ -627,6 +631,13 @@ class PriceUpdater:
             # Rate limiting
             if i < len(products) - 1:
                 time.sleep(self.delay_between_products)
+
+            # Memory cooldown: pause every 25 products to let Railway reclaim memory
+            if (i + 1) % 25 == 0:
+                logger.info(f"  Memory cooldown: pausing 5s after {i + 1} products...")
+                cleanup_orphan_browsers()
+                gc.collect()
+                time.sleep(5)
 
         return updated
 

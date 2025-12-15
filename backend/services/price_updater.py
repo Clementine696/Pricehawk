@@ -342,6 +342,15 @@ class PriceUpdater:
             env = os.environ.copy()
             env["PYTHONIOENCODING"] = "utf-8"
 
+            # CRITICAL: Limit OpenBLAS/numpy threads to prevent thread exhaustion
+            # Without these, each subprocess tries to create 48 threads, causing
+            # "pthread_create failed" errors when running multiple workers
+            env["OPENBLAS_NUM_THREADS"] = "1"
+            env["MKL_NUM_THREADS"] = "1"
+            env["NUMEXPR_NUM_THREADS"] = "1"
+            env["OMP_NUM_THREADS"] = "1"
+            env["VECLIB_MAXIMUM_THREADS"] = "1"
+
             # Use Popen for better control over process cleanup
             # On Linux, start in new process group so we can kill all children
             popen_kwargs = {

@@ -113,6 +113,26 @@ function StageIndicator({ currentStage }: { currentStage: ComparisonStage }) {
 }
 
 // Competitor Input Card Component
+// Helper function to validate URL domain
+function validateUrlDomain(url: string, expectedDomain: string): { valid: boolean; error?: string } {
+  if (!url.trim()) return { valid: true }; // Empty is OK (will be caught by required validation)
+  if (!url.startsWith('http')) return { valid: false, error: 'URL must start with http:// or https://' };
+
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    const expected = expectedDomain.toLowerCase();
+
+    // Check if hostname contains the expected domain
+    if (!hostname.includes(expected)) {
+      return { valid: false, error: `URL must be from ${expectedDomain}` };
+    }
+    return { valid: true };
+  } catch {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+}
+
 function CompetitorInputCard({
   id,
   retailer,
@@ -136,7 +156,13 @@ function CompetitorInputCard({
 }) {
   const [showRetailerSelector, setShowRetailerSelector] = useState(!retailer);
   const selectedCompetitor = COMPETITORS.find(c => c.id === retailer);
-  const isUrlValid = url.trim().length > 0 && url.startsWith('http');
+
+  // Validate URL format and domain
+  const urlValidation = retailer && url.trim()
+    ? validateUrlDomain(url, selectedCompetitor?.domain || '')
+    : { valid: url.trim().length === 0 || url.startsWith('http') };
+  const isUrlValid = url.trim().length > 0 && url.startsWith('http') && urlValidation.valid;
+  const domainError = urlValidation.error;
 
   return (
     <div className="overflow-hidden rounded-xl bg-white border border-gray-200 shadow-md transition-all hover:shadow-lg duration-200">
@@ -296,7 +322,7 @@ function CompetitorInputCard({
           <div
             className={`
               min-h-[52px] rounded-lg border-2 bg-gray-50 px-4 py-3 transition-all duration-200
-              ${error
+              ${error || domainError
                 ? 'border-red-400 ring-2 ring-red-100'
                 : isUrlValid && retailer
                 ? 'border-green-400 ring-2 ring-green-100'
@@ -314,13 +340,15 @@ function CompetitorInputCard({
                 disabled={!retailer}
                 className="flex-1 border-none bg-transparent font-medium text-gray-900 outline-none placeholder-gray-400 disabled:cursor-not-allowed disabled:opacity-50"
               />
-              {isUrlValid && retailer && !error && (
+              {isUrlValid && retailer && !error && !domainError && (
                 <Check className="w-5 h-5 text-green-600 flex-shrink-0" />
               )}
             </div>
           </div>
           {error ? (
             <p className="mt-1 text-xs font-medium text-red-600">⚠ {error}</p>
+          ) : domainError ? (
+            <p className="mt-1 text-xs font-medium text-red-600">⚠ {domainError}</p>
           ) : retailer ? (
             <p className="mt-1 text-xs text-gray-500 flex items-center gap-1">
               <Info className="w-3 h-3" />
@@ -475,7 +503,18 @@ function ManualAddContent() {
 
     competitorEntries.forEach((entry) => {
       if (entry.retailer && entry.url.trim()) {
-        hasAtLeastOneCompetitor = true;
+        // Validate domain matches retailer
+        const competitor = COMPETITORS.find(c => c.id === entry.retailer);
+        if (competitor) {
+          const domainValidation = validateUrlDomain(entry.url, competitor.domain);
+          if (!domainValidation.valid) {
+            competitorErrors[entry.id] = domainValidation.error || 'Invalid URL';
+          } else {
+            hasAtLeastOneCompetitor = true;
+          }
+        } else {
+          hasAtLeastOneCompetitor = true;
+        }
       }
       if (entry.retailer && !entry.url.trim()) {
         competitorErrors[entry.id] = 'URL is required';
@@ -486,7 +525,7 @@ function ManualAddContent() {
     });
 
     if (!hasAtLeastOneCompetitor) {
-      newErrors.general = 'Please add at least one competitor with retailer and URL';
+      newErrors.general = 'Please add at least one competitor with a valid URL';
     }
 
     if (Object.keys(competitorErrors).length > 0) {

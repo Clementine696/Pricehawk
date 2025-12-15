@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Package, TrendingDown, Store, GitCompare } from 'lucide-react';
-import Link from 'next/link';
+// import Link from 'next/link'; // Temporarily disabled
 import { apiFetch } from '@/lib/api';
 
 interface DashboardStats {
@@ -101,10 +101,9 @@ export default function Dashboard() {
           {statCards.map((card) => {
             const Icon = card.icon;
             return (
-              <Link
+              <div
                 key={card.title}
-                href={card.href}
-                className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow"
+                className="bg-white rounded-lg shadow p-6"
               >
                 <div className="flex items-center">
                   <div className={`${card.color} p-3 rounded-lg`}>
@@ -117,13 +116,13 @@ export default function Dashboard() {
                     </p>
                   </div>
                 </div>
-              </Link>
+              </div>
             );
           })}
         </div>
 
         {/* Quick Actions */}
-        <div className="bg-white rounded-lg shadow p-6">
+        {/* <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Link
@@ -154,7 +153,7 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-        </div>
+        </div> */}
 
         {/* Retailers Section */}
         <div className="bg-white rounded-lg shadow p-6">

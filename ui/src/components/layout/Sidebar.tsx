@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -22,11 +23,11 @@ const menuItems = [
     label: 'Manual Add',
     icon: PlusCircle,
   },
-  {
-    href: '/comparison',
-    label: 'Manual Comparison',
-    icon: GitCompare,
-  }
+  // {
+  //   href: '/comparison',
+  //   label: 'Manual Comparison',
+  //   icon: GitCompare,
+  // }
   // {
   //   href: '/settings',
   //   label: 'Scraping Settings',
@@ -41,8 +42,15 @@ export const Sidebar: React.FC = () => {
   return (
     <div className="w-56 bg-white border-r border-gray-200 flex flex-col">
       {/* Logo */}
-      <div className="p-6 border-b border-gray-200">
-        <h1 className="text-xl font-bold text-cyan-500">PriceHawk</h1>
+      <div className="px-4">
+        <Image
+          src="/logos/pricehawk_logo.svg"
+          alt="PriceHawk"
+          width={180}
+          height={40}
+          className="object-contain"
+          priority
+        />
       </div>
 
       {/* Navigation */}

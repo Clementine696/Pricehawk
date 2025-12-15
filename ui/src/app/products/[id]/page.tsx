@@ -205,21 +205,18 @@ export default function ProductDetailPage() {
     <MainLayout>
       <div className="space-y-6">
         {/* Breadcrumb & Back Button */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <Link href="/products" className="hover:text-cyan-500">
-              Products
-            </Link>
-            <span>/</span>
-            <span className="text-gray-900 truncate max-w-md">{product.name}</span>
-          </div>
-          <Link
-            href="/products"
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+        <div className="flex items-center gap-3 text-sm text-gray-500">
+          <button
+            onClick={() => router.back()}
+            className="flex items-center gap-1 text-gray-600 hover:text-cyan-500 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to List
-          </Link>
+            Back
+          </button>
+          <span className="text-gray-300">|</span>
+          <span>Products</span>
+          <span>/</span>
+          <span className="text-gray-900 truncate max-w-md">{product.name}</span>
         </div>
 
         {/* Page Header */}
@@ -271,7 +268,7 @@ export default function ProductDetailPage() {
               <div className="space-y-2 text-sm text-gray-600">
                 <div className="flex justify-between">
                   <span>SKU:</span>
-                  <span className="font-mono text-gray-900">{product.sku}</span>
+                  <span className="text-gray-900">{product.sku}</span>
                 </div>
                 {product.brand && (
                   <div className="flex justify-between">

@@ -212,7 +212,13 @@ function ProductsContent() {
   };
 
   const getStatusBadge = (status: string | null) => {
-    if (!status) return null;
+    if (!status) {
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium bg-gray-200 text-gray-600">
+          No Competitor
+        </span>
+      );
+    }
     const styles: Record<string, string> = {
       cheapest: 'bg-emerald-500 text-white',
       same: 'bg-gray-400 text-white',
@@ -264,7 +270,7 @@ function ProductsContent() {
             <select
               value={category}
               onChange={(e) => handleFilterChange('category', e.target.value)}
-              className="w-[250px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
+              className="w-[200px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
             >
               <option value="">All Categories</option>
               {categories.map((cat) => (
@@ -274,7 +280,7 @@ function ProductsContent() {
             <select
               value={brand}
               onChange={(e) => handleFilterChange('brand', e.target.value)}
-              className="w-[200px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
+              className="w-[150px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
             >
               <option value="">All Brands</option>
               {brands.map((b) => (
@@ -293,7 +299,7 @@ function ProductsContent() {
             <select
               value={retailerFilter}
               onChange={(e) => handleFilterChange('retailer', e.target.value)}
-              className="w-[160px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
+              className="w-[140px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
             >
               <option value="">All Retailers</option>
               {RETAILER_FILTER_OPTIONS.map((r) => (
@@ -380,7 +386,7 @@ function ProductsContent() {
                           <td className="px-4 py-2 text-sm text-gray-500 text-center whitespace-nowrap">
                             {startItem + index}
                           </td>
-                          <td className="px-4 py-2 text-sm font-mono text-gray-900 whitespace-nowrap">
+                          <td className="px-4 py-2 text-sm text-gray-900 whitespace-nowrap">
                             {product.sku}
                           </td>
                           <td className="px-4 py-2 text-sm text-gray-900 max-w-xs truncate" title={product.name}>

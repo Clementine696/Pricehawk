@@ -451,9 +451,9 @@ export default function ProductDetailPage() {
                                       {formatPrice(match.product.current_price)}
                                     </div>
                                     <div className="flex items-center gap-2 mt-1 justify-end">
-                                      <span className={`text-xs font-medium px-2 py-1 rounded ${getMatchTypeBadge(match.match_type)}`}>
+                                      {/* <span className={`text-xs font-medium px-2 py-1 rounded ${getMatchTypeBadge(match.match_type)}`}>
                                         {match.match_type.charAt(0).toUpperCase() + match.match_type.slice(1)}
-                                      </span>
+                                      </span> */}
                                       {match.confidence_score !== null && (
                                         <span className={`${getConfidenceColor(match.confidence_score)} text-white text-xs font-medium px-2 py-1 rounded`}>
                                           {Math.round(match.confidence_score * 100)}%

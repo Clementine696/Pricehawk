@@ -836,7 +836,7 @@ function ManualAddContent() {
                 ))}
 
                 {/* Add Competitor Button */}
-                {competitorEntries.length < 5 ? (
+                {competitorEntries.length + verifiedRetailers.length < 5 ? (
                   <button
                     type="button"
                     onClick={handleAddCompetitor}
@@ -846,7 +846,7 @@ function ManualAddContent() {
                       <Plus className="h-5 w-5 text-white" />
                     </div>
                     <span className="font-bold text-base">
-                      Add Competitor ({competitorEntries.length}/5)
+                      Add Competitor ({competitorEntries.length + verifiedRetailers.length}/5)
                     </span>
                   </button>
                 ) : (
@@ -1193,26 +1193,26 @@ function ManualAddContent() {
                   <thead>
                     <tr className="border-b border-gray-200">
                       <th className="px-6 py-6 text-left text-sm font-semibold text-gray-700 w-48 bg-gray-50">
-                        Compare
+                        Retailers
                       </th>
                       {comparisonResult.results?.map((result: any, index: number) => {
                         const comp = index === 0 ? null : COMPETITORS.find(c => c.name === result.retailer || c.id === result.retailer);
                         return (
-                          <th key={index} className="px-6 py-6 text-center min-w-[200px]">
+                          <th key={index} className="px-6 py-4 text-center min-w-[200px]">
                             {index === 0 ? (
                               <Image
                                 src="/logos/thaiwatsadu.svg"
                                 alt="Thai Watsadu"
-                                width={120}
-                                height={40}
+                                width={80}
+                                height={28}
                                 className="object-contain mx-auto"
                               />
                             ) : comp?.logo ? (
                               <Image
                                 src={comp.logo}
                                 alt={result.retailer}
-                                width={120}
-                                height={40}
+                                width={80}
+                                height={28}
                                 className="object-contain mx-auto"
                               />
                             ) : (

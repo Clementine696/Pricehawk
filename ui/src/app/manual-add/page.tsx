@@ -67,7 +67,7 @@ function StageIndicator({ currentStage }: { currentStage: ComparisonStage }) {
   const stages = [
     { id: 'input', label: 'Input', number: 1 },
     { id: 'review', label: 'Review', number: 2 },
-    { id: 'scraping', label: 'Scraping', number: 3 },
+    { id: 'scraping', label: 'Comparing', number: 3 },
     { id: 'results', label: 'Results', number: 4 },
   ];
 
@@ -996,7 +996,7 @@ function ManualAddContent() {
                   {isScraping && (
                     <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent"></div>
                   )}
-                  {isScraping ? 'Scraping Product Data...' : 'Scraping Complete'}
+                  {isScraping ? 'Comparing Product Data...' : 'Comparing Complete'}
                 </h2>
                 <p className="text-cyan-100 text-sm mt-1">
                   Fetching product information from retailer websites

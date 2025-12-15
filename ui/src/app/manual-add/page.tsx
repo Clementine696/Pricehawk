@@ -1044,7 +1044,7 @@ function ManualAddContent() {
 
               <div className="p-6 space-y-6">
                 {/* Progress Bar */}
-                <div>
+                {/* <div>
                   <div className="flex justify-between text-sm text-gray-600 mb-2">
                     <span>Progress</span>
                     <span>{scrapeProgress.current} / {scrapeProgress.total} URLs</span>
@@ -1059,11 +1059,11 @@ function ManualAddContent() {
                       }}
                     ></div>
                   </div>
-                </div>
+                </div> */}
 
                 {/* URLs Being Scraped */}
                 <div className="space-y-3">
-                  <h3 className="font-semibold text-gray-900">URLs to Scrape:</h3>
+                  <h3 className="font-semibold text-gray-900">URLs to Compare:</h3>
                   <div className="space-y-2">
                     {/* Thai Watsadu */}
                     <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">

@@ -311,12 +311,12 @@ export default function ProductDetailPage() {
 
           {/* Right Side - Matched Products Grouped by Retailer */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            {/* <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">Matched Products</h3>
               <span className="text-sm text-gray-500">
                 {matches.length} matches across {COMPETITORS.length} retailers
               </span>
-            </div>
+            </div> */}
 
             {/* Retailer Sections */}
             <div className="space-y-4">

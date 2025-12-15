@@ -42,16 +42,18 @@ export const Sidebar: React.FC = () => {
   return (
     <div className="w-56 bg-white border-r border-gray-200 flex flex-col">
       {/* Logo */}
-      <div className="px-4">
+      <div className="px-4 flex items-center justify-center h-16">
         <Image
           src="/logos/pricehawk_logo.svg"
           alt="PriceHawk"
-          width={180}
+          width={140}
           height={40}
           className="object-contain"
           priority
         />
       </div>
+
+      <div className="px-4 py-1 border-b border-gray-200"></div>
 
       {/* Navigation */}
       <nav className="flex-1 p-4">

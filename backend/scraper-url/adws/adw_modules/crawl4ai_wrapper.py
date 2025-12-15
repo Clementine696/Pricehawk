@@ -275,6 +275,7 @@ class Crawl4AIWrapper:
                     await self._cleanup_browser()
 
                     # crawl4ai v0.7.x uses extra_args for browser arguments
+                    # Memory-saving flags for Railway/container environments
                     browser_cfg = BrowserConfig(
                         headless=True,
                         extra_args=[
@@ -282,6 +283,22 @@ class Crawl4AIWrapper:
                             "--disable-setuid-sandbox",
                             "--disable-dev-shm-usage",
                             "--disable-gpu",
+                            # Memory optimization flags
+                            "--disable-extensions",
+                            "--disable-background-networking",
+                            "--disable-sync",
+                            "--disable-translate",
+                            "--disable-features=TranslateUI",
+                            "--disable-default-apps",
+                            "--no-first-run",
+                            "--disable-background-timer-throttling",
+                            "--disable-renderer-backgrounding",
+                            "--disable-backgrounding-occluded-windows",
+                            "--disable-ipc-flooding-protection",
+                            # Reduce memory footprint
+                            "--single-process",  # Use single process mode (saves memory)
+                            "--memory-pressure-off",
+                            "--js-flags=--max-old-space-size=128",  # Limit JS heap to 128MB
                         ],
                         verbose=self.config.verbose,  # From env: SCRAPER_VERBOSE
                     )

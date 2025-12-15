@@ -25,6 +25,7 @@ import json
 import asyncio
 import subprocess
 import logging
+import gc
 import concurrent.futures
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -103,6 +104,42 @@ class UpdateStats:
         }
 
 
+def cleanup_orphan_browsers():
+    """
+    Kill any orphaned chromium/chrome browser processes.
+    This helps prevent memory accumulation on Railway.
+    """
+    import platform
+
+    try:
+        if platform.system() == 'Linux':
+            # Kill chromium processes that might be orphaned
+            subprocess.run(
+                ['pkill', '-9', '-f', 'chromium'],
+                capture_output=True,
+                timeout=10
+            )
+            subprocess.run(
+                ['pkill', '-9', '-f', 'chrome'],
+                capture_output=True,
+                timeout=10
+            )
+        elif platform.system() == 'Windows':
+            # Windows: use taskkill
+            subprocess.run(
+                ['taskkill', '/F', '/IM', 'chromium.exe'],
+                capture_output=True,
+                timeout=10
+            )
+            subprocess.run(
+                ['taskkill', '/F', '/IM', 'chrome.exe'],
+                capture_output=True,
+                timeout=10
+            )
+    except Exception:
+        pass  # Ignore errors - this is best-effort cleanup
+
+
 class PriceUpdater:
     """
     Service to update product prices from retailer websites.
@@ -134,7 +171,8 @@ class PriceUpdater:
         delay_between_products: float = 1.0,
         max_retries: int = 2,
         dry_run: bool = False,
-        parallel_workers: int = 1
+        parallel_workers: int = 1,
+        scrape_timeout: int = 120
     ):
         """
         Initialize price updater.
@@ -146,6 +184,7 @@ class PriceUpdater:
             max_retries: Max retry attempts for failed scrapes
             dry_run: If True, don't update database
             parallel_workers: Number of parallel retailer workers (1 = sequential)
+            scrape_timeout: Timeout in seconds for each product scrape
         """
         self.batch_size = batch_size
         self.delay_between_batches = delay_between_batches
@@ -153,6 +192,7 @@ class PriceUpdater:
         self.max_retries = max_retries
         self.dry_run = dry_run
         self.parallel_workers = max(1, min(parallel_workers, 20))  # Clamp between 1-20
+        self.scrape_timeout = scrape_timeout
         self.stats = UpdateStats()
         self.results_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -263,6 +303,14 @@ class PriceUpdater:
                 logger.info(f"[Worker {worker_id}] Waiting {self.delay_between_batches}s before next batch...")
                 time.sleep(self.delay_between_batches)
 
+                # Periodic cleanup: kill any orphaned browser processes
+                # This prevents memory accumulation over long runs
+                batch_num = batch_start // self.batch_size + 1
+                if batch_num % 5 == 0:  # Every 5 batches
+                    logger.info(f"[Worker {worker_id}] Running periodic browser cleanup...")
+                    cleanup_orphan_browsers()
+                    gc.collect()
+
         logger.info(f"\n[Worker {worker_id}] Completed: {total_updated}/{len(products)} updated")
         return total_updated
 
@@ -295,25 +343,31 @@ class PriceUpdater:
             env["PYTHONIOENCODING"] = "utf-8"
 
             # Use Popen for better control over process cleanup
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                env=env,
-                cwd=os.path.dirname(self.SCRAPER_SCRIPT)
-            )
+            # On Linux, start in new process group so we can kill all children
+            popen_kwargs = {
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE,
+                'text': True,
+                'encoding': 'utf-8',
+                'errors': 'replace',
+                'env': env,
+                'cwd': os.path.dirname(self.SCRAPER_SCRIPT)
+            }
+
+            # Linux/Unix: start new process group for proper cleanup
+            if hasattr(os, 'setsid'):
+                popen_kwargs['start_new_session'] = True
+
+            process = subprocess.Popen(cmd, **popen_kwargs)
 
             try:
-                stdout, stderr = process.communicate(timeout=120)
+                stdout, stderr = process.communicate(timeout=self.scrape_timeout)
                 returncode = process.returncode
             except subprocess.TimeoutExpired:
                 # Kill the process and all children
                 process.kill()
                 process.wait()
-                logger.error(f"Timeout scraping {url}")
+                logger.error(f"Timeout scraping {url} (after {self.scrape_timeout}s)")
                 return None
 
             if returncode != 0:
@@ -366,14 +420,55 @@ class PriceUpdater:
             # Cleanup: ensure process is terminated and resources freed
             if process is not None:
                 try:
+                    pid = process.pid
                     if process.poll() is None:  # Process still running
-                        process.kill()
-                        process.wait()
+                        # Try to kill entire process group (including child browsers)
+                        try:
+                            import signal
+                            # On Linux with start_new_session=True, kill the entire process group
+                            if hasattr(os, 'killpg'):
+                                try:
+                                    # When start_new_session=True, the process is its own group leader
+                                    # so we can kill by pid directly as the pgid
+                                    os.killpg(pid, signal.SIGTERM)
+                                except (ProcessLookupError, PermissionError, OSError):
+                                    pass
+                                # Give it a moment to terminate gracefully
+                                try:
+                                    process.wait(timeout=2)
+                                except subprocess.TimeoutExpired:
+                                    # Force kill if still running
+                                    try:
+                                        os.killpg(pid, signal.SIGKILL)
+                                    except (ProcessLookupError, PermissionError, OSError):
+                                        pass
+                        except Exception:
+                            pass
+
+                        # Fallback: standard kill
+                        try:
+                            process.kill()
+                            process.wait(timeout=5)
+                        except Exception:
+                            pass
+                    else:
+                        # Process already finished, just wait for cleanup
+                        try:
+                            process.wait(timeout=1)
+                        except Exception:
+                            pass
+
                     # Close file handles
                     if process.stdout:
-                        process.stdout.close()
+                        try:
+                            process.stdout.close()
+                        except Exception:
+                            pass
                     if process.stderr:
-                        process.stderr.close()
+                        try:
+                            process.stderr.close()
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
@@ -654,12 +749,22 @@ def main():
     """CLI entry point"""
     import argparse
 
+    # Get defaults from environment variables
+    env_batch_size = int(os.environ.get('UPDATE_BATCH_SIZE', 50))
+    env_delay = float(os.environ.get('UPDATE_DELAY', 1.0))
+    env_parallel = int(os.environ.get('UPDATE_PARALLEL', 1))
+    env_timeout = int(os.environ.get('UPDATE_TIMEOUT', 120))
+
     parser = argparse.ArgumentParser(description='Update product prices')
     parser.add_argument('--retailer', '-r', help='Specific retailer ID (twd, hp, dh, btv, gbh, mgh)')
-    parser.add_argument('--batch-size', '-b', type=int, default=50, help='Batch size (default: 50)')
-    parser.add_argument('--delay', '-d', type=float, default=1.0, help='Delay between products in seconds')
-    parser.add_argument('--parallel', '-p', type=int, default=1,
-                       help='Parallel workers: 1=sequential, 2-20=parallel (default: 1)')
+    parser.add_argument('--batch-size', '-b', type=int, default=env_batch_size,
+                       help=f'Batch size (default: {env_batch_size}, env: UPDATE_BATCH_SIZE)')
+    parser.add_argument('--delay', '-d', type=float, default=env_delay,
+                       help=f'Delay between products in seconds (default: {env_delay}, env: UPDATE_DELAY)')
+    parser.add_argument('--parallel', '-p', type=int, default=env_parallel,
+                       help=f'Parallel workers: 1=sequential, 2-20=parallel (default: {env_parallel}, env: UPDATE_PARALLEL)')
+    parser.add_argument('--timeout', '-t', type=int, default=env_timeout,
+                       help=f'Timeout per product in seconds (default: {env_timeout}, env: UPDATE_TIMEOUT)')
     parser.add_argument('--dry-run', action='store_true', help='Test without updating database')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
 
@@ -672,7 +777,8 @@ def main():
         batch_size=args.batch_size,
         delay_between_products=args.delay,
         parallel_workers=args.parallel,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        scrape_timeout=args.timeout
     )
 
     stats = updater.run(retailer_id=args.retailer)

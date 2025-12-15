@@ -43,7 +43,7 @@ export default function LoginPage() {
 
       // Show user-friendly error message
       if (message.toLowerCase().includes('unauthorized') || message.toLowerCase().includes('401')) {
-        setError('Incorrect username or password');
+        setError('Incorrect username or password. Please try again.');
       } else if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network')) {
         setError('Unable to connect to server. Please try again later.');
       } else if (message.toLowerCase().includes('timeout')) {

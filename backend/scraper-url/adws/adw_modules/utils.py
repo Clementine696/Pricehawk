@@ -9,6 +9,28 @@ import uuid
 from datetime import datetime
 from typing import Any, TypeVar, Type, Union, Dict, Optional
 
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), '.env')
+    load_dotenv(env_path)
+except ImportError:
+    pass
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    """Get boolean value from environment variable."""
+    value = os.environ.get(key, '').lower()
+    if value in ('true', '1', 'yes', 'on'):
+        return True
+    elif value in ('false', '0', 'no', 'off'):
+        return False
+    return default
+
+
+# Check if writing to agents folder is enabled
+WRITE_AGENTS_FOLDER = _env_bool('SCRAPER_WRITE_AGENTS_FOLDER', True)
+
 T = TypeVar("T")
 
 
@@ -26,18 +48,10 @@ def setup_logger(adw_id: str, trigger_type: str = "adw_plan_build") -> logging.L
 
     Returns:
         Configured logger instance
+
+    Environment Variables:
+        SCRAPER_WRITE_AGENTS_FOLDER: If false, skip writing log files to agents/ folder
     """
-    # Create log directory: agents/{adw_id}/adw_plan_build/
-    # __file__ is in adws/adw_modules/, so we need to go up 3 levels to get to project root
-    project_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    log_dir = os.path.join(project_root, "agents", adw_id, trigger_type)
-    os.makedirs(log_dir, exist_ok=True)
-
-    # Log file path: agents/{adw_id}/adw_plan_build/execution.log
-    log_file = os.path.join(log_dir, "execution.log")
-
     # Create logger with unique name using adw_id
     logger = logging.getLogger(f"adw_{adw_id}")
     logger.setLevel(logging.DEBUG)
@@ -45,31 +59,41 @@ def setup_logger(adw_id: str, trigger_type: str = "adw_plan_build") -> logging.L
     # Clear any existing handlers to avoid duplicates
     logger.handlers.clear()
 
-    # File handler - captures everything
-    file_handler = logging.FileHandler(log_file, mode="a")
-    file_handler.setLevel(logging.DEBUG)
-
-    # Console handler - INFO and above
+    # Console handler - INFO and above (always enabled)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-
-    # Format with timestamp for file
-    file_formatter = logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-    )
-
-    # Simpler format for console (similar to current print statements)
     console_formatter = logging.Formatter("%(message)s")
-
-    file_handler.setFormatter(file_formatter)
     console_handler.setFormatter(console_formatter)
-
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+
+    # File handler - only if SCRAPER_WRITE_AGENTS_FOLDER is enabled
+    if WRITE_AGENTS_FOLDER:
+        # Create log directory: agents/{adw_id}/adw_plan_build/
+        # __file__ is in adws/adw_modules/, so we need to go up 3 levels to get to project root
+        project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        log_dir = os.path.join(project_root, "agents", adw_id, trigger_type)
+        os.makedirs(log_dir, exist_ok=True)
+
+        # Log file path: agents/{adw_id}/adw_plan_build/execution.log
+        log_file = os.path.join(log_dir, "execution.log")
+
+        # File handler - captures everything
+        file_handler = logging.FileHandler(log_file, mode="a")
+        file_handler.setLevel(logging.DEBUG)
+
+        # Format with timestamp for file
+        file_formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+
+        logger.debug(f"Log file: {log_file}")
 
     # Log initial setup message
     logger.info(f"ADW Logger initialized - ID: {adw_id}")
-    logger.debug(f"Log file: {log_file}")
 
     return logger
 

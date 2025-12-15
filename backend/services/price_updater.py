@@ -35,16 +35,38 @@ from threading import Lock
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+    load_dotenv(env_path)
+except ImportError:
+    pass
+
 from database import get_db
 
-# Setup logging
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    """Get boolean value from environment variable."""
+    value = os.environ.get(key, '').lower()
+    if value in ('true', '1', 'yes', 'on'):
+        return True
+    elif value in ('false', '0', 'no', 'off'):
+        return False
+    return default
+
+
+# Setup logging - check if file logging is enabled
+WRITE_LOG_FILE = _env_bool('UPDATER_WRITE_LOG', True)  # Default: write log file
+
+log_handlers = [logging.StreamHandler()]
+if WRITE_LOG_FILE:
+    log_handlers.append(logging.FileHandler(f'price_update_{datetime.now().strftime("%Y%m%d")}.log'))
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(f'price_update_{datetime.now().strftime("%Y%m%d")}.log')
-    ]
+    handlers=log_handlers
 )
 logger = logging.getLogger(__name__)
 
@@ -255,7 +277,7 @@ class PriceUpdater:
             Scraped product data or None if failed
         """
         import uuid
-        import tempfile
+        import gc
 
         output_file = os.path.join(self.results_dir, f"scrape_{uuid.uuid4().hex}.json")
 
@@ -265,23 +287,37 @@ class PriceUpdater:
             "--output-file", output_file
         ]
 
+        process = None
+        result_data = None
+
         try:
             env = os.environ.copy()
             env["PYTHONIOENCODING"] = "utf-8"
 
-            result = subprocess.run(
+            # Use Popen for better control over process cleanup
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding='utf-8',
-                errors='replace',  # Handle Thai characters on Windows
-                timeout=120,  # 2 minute timeout per product
+                errors='replace',
                 env=env,
                 cwd=os.path.dirname(self.SCRAPER_SCRIPT)
             )
 
-            if result.returncode != 0:
-                logger.warning(f"Scraper failed for {url}: {result.stderr[:200]}")
+            try:
+                stdout, stderr = process.communicate(timeout=120)
+                returncode = process.returncode
+            except subprocess.TimeoutExpired:
+                # Kill the process and all children
+                process.kill()
+                process.wait()
+                logger.error(f"Timeout scraping {url}")
+                return None
+
+            if returncode != 0:
+                logger.warning(f"Scraper failed for {url}: {stderr[:200] if stderr else 'No error message'}")
                 return None
 
             # Look for output in retailer files
@@ -299,30 +335,57 @@ class PriceUpdater:
                                 for product in data:
                                     product_url = product.get('url', '')
                                     if self._normalize_url(product_url) == self._normalize_url(url):
-                                        return product
+                                        result_data = product
+                                        break
+                            if result_data:
+                                break
                         except Exception as e:
                             logger.error(f"Error reading {filepath}: {e}")
+                if result_data:
+                    break
 
             # Also check the direct output file
-            if os.path.exists(output_file):
+            if not result_data and os.path.exists(output_file):
                 try:
                     with open(output_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                     if isinstance(data, list) and len(data) > 0:
-                        return data[0]
+                        result_data = data[0]
                     elif isinstance(data, dict):
-                        return data
+                        result_data = data
                 except Exception as e:
                     logger.error(f"Error reading output file: {e}")
 
-            return None
+            return result_data
 
-        except subprocess.TimeoutExpired:
-            logger.error(f"Timeout scraping {url}")
-            return None
         except Exception as e:
             logger.error(f"Error scraping {url}: {e}")
             return None
+
+        finally:
+            # Cleanup: ensure process is terminated and resources freed
+            if process is not None:
+                try:
+                    if process.poll() is None:  # Process still running
+                        process.kill()
+                        process.wait()
+                    # Close file handles
+                    if process.stdout:
+                        process.stdout.close()
+                    if process.stderr:
+                        process.stderr.close()
+                except Exception:
+                    pass
+
+            # Clean up temp output file
+            try:
+                if os.path.exists(output_file):
+                    os.remove(output_file)
+            except Exception:
+                pass
+
+            # Force garbage collection to free memory
+            gc.collect()
 
     def _normalize_url(self, url: str) -> str:
         """Normalize URL for comparison"""

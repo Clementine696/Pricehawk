@@ -48,6 +48,28 @@ from rich.progress import Progress, TaskID, BarColumn, TextColumn
 # Add the parent directory to the path so we can import adw_modules as a package
 sys.path.insert(0, os.path.dirname(__file__))
 
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+    load_dotenv(env_path)
+except ImportError:
+    pass
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    """Get boolean value from environment variable."""
+    value = os.environ.get(key, '').lower()
+    if value in ('true', '1', 'yes', 'on'):
+        return True
+    elif value in ('false', '0', 'no', 'off'):
+        return False
+    return default
+
+
+# Check if writing to agents folder is enabled
+WRITE_AGENTS_FOLDER = _env_bool('SCRAPER_WRITE_AGENTS_FOLDER', True)
+
 from adw_modules.crawl4ai_wrapper import (
     Crawl4AIWrapper,
     ScrapingConfig,
@@ -443,12 +465,17 @@ def main(
         output_dir = create_output_directory_structure(output_folder, adw_id, organization)
         output_file_full_path = os.path.join(output_dir, output_file)
         base_output_folder = output_dir
-    else:
-        # Use legacy ADW structure
+    elif WRITE_AGENTS_FOLDER:
+        # Use legacy ADW structure (only if enabled via env)
         output_dir = f"./agents/{adw_id}/ecommerce_scraper"
         os.makedirs(output_dir, exist_ok=True)
         output_file_full_path = output_file
         base_output_folder = output_dir
+    else:
+        # No folder writing - use current directory
+        output_dir = "."
+        output_file_full_path = output_file
+        base_output_folder = "."
 
     # Create scraping configuration
     config = create_simple_config(

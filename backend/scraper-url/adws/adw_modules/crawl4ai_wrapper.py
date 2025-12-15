@@ -107,6 +107,7 @@ class ScrapingConfig:
     - SCRAPER_VERBOSE: Enable verbose logging
     - SCRAPER_ONLY_TEXT: Extract text only (faster for price updates)
     - SCRAPER_EXCLUDE_EXTERNAL_IMAGES: Skip loading external images
+    - SCRAPER_USE_BROWSER: Use Playwright browser (true) or HTTP only (false)
     """
     max_concurrent: int = 3
     delay_between_requests: float = 1.0
@@ -123,7 +124,7 @@ class ScrapingConfig:
 
     # Anti-bot measures
     respect_robots_txt: bool = True
-    use_browser: bool = False
+    use_browser: bool = None  # None = use env var SCRAPER_USE_BROWSER
     simulate_user: bool = True
 
     # Content filtering
@@ -147,6 +148,8 @@ class ScrapingConfig:
             self.only_text = _env_bool('SCRAPER_ONLY_TEXT', False)
         if self.exclude_external_images is None:
             self.exclude_external_images = _env_bool('SCRAPER_EXCLUDE_EXTERNAL_IMAGES', False)
+        if self.use_browser is None:
+            self.use_browser = _env_bool('SCRAPER_USE_BROWSER', True)  # Default: use browser
 
 
 @dataclass
@@ -1168,6 +1171,7 @@ def create_simple_config(**kwargs) -> ScrapingConfig:
 
     Args:
         **kwargs: Configuration parameters to override
+                  Set use_browser=None to use env var SCRAPER_USE_BROWSER
 
     Returns:
         ScrapingConfig instance
@@ -1176,7 +1180,8 @@ def create_simple_config(**kwargs) -> ScrapingConfig:
         'max_concurrent': 3,
         'delay_between_requests': 1.0,
         'timeout': 30,
-        'verbose': False,
+        'verbose': None,      # Use env var
+        'use_browser': None,  # Use env var SCRAPER_USE_BROWSER
     }
     defaults.update(kwargs)
     return ScrapingConfig(**defaults)

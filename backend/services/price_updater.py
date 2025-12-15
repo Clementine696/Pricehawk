@@ -140,6 +140,34 @@ def cleanup_orphan_browsers():
         pass  # Ignore errors - this is best-effort cleanup
 
 
+def cleanup_chrome_temp_dirs():
+    """
+    Clean up Chrome temp directories to prevent disk space accumulation.
+    Chrome uses /tmp for cache when --disable-dev-shm-usage is set.
+    """
+    import platform
+    import shutil
+
+    if platform.system() != 'Linux':
+        return  # Only needed on Linux (Railway)
+
+    try:
+        tmp_dirs = [
+            '/tmp/chrome-cache',
+            '/tmp/chrome-user-data',
+            '/tmp/chrome-crashes',
+        ]
+
+        for tmp_dir in tmp_dirs:
+            if os.path.exists(tmp_dir):
+                try:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+    except Exception:
+        pass  # Ignore errors - this is best-effort cleanup
+
+
 class PriceUpdater:
     """
     Service to update product prices from retailer websites.
@@ -307,8 +335,9 @@ class PriceUpdater:
                 # This prevents memory accumulation over long runs
                 batch_num = batch_start // self.batch_size + 1
                 if batch_num % 5 == 0:  # Every 5 batches
-                    logger.info(f"[Worker {worker_id}] Running periodic browser cleanup...")
+                    logger.info(f"[Worker {worker_id}] Running periodic browser + temp cleanup...")
                     cleanup_orphan_browsers()
+                    cleanup_chrome_temp_dirs()  # Clean up /tmp/chrome-* directories
                     gc.collect()
 
         logger.info(f"\n[Worker {worker_id}] Completed: {total_updated}/{len(products)} updated")
@@ -636,6 +665,7 @@ class PriceUpdater:
             if (i + 1) % 25 == 0:
                 logger.info(f"  Memory cooldown: pausing 5s after {i + 1} products...")
                 cleanup_orphan_browsers()
+                cleanup_chrome_temp_dirs()  # Clean up /tmp/chrome-* directories
                 gc.collect()
                 time.sleep(5)
 

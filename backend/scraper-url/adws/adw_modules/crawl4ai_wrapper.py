@@ -275,30 +275,43 @@ class Crawl4AIWrapper:
                     await self._cleanup_browser()
 
                     # crawl4ai v0.7.x uses extra_args for browser arguments
-                    # Memory-saving flags for Railway/container environments
+                    # Stability flags for Railway/container environments
+                    # Key fix: Use /tmp for shared memory instead of /dev/shm (only 64MB in Docker)
                     browser_cfg = BrowserConfig(
                         headless=True,
                         extra_args=[
+                            # === CRITICAL: /dev/shm workaround for containers ===
+                            "--disable-dev-shm-usage",  # Don't use /dev/shm (only 64MB in Docker)
+                            "--disk-cache-dir=/tmp/chrome-cache",  # Use disk cache in /tmp
+                            "--user-data-dir=/tmp/chrome-user-data",  # Store user data in /tmp
+                            "--crash-dumps-dir=/tmp/chrome-crashes",  # Crash dumps in /tmp
+                            # === Essential container flags ===
                             "--no-sandbox",
                             "--disable-setuid-sandbox",
-                            "--disable-dev-shm-usage",
                             "--disable-gpu",
-                            # Memory optimization flags
+                            "--no-zygote",  # Single process startup (helps with cleanup)
+                            # === Stability flags - prevent crashes ===
+                            "--disable-software-rasterizer",
+                            "--disable-features=VizDisplayCompositor,TranslateUI",
+                            "--disable-breakpad",
+                            "--disable-crash-reporter",
+                            # === Memory optimization flags ===
                             "--disable-extensions",
                             "--disable-background-networking",
                             "--disable-sync",
                             "--disable-translate",
-                            "--disable-features=TranslateUI",
                             "--disable-default-apps",
                             "--no-first-run",
                             "--disable-background-timer-throttling",
                             "--disable-renderer-backgrounding",
                             "--disable-backgrounding-occluded-windows",
                             "--disable-ipc-flooding-protection",
-                            # Reduce memory footprint
-                            "--single-process",  # Use single process mode (saves memory)
+                            # === Renderer limits to prevent memory buildup ===
+                            "--renderer-process-limit=1",  # Limit renderer processes
+                            "--disable-features=IsolateOrigins,site-per-process",  # Reduce process isolation
+                            # === JS heap settings ===
                             "--memory-pressure-off",
-                            "--js-flags=--max-old-space-size=128",  # Limit JS heap to 128MB
+                            "--js-flags=--max-old-space-size=256 --expose-gc",
                         ],
                         verbose=self.config.verbose,  # From env: SCRAPER_VERBOSE
                     )

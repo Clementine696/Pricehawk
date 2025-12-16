@@ -69,7 +69,7 @@ RETAILER_CODES = {
     "Thai Watsadu": "twd",
     "HomePro": "hp",
     "MegaHome": "mgh",
-    "Mega Home": "mgh",  # Alternative spelling in JSON files
+    "Mega Home": "mgh",  # Alternative spelling in JSON files    "Mega Home": "mgh",  # Alternative spelling in JSON files
     "Do Home": "dh",
     "Boonthavorn": "btv",
     "Global House": "gbh",

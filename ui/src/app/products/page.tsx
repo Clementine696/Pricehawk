@@ -6,7 +6,7 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
-// Multi-select dropdown component
+// Multi-select dropdown component with search
 function MultiSelect({
   options,
   selected,
@@ -21,18 +21,28 @@ function MultiSelect({
   className?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
+        setSearchTerm('');
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Focus search input when dropdown opens
+  useEffect(() => {
+    if (isOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [isOpen]);
 
   const toggleOption = (option: string) => {
     if (selected.includes(option)) {
@@ -46,6 +56,11 @@ function MultiSelect({
     e.stopPropagation();
     onChange([]);
   };
+
+  // Filter options based on search term
+  const filteredOptions = options.filter(option =>
+    option.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
@@ -75,28 +90,45 @@ function MultiSelect({
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-auto">
-          {options.length === 0 ? (
-            <div className="px-4 py-2 text-gray-500 text-sm">No options</div>
-          ) : (
-            options.map((option) => (
-              <button
-                key={option}
-                type="button"
-                onClick={() => toggleOption(option)}
-                className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
-              >
-                <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
-                  selected.includes(option)
-                    ? 'bg-cyan-500 border-cyan-500'
-                    : 'border-gray-300'
-                }`}>
-                  {selected.includes(option) && <Check className="w-3 h-3 text-white" />}
-                </div>
-                <span className="text-sm text-gray-900 truncate">{option}</span>
-              </button>
-            ))
-          )}
+        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg">
+          {/* Search input */}
+          <div className="p-2 border-b border-gray-200">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search..."
+                className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              />
+            </div>
+          </div>
+          {/* Options list */}
+          <div className="max-h-48 overflow-auto">
+            {filteredOptions.length === 0 ? (
+              <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
+            ) : (
+              filteredOptions.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => toggleOption(option)}
+                  className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
+                    selected.includes(option)
+                      ? 'bg-cyan-500 border-cyan-500'
+                      : 'border-gray-300'
+                  }`}>
+                    {selected.includes(option) && <Check className="w-3 h-3 text-white" />}
+                  </div>
+                  <span className="text-sm text-gray-900 truncate">{option}</span>
+                </button>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>

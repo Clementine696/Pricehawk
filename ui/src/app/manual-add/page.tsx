@@ -582,23 +582,14 @@ function ManualAddContent() {
 
       // Validate scraped data - each URL must have name AND price extracted
       const scrapedResults = scrapeResult.results || [];
-      const invalidResults: { url: string; reason: string }[] = [];
+      const invalidUrls: string[] = [];
 
       // Check Thai Watsadu result
       const twdResult = scrapedResults.find(
         (r: ScrapedProduct) => r.source_url === thaiWatsuduInput.url || r.url === thaiWatsuduInput.url
       );
-      if (!twdResult) {
-        invalidResults.push({ url: thaiWatsuduInput.url, reason: 'Failed to scrape product data' });
-      } else if (!twdResult.name || !twdResult.current_price) {
-        invalidResults.push({
-          url: thaiWatsuduInput.url,
-          reason: !twdResult.name && !twdResult.current_price
-            ? 'Could not extract product name or price'
-            : !twdResult.name
-            ? 'Could not extract product name'
-            : 'Could not extract product price'
-        });
+      if (!twdResult || !twdResult.name || !twdResult.current_price) {
+        invalidUrls.push(thaiWatsuduInput.url);
       }
 
       // Check competitor results
@@ -606,29 +597,20 @@ function ManualAddContent() {
         const compResult = scrapedResults.find(
           (r: ScrapedProduct) => r.source_url === comp.url || r.url === comp.url
         );
-        if (!compResult) {
-          invalidResults.push({ url: comp.url, reason: 'Failed to scrape product data' });
-        } else if (!compResult.name || !compResult.current_price) {
-          invalidResults.push({
-            url: comp.url,
-            reason: !compResult.name && !compResult.current_price
-              ? 'Could not extract product name or price - this may not be a valid product page'
-              : !compResult.name
-              ? 'Could not extract product name'
-              : 'Could not extract product price'
-          });
+        if (!compResult || !compResult.name || !compResult.current_price) {
+          invalidUrls.push(comp.url);
         }
       }
 
       // If any validation failed, show error and go back to review
-      if (invalidResults.length > 0) {
-        const errorMessages = invalidResults.map(r => `${r.url.substring(0, 50)}...: ${r.reason}`);
+      if (invalidUrls.length > 0) {
+        const errorMessages = invalidUrls.map(url => `${url.substring(0, 50)}...`);
         setErrors({
-          general: `Unable to extract product data from the following URLs:\n${errorMessages.join('\n')}\n\nPlease verify the URLs point to valid product pages.`
+          general: `Unable to extract product data from the following URLs:\n${errorMessages.join('\n')}\nThis may not be a valid product page.`
         });
         setScrapeErrors([
           ...scrapeResult.errors || [],
-          ...invalidResults.map(r => ({ url: r.url, error: r.reason }))
+          ...invalidUrls.map(url => ({ url, error: 'Unable to extract product data' }))
         ]);
         setStage('review');
         setIsSubmitting(false);
@@ -1058,7 +1040,11 @@ function ManualAddContent() {
             <div className="flex justify-between">
               <button
                 type="button"
-                onClick={() => setStage('input')}
+                onClick={() => {
+                  setErrors({});
+                  setScrapeErrors([]);
+                  setStage('input');
+                }}
                 className="px-6 py-3 border-2 border-gray-300 rounded-xl font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 ← Edit Inputs

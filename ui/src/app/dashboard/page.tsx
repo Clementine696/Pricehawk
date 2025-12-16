@@ -156,7 +156,7 @@ export default function Dashboard() {
         </div> */}
 
         {/* Retailers Section */}
-        <div className="bg-white rounded-lg shadow p-6">
+        {/* <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Retailers Overview</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {isLoading ? (
@@ -183,7 +183,7 @@ export default function Dashboard() {
               ))
             )}
           </div>
-        </div>
+        </div> */}
       </div>
     </MainLayout>
   );

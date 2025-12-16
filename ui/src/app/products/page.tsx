@@ -15,9 +15,29 @@ function MultiSelect({
   className = '',
 }: {
   options: string[];
+  selected: string[];
+  onChange: (selected: string[]) => void;
   placeholder: string;
   className?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const toggleOption = (option: string) => {
     if (selected.includes(option)) {
+      onChange(selected.filter(s => s !== option));
+    } else {
       onChange([...selected, option]);
     }
   };
@@ -25,8 +45,12 @@ function MultiSelect({
   const clearAll = (e: React.MouseEvent) => {
     e.stopPropagation();
     onChange([]);
+  };
+
   return (
     <div ref={containerRef} className={`relative ${className}`}>
+      <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
       >

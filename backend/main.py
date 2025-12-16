@@ -313,28 +313,31 @@ def get_products(
                 if unverified and unverified["retailers_needing_review"] > 0:
                     product["is_verified"] = False
 
-                # Get verified correct matches from other retailers (one per retailer - the top match)
+                # Get best match from each retailer (verified first, then top unverified)
                 cur.execute("""
                     SELECT DISTINCT ON (r.retailer_id)
                         r.name as retailer_name,
                         p2.current_price,
                         p2.link,
                         pm.is_same,
+                        pm.verified_by_user,
                         pm.confidence_score
                     FROM product_matches pm
                     JOIN products p2 ON pm.candidate_product_id = p2.product_id
                     JOIN retailers r ON p2.retailer_id = r.retailer_id
                     WHERE pm.base_product_id = %s
-                      AND pm.verified_by_user = TRUE
-                      AND pm.is_same = TRUE
-                    ORDER BY r.retailer_id, pm.confidence_score DESC NULLS LAST
+                      AND (pm.is_same IS NULL OR pm.is_same = TRUE)
+                    ORDER BY r.retailer_id,
+                             (pm.verified_by_user = TRUE AND pm.is_same = TRUE) DESC,
+                             pm.confidence_score DESC NULLS LAST
                 """, (bp["product_id"],))
 
                 matches = cur.fetchall()
                 for match in matches:
                     product["retailer_prices"][match["retailer_name"]] = {
                         "price": float(match["current_price"]) if match["current_price"] else None,
-                        "link": match["link"]
+                        "link": match["link"],
+                        "verified": bool(match["verified_by_user"] and match["is_same"])
                     }
 
                 # Determine status (cheapest, same, higher)

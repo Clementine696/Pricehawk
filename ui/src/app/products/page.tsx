@@ -9,6 +9,7 @@ import { apiFetch } from '@/lib/api';
 interface RetailerPrice {
   price: number | null;
   link: string | null;
+  verified?: boolean;
 }
 
 interface Product {
@@ -429,6 +430,7 @@ function ProductsContent() {
                           {otherRetailers.map((retailer) => {
                             const priceData = product.retailer_prices?.[retailer];
                             const priceCategory = getPriceCategory(priceData?.price ?? null, allPrices);
+                            const isUnverified = priceData?.price && priceData?.verified === false;
                             return (
                               <td key={retailer} className="px-4 py-2 text-sm whitespace-nowrap">
                                 {priceData?.price ? (
@@ -437,9 +439,11 @@ function ProductsContent() {
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
-                                    className={`inline-flex items-center gap-1 hover:underline ${getPriceColorClass(priceCategory)}`}
+                                    className={`inline-flex items-center gap-1 hover:underline ${isUnverified ? 'italic opacity-70' : ''} ${getPriceColorClass(priceCategory)}`}
+                                    title={isUnverified ? 'Unverified match - click to review' : undefined}
                                   >
                                     {formatPrice(priceData.price)}
+                                    {isUnverified && <span className="text-yellow-500">?</span>}
                                     <ExternalLink className="w-3 h-3" />
                                   </a>
                                 ) : <span className="text-gray-400">-</span>}

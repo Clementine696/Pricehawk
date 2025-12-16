@@ -1,10 +1,167 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Download, ExternalLink, Loader2 } from 'lucide-react';
+import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+
+// Multi-select dropdown component
+function MultiSelect({
+  options,
+  selected,
+  onChange,
+  placeholder,
+  className = '',
+}: {
+  options: string[];
+  placeholder: string;
+  className?: string;
+    if (selected.includes(option)) {
+      onChange([...selected, option]);
+    }
+  };
+
+  const clearAll = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange([]);
+  return (
+    <div ref={containerRef} className={`relative ${className}`}>
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
+      >
+        <span className={`truncate ${selected.length === 0 ? 'text-gray-500' : 'text-gray-900'}`}>
+          {selected.length === 0
+            ? placeholder
+            : selected.length === 1
+            ? selected[0]
+            : `${selected.length} selected`}
+        </span>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {selected.length > 0 && (
+            <button
+              onClick={clearAll}
+              className="p-0.5 hover:bg-gray-200 rounded"
+            >
+              <X className="w-3.5 h-3.5 text-gray-500" />
+            </button>
+          )}
+          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-auto">
+          {options.length === 0 ? (
+            <div className="px-4 py-2 text-gray-500 text-sm">No options</div>
+          ) : (
+            options.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => toggleOption(option)}
+                className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
+              >
+                <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
+                  selected.includes(option)
+                    ? 'bg-cyan-500 border-cyan-500'
+                    : 'border-gray-300'
+                }`}>
+                  {selected.includes(option) && <Check className="w-3 h-3 text-white" />}
+                </div>
+                <span className="text-sm text-gray-900 truncate">{option}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Single-select dropdown component with same styling as MultiSelect
+function SingleSelect({
+  options,
+  value,
+  onChange,
+  placeholder,
+  className = '',
+}: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  className?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const selectedOption = options.find(o => o.value === value);
+
+  const handleSelect = (optionValue: string) => {
+    onChange(optionValue);
+    setIsOpen(false);
+  };
+
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange('');
+  };
+
+  return (
+    <div ref={containerRef} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
+      >
+        <span className={`truncate ${!value ? 'text-gray-500' : 'text-gray-900'}`}>
+          {selectedOption?.label || placeholder}
+        </span>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {value && (
+            <button
+              onClick={handleClear}
+              className="p-0.5 hover:bg-gray-200 rounded"
+            >
+              <X className="w-3.5 h-3.5 text-gray-500" />
+            </button>
+          )}
+          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-auto">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => handleSelect(option.value)}
+              className={`w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center justify-between ${
+                option.value === value ? 'bg-cyan-50' : ''
+              }`}
+            >
+              <span className="text-sm text-gray-900 truncate">{option.label}</span>
+              {option.value === value && <Check className="w-4 h-4 text-cyan-500 flex-shrink-0" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface RetailerPrice {
   price: number | null;
@@ -45,8 +202,13 @@ function ProductsContent() {
 
   // Initialize state from URL params
   const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [category, setCategory] = useState(searchParams.get('category') || '');
-  const [brand, setBrand] = useState(searchParams.get('brand') || '');
+  // Category and brand are now arrays for multi-select
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(
+    searchParams.get('category')?.split(',').filter(Boolean) || []
+  );
+  const [selectedBrands, setSelectedBrands] = useState<string[]>(
+    searchParams.get('brand')?.split(',').filter(Boolean) || []
+  );
   const [verificationFilter, setVerificationFilter] = useState(searchParams.get('verified') || '');
   const [retailerFilter, setRetailerFilter] = useState(searchParams.get('retailer') || '');
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
@@ -63,12 +225,12 @@ function ProductsContent() {
   ];
 
   // Update URL when filters change
-  const updateURL = (newParams: Record<string, string | number>) => {
+  const updateURL = (newParams: Record<string, string | number | string[]>) => {
     const params = new URLSearchParams();
-    const allParams = {
+    const allParams: Record<string, string | number | string[]> = {
       search,
-      category,
-      brand,
+      category: selectedCategories.join(','),
+      brand: selectedBrands.join(','),
       verified: verificationFilter,
       retailer: retailerFilter,
       page,
@@ -76,8 +238,9 @@ function ProductsContent() {
     };
 
     Object.entries(allParams).forEach(([key, value]) => {
-      if (value && value !== '' && !(key === 'page' && value === 1)) {
-        params.set(key, String(value));
+      const strValue = Array.isArray(value) ? value.join(',') : String(value);
+      if (strValue && strValue !== '' && !(key === 'page' && strValue === '1')) {
+        params.set(key, strValue);
       }
     });
 
@@ -87,7 +250,7 @@ function ProductsContent() {
 
   useEffect(() => {
     fetchProducts();
-  }, [page, category, brand, verificationFilter, retailerFilter]);
+  }, [page, selectedCategories, selectedBrands, verificationFilter, retailerFilter]);
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -97,8 +260,8 @@ function ProductsContent() {
         pageSize: pageSize.toString(),
       });
       if (search) params.append('search', search);
-      if (category) params.append('category', category);
-      if (brand) params.append('brand', brand);
+      if (selectedCategories.length > 0) params.append('category', selectedCategories.join(','));
+      if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
 
@@ -126,8 +289,8 @@ function ProductsContent() {
 
   const handleReset = () => {
     setSearch('');
-    setCategory('');
-    setBrand('');
+    setSelectedCategories([]);
+    setSelectedBrands([]);
     setVerificationFilter('');
     setRetailerFilter('');
     setPage(1);
@@ -135,10 +298,20 @@ function ProductsContent() {
     fetchProducts();
   };
 
+  const handleCategoryChange = (newCategories: string[]) => {
+    setSelectedCategories(newCategories);
+    setPage(1);
+    updateURL({ category: newCategories.join(','), page: 1 });
+  };
+
+  const handleBrandChange = (newBrands: string[]) => {
+    setSelectedBrands(newBrands);
+    setPage(1);
+    updateURL({ brand: newBrands.join(','), page: 1 });
+  };
+
   const handleFilterChange = (filterName: string, value: string) => {
     const setters: Record<string, (v: string) => void> = {
-      category: setCategory,
-      brand: setBrand,
       verified: setVerificationFilter,
       retailer: setRetailerFilter,
     };
@@ -157,8 +330,8 @@ function ProductsContent() {
     try {
       const params = new URLSearchParams();
       if (search) params.append('search', search);
-      if (category) params.append('category', category);
-      if (brand) params.append('brand', brand);
+      if (selectedCategories.length > 0) params.append('category', selectedCategories.join(','));
+      if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
 
@@ -171,7 +344,14 @@ function ProductsContent() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'products_export.csv';
+      const now = new Date();
+      const timestamp = now.getFullYear().toString() +
+        (now.getMonth() + 1).toString().padStart(2, '0') +
+        now.getDate().toString().padStart(2, '0') + '_' +
+        now.getHours().toString().padStart(2, '0') +
+        now.getMinutes().toString().padStart(2, '0') +
+        now.getSeconds().toString().padStart(2, '0');
+      link.download = `products_export_${timestamp}.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -268,45 +448,37 @@ function ProductsContent() {
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
               />
             </div>
-            <select
-              value={category}
-              onChange={(e) => handleFilterChange('category', e.target.value)}
-              className="w-[200px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
-            >
-              <option value="">All Categories</option>
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
-            <select
-              value={brand}
-              onChange={(e) => handleFilterChange('brand', e.target.value)}
-              className="w-[150px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
-            >
-              <option value="">All Brands</option>
-              {brands.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
-            <select
+            <MultiSelect
+              options={categories}
+              selected={selectedCategories}
+              onChange={handleCategoryChange}
+              placeholder="All Categories"
+              className="w-[200px]"
+            />
+            <MultiSelect
+              options={brands}
+              selected={selectedBrands}
+              onChange={handleBrandChange}
+              placeholder="All Brands"
+              className="w-[150px]"
+            />
+            <SingleSelect
+              options={[
+                { value: 'true', label: 'Verified' },
+                { value: 'false', label: 'Unverified' },
+              ]}
               value={verificationFilter}
-              onChange={(e) => handleFilterChange('verified', e.target.value)}
-              className="w-[140px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
-            >
-              <option value="">All Status</option>
-              <option value="true">Verified</option>
-              <option value="false">Unverified</option>
-            </select>
-            <select
+              onChange={(value) => handleFilterChange('verified', value)}
+              placeholder="All Status"
+              className="w-[140px]"
+            />
+            <SingleSelect
+              options={RETAILER_FILTER_OPTIONS.map(r => ({ value: r.id, label: r.name }))}
               value={retailerFilter}
-              onChange={(e) => handleFilterChange('retailer', e.target.value)}
-              className="w-[140px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
-            >
-              <option value="">All Retailers</option>
-              {RETAILER_FILTER_OPTIONS.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
+              onChange={(value) => handleFilterChange('retailer', value)}
+              placeholder="All Retailers"
+              className="w-[150px]"
+            />
             <button
               onClick={handleReset}
               className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
@@ -352,19 +524,19 @@ function ProductsContent() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full table-fixed min-w-[1400px]">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No.</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SKU</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Review</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Thai Watsadu</th>
+                      <th className="w-[50px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No.</th>
+                      <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SKU</th>
+                      <th className="w-[280px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
+                      <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</th>
+                      <th className="w-[120px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                      <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                      <th className="w-[90px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Review</th>
+                      <th className="w-[110px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Thai Watsadu</th>
                       {otherRetailers.map((retailer) => (
-                        <th key={retailer} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th key={retailer} className="w-[110px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           {retailer}
                         </th>
                       ))}
@@ -393,10 +565,10 @@ function ProductsContent() {
                           <td className="px-4 py-2 text-sm text-gray-900 max-w-xs truncate" title={product.name}>
                             {product.name}
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-700 whitespace-nowrap">
+                          <td className="px-4 py-2 text-sm text-gray-700 truncate" title={product.brand || '-'}>
                             {product.brand || '-'}
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-700 whitespace-nowrap">
+                          <td className="px-4 py-2 text-sm text-gray-700 truncate" title={product.category || '-'}>
                             {product.category || '-'}
                           </td>
                           <td className="px-4 py-2 whitespace-nowrap">

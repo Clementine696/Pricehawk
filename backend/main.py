@@ -156,28 +156,34 @@ def get_products(
             cur.execute("SELECT retailer_id, name FROM retailers ORDER BY name")
             retailers = cur.fetchall()
 
-            # Get unique categories for filters (filtered by selected brand for cascading)
+            # Parse comma-separated category and brand values for multi-select
+            category_list = [c.strip() for c in category.split(',')] if category else []
+            brand_list = [b.strip() for b in brand.split(',')] if brand else []
+
+            # Get unique categories for filters (filtered by selected brands for cascading)
             category_query = """
                 SELECT DISTINCT category FROM products
                 WHERE retailer_id = %s AND category IS NOT NULL
             """
             category_params = [base_retailer_id]
-            if brand:
-                category_query += " AND brand = %s"
-                category_params.append(brand)
+            if brand_list:
+                placeholders = ','.join(['%s'] * len(brand_list))
+                category_query += f" AND brand IN ({placeholders})"
+                category_params.extend(brand_list)
             category_query += " ORDER BY category"
             cur.execute(category_query, category_params)
             categories = [row["category"] for row in cur.fetchall()]
 
-            # Get unique brands for filters (filtered by selected category for cascading)
+            # Get unique brands for filters (filtered by selected categories for cascading)
             brand_query = """
                 SELECT DISTINCT brand FROM products
                 WHERE retailer_id = %s AND brand IS NOT NULL
             """
             brand_params = [base_retailer_id]
-            if category:
-                brand_query += " AND category = %s"
-                brand_params.append(category)
+            if category_list:
+                placeholders = ','.join(['%s'] * len(category_list))
+                brand_query += f" AND category IN ({placeholders})"
+                brand_params.extend(category_list)
             brand_query += " ORDER BY brand"
             cur.execute(brand_query, brand_params)
             brands = [row["brand"] for row in cur.fetchall()]
@@ -195,13 +201,15 @@ def get_products(
                 search_param = f"%{search}%"
                 params.extend([search_param, search_param, search_param])
 
-            if category:
-                query += " AND p.category = %s"
-                params.append(category)
+            if category_list:
+                placeholders = ','.join(['%s'] * len(category_list))
+                query += f" AND p.category IN ({placeholders})"
+                params.extend(category_list)
 
-            if brand:
-                query += " AND p.brand = %s"
-                params.append(brand)
+            if brand_list:
+                placeholders = ','.join(['%s'] * len(brand_list))
+                query += f" AND p.brand IN ({placeholders})"
+                params.extend(brand_list)
 
             # Filter by verification status
             # Retailer is "done" if:
@@ -394,13 +402,17 @@ def export_products(
                 output.write('\ufeff')  # UTF-8 BOM for Excel
                 writer = csv.writer(output)
                 writer.writerow(['Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
-                                'HomePro Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'])
+                                'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'])
                 return Response(
                     content=output.getvalue(),
                     media_type="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=products_export.csv"}
+                    headers={"Content-Disposition": f"attachment; filename=products_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
                 )
             base_retailer_id = base_retailer["retailer_id"]
+
+            # Parse comma-separated category and brand values for multi-select
+            category_list = [c.strip() for c in category.split(',')] if category else []
+            brand_list = [b.strip() for b in brand.split(',')] if brand else []
 
             # Build query for Thai Watsadu products (same logic as /api/products but without pagination)
             query = """
@@ -415,13 +427,15 @@ def export_products(
                 search_param = f"%{search}%"
                 params.extend([search_param, search_param, search_param])
 
-            if category:
-                query += " AND p.category = %s"
-                params.append(category)
+            if category_list:
+                placeholders = ','.join(['%s'] * len(category_list))
+                query += f" AND p.category IN ({placeholders})"
+                params.extend(category_list)
 
-            if brand:
-                query += " AND p.brand = %s"
-                params.append(brand)
+            if brand_list:
+                placeholders = ','.join(['%s'] * len(brand_list))
+                query += f" AND p.brand IN ({placeholders})"
+                params.extend(brand_list)
 
             # Filter by verification status
             if verified == "true":
@@ -459,11 +473,11 @@ def export_products(
             # Write header row
             writer.writerow([
                 'Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
-                'HomePro Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'
+                'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'
             ])
 
             # Define retailer order for columns (excluding Thai Watsadu which is base)
-            retailer_order = ['HomePro', 'Do Home', 'Boonthavorn', 'Global House']
+            retailer_order = ['HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House']
 
             # Process each product
             for bp in base_products:
@@ -525,7 +539,7 @@ def export_products(
             return Response(
                 content=output.getvalue(),
                 media_type="text/csv",
-                headers={"Content-Disposition": "attachment; filename=products_export.csv"}
+                headers={"Content-Disposition": f"attachment; filename=products_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
             )
 
 

@@ -580,6 +580,62 @@ function ManualAddContent() {
       setScrapeProgress({ current: scrapeResult.total_scraped, total: urlsToScrape.length });
       setIsScraping(false);
 
+      // Validate scraped data - each URL must have name AND price extracted
+      const scrapedResults = scrapeResult.results || [];
+      const invalidResults: { url: string; reason: string }[] = [];
+
+      // Check Thai Watsadu result
+      const twdResult = scrapedResults.find(
+        (r: ScrapedProduct) => r.source_url === thaiWatsuduInput.url || r.url === thaiWatsuduInput.url
+      );
+      if (!twdResult) {
+        invalidResults.push({ url: thaiWatsuduInput.url, reason: 'Failed to scrape product data' });
+      } else if (!twdResult.name || !twdResult.current_price) {
+        invalidResults.push({
+          url: thaiWatsuduInput.url,
+          reason: !twdResult.name && !twdResult.current_price
+            ? 'Could not extract product name or price'
+            : !twdResult.name
+            ? 'Could not extract product name'
+            : 'Could not extract product price'
+        });
+      }
+
+      // Check competitor results
+      for (const comp of validCompetitors) {
+        const compResult = scrapedResults.find(
+          (r: ScrapedProduct) => r.source_url === comp.url || r.url === comp.url
+        );
+        if (!compResult) {
+          invalidResults.push({ url: comp.url, reason: 'Failed to scrape product data' });
+        } else if (!compResult.name || !compResult.current_price) {
+          invalidResults.push({
+            url: comp.url,
+            reason: !compResult.name && !compResult.current_price
+              ? 'Could not extract product name or price - this may not be a valid product page'
+              : !compResult.name
+              ? 'Could not extract product name'
+              : 'Could not extract product price'
+          });
+        }
+      }
+
+      // If any validation failed, show error and go back to review
+      if (invalidResults.length > 0) {
+        const errorMessages = invalidResults.map(r => `${r.url.substring(0, 50)}...: ${r.reason}`);
+        setErrors({
+          general: `Unable to extract product data from the following URLs:\n${errorMessages.join('\n')}\n\nPlease verify the URLs point to valid product pages.`
+        });
+        setScrapeErrors([
+          ...scrapeResult.errors || [],
+          ...invalidResults.map(r => ({ url: r.url, error: r.reason }))
+        ]);
+        setStage('review');
+        setIsSubmitting(false);
+        setIsScraping(false);
+        return;
+      }
+
       // Now submit comparison with scraped data
       const response = await apiFetch('/api/comparison/manual', {
         method: 'POST',
@@ -1019,7 +1075,7 @@ function ManualAddContent() {
 
             {errors.general && (
               <div className="rounded-xl border-2 border-red-300 bg-red-50 p-5">
-                <p className="text-sm font-medium text-red-600">{errors.general}</p>
+                <p className="text-sm font-medium text-red-600 whitespace-pre-line">{errors.general}</p>
               </div>
             )}
           </div>

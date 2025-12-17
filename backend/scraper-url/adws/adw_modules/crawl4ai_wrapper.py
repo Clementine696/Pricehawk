@@ -19,8 +19,10 @@ Scenarios:
 """
 
 import asyncio
+import glob
 import json
 import os
+import shutil
 import time
 import urllib.parse
 from typing import List, Dict, Any, Optional, Tuple
@@ -200,6 +202,8 @@ class Crawl4AIWrapper:
         self._current_mode = None  # Track current mode: 'browser', 'text', or 'http'
         self._browser_reinit_attempts = 0  # Track reinitialization attempts during scraping
         self._use_http_fallback = False  # Use pure HTTP when browser unavailable
+        self._scrape_count = 0  # Track number of scrapes for proactive browser restart
+        self._max_scrapes_before_restart = 10  # Restart browser every N scrapes to prevent memory issues
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -222,6 +226,30 @@ class Crawl4AIWrapper:
             finally:
                 self.crawler = None
                 self._current_mode = None
+
+        # Also clean up any temp files that might be accumulating
+        self._cleanup_temp_files()
+
+    def _cleanup_temp_files(self):
+        """Clean up Playwright and Chrome temp files to prevent accumulation."""
+        import platform
+
+        if platform.system() != 'Linux':
+            return  # Only needed on Linux (Railway)
+
+        try:
+            # Clean up Playwright temp directories
+            for pattern in ['/tmp/playwright*', '/tmp/.com.google.Chrome*', '/tmp/Crashpad*']:
+                for temp_path in glob.glob(pattern):
+                    try:
+                        if os.path.isdir(temp_path):
+                            shutil.rmtree(temp_path, ignore_errors=True)
+                        else:
+                            os.remove(temp_path)
+                    except Exception:
+                        pass
+        except Exception:
+            pass  # Best-effort cleanup
 
     def _is_browser_alive(self) -> bool:
         """Check if the browser instance is still valid and alive.
@@ -591,6 +619,16 @@ class Crawl4AIWrapper:
         # Use HTTP fallback if configured
         if self._use_http_fallback:
             return await self._scrape_url_http(url)
+
+        # Proactive browser restart: restart after N scrapes to prevent memory issues
+        # This is critical for long-running processes like the price updater
+        self._scrape_count += 1
+        if self._scrape_count >= self._max_scrapes_before_restart:
+            logger.info(f"Proactive browser restart after {self._scrape_count} scrapes...")
+            self._scrape_count = 0
+            await self._cleanup_browser()
+            # Brief pause to ensure resources are freed
+            await asyncio.sleep(1)
 
         # Check if browser is alive, reinitialize if needed
         if not self._is_browser_alive():

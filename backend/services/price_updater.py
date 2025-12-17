@@ -144,14 +144,17 @@ def cleanup_chrome_temp_dirs():
     """
     Clean up Chrome temp directories to prevent disk space accumulation.
     Chrome uses /tmp for cache when --disable-dev-shm-usage is set.
+    Also cleans up Playwright temp directories that accumulate over time.
     """
     import platform
     import shutil
+    import glob
 
     if platform.system() != 'Linux':
         return  # Only needed on Linux (Railway)
 
     try:
+        # Direct cleanup of known directories
         tmp_dirs = [
             '/tmp/chrome-cache',
             # NOTE: Don't clean user-data-dir or crash-dumps-dir - we no longer use those flags
@@ -164,6 +167,30 @@ def cleanup_chrome_temp_dirs():
                     shutil.rmtree(tmp_dir, ignore_errors=True)
                 except Exception:
                     pass
+
+        # Clean up Playwright temp directories (pattern: playwright-*)
+        # These accumulate with each browser launch and can cause issues
+        playwright_temps = glob.glob('/tmp/playwright*')
+        for temp_dir in playwright_temps:
+            try:
+                if os.path.isdir(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                else:
+                    os.remove(temp_dir)
+            except Exception:
+                pass
+
+        # Clean up any Chrome crash dumps
+        chrome_temps = glob.glob('/tmp/.com.google.Chrome*') + glob.glob('/tmp/Crashpad*')
+        for temp_dir in chrome_temps:
+            try:
+                if os.path.isdir(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                else:
+                    os.remove(temp_dir)
+            except Exception:
+                pass
+
     except Exception:
         pass  # Ignore errors - this is best-effort cleanup
 
@@ -334,11 +361,12 @@ class PriceUpdater:
                 # Periodic cleanup: kill any orphaned browser processes
                 # This prevents memory accumulation over long runs
                 batch_num = batch_start // self.batch_size + 1
-                if batch_num % 5 == 0:  # Every 5 batches
+                if batch_num % 3 == 0:  # Every 3 batches (was 5)
                     logger.info(f"[Worker {worker_id}] Running periodic browser + temp cleanup...")
                     cleanup_orphan_browsers()
                     cleanup_chrome_temp_dirs()  # Clean up /tmp/chrome-* directories
                     gc.collect()
+                    time.sleep(5)  # Extra pause after major cleanup
 
         logger.info(f"\n[Worker {worker_id}] Completed: {total_updated}/{len(products)} updated")
         return total_updated
@@ -661,13 +689,14 @@ class PriceUpdater:
             if i < len(products) - 1:
                 time.sleep(self.delay_between_products)
 
-            # Memory cooldown: pause every 25 products to let Railway reclaim memory
-            if (i + 1) % 25 == 0:
-                logger.info(f"  Memory cooldown: pausing 5s after {i + 1} products...")
+            # Memory cooldown: pause every 15 products to let Railway reclaim memory
+            # Reduced from 25 to 15 to prevent browser accumulation issues
+            if (i + 1) % 15 == 0:
+                logger.info(f"  Memory cooldown: pausing 10s after {i + 1} products...")
                 cleanup_orphan_browsers()
                 cleanup_chrome_temp_dirs()  # Clean up /tmp/chrome-* directories
                 gc.collect()
-                time.sleep(5)
+                time.sleep(10)  # Increased from 5s to 10s for better cleanup
 
         return updated
 

@@ -192,9 +192,9 @@ Overview with statistics:
 ### `/products`
 Product listing with:
 - Search by name/SKU/brand
-- Filter by category, brand
+- Filter by category (multi-select), brand (multi-select), status (single-select), retailer (single-select)
 - Pagination
-- Export to CSV
+- Export to CSV/Excel
 
 ### `/products/[id]`
 Product detail view:
@@ -207,8 +207,14 @@ Product detail view:
 4-step manual comparison wizard:
 1. **Input**: Enter Thai Watsadu SKU + competitor URLs
 2. **Review**: Confirm URLs to scrape
-3. **Scraping**: Live progress of scraping
+3. **Scraping**: Live progress of scraping (validates name AND price extracted)
 4. **Results**: Side-by-side comparison table
+
+Features:
+- URL domain validation (ensures URL matches selected retailer)
+- Scraped data validation (requires both name and price to proceed)
+- Shows existing matches for the SKU
+- Clear errors when navigating back to edit inputs
 
 ---
 

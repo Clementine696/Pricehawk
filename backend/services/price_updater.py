@@ -1,22 +1,38 @@
 """
 Price Updater Service
 
-Daily service to update product prices by scraping retailer websites.
+Service to update product prices by scraping retailer websites.
 Designed to handle ~10,000 products efficiently.
 
 Features:
-- Parallel processing across retailers (6 concurrent retailer workers)
+- Limit mode: Update only N oldest products (ideal for hourly cron jobs)
+- Failure tracking: Skip products after 3 consecutive failures (scrape_fail_count)
+- Parallel processing across retailers
 - Batch processing within each retailer
 - Rate limiting to avoid being blocked
 - Progress tracking and logging
 - Price history recording
 
+Failure Handling:
+- On success: scrape_fail_count reset to 0
+- On failure: scrape_fail_count incremented, last_updated_at updated
+- Products with scrape_fail_count >= 3 are skipped
+- To retry failed products: UPDATE products SET scrape_fail_count = 0 WHERE scrape_fail_count >= 3
+
 Usage:
-    python update_prices.py                    # Update all products
-    python update_prices.py --retailer twd     # Update specific retailer
-    python update_prices.py --batch-size 100   # Custom batch size
-    python update_prices.py --dry-run          # Test without updating DB
-    python update_prices.py --parallel 3       # 3 parallel retailer workers
+    python price_updater.py                    # Update all products
+    python price_updater.py --limit 500        # Update 500 oldest products (for hourly cron)
+    python price_updater.py --retailer twd     # Update specific retailer
+    python price_updater.py --batch-size 100   # Custom batch size
+    python price_updater.py --dry-run          # Test without updating DB
+    python price_updater.py --parallel 3       # 3 parallel workers
+
+Environment Variables:
+    UPDATE_LIMIT=500          # Limit to N oldest products
+    UPDATE_BATCH_SIZE=50      # Products per batch
+    UPDATE_DELAY=1.0          # Delay between products (seconds)
+    UPDATE_PARALLEL=1         # Parallel workers (1=sequential)
+    UPDATE_TIMEOUT=120        # Timeout per product (seconds)
 """
 
 import os
@@ -293,15 +309,20 @@ class PriceUpdater:
 
         return dict(products_by_retailer)
 
-    def get_all_products(self, retailer_id: Optional[str] = None) -> List[Dict]:
+    # Maximum consecutive failures before skipping a product
+    MAX_SCRAPE_FAILURES = 3
+
+    def get_all_products(self, retailer_id: Optional[str] = None, limit: Optional[int] = None) -> List[Dict]:
         """
-        Get all products from database as a flat list.
+        Get products from database as a flat list, ordered by oldest update first.
+        Skips products that have failed too many times (scrape_fail_count >= MAX_SCRAPE_FAILURES).
 
         Args:
             retailer_id: Optional filter for specific retailer
+            limit: Optional limit to fetch only N oldest products (by last_updated_at)
 
         Returns:
-            List of all products
+            List of products (oldest updates first if limit is set)
         """
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -309,17 +330,24 @@ class PriceUpdater:
                     SELECT
                         p.product_id, p.retailer_id, p.sku, p.name,
                         p.link, p.current_price, p.original_price,
-                        p.lowest_price, p.highest_price, p.last_updated_at
+                        p.lowest_price, p.highest_price, p.last_updated_at,
+                        p.scrape_fail_count
                     FROM products p
                     WHERE p.link IS NOT NULL AND p.link != ''
+                      AND (p.scrape_fail_count IS NULL OR p.scrape_fail_count < %s)
                 """
-                params = []
+                params = [self.MAX_SCRAPE_FAILURES]
 
                 if retailer_id:
                     query += " AND p.retailer_id = %s"
                     params.append(retailer_id)
 
-                query += " ORDER BY p.product_id"
+                # Order by oldest update first (NULL = never updated = highest priority)
+                query += " ORDER BY p.last_updated_at ASC NULLS FIRST"
+
+                if limit:
+                    query += " LIMIT %s"
+                    params.append(limit)
 
                 cur.execute(query, params)
                 return [dict(p) for p in cur.fetchall()]
@@ -619,14 +647,15 @@ class PriceUpdater:
         try:
             with get_db() as conn:
                 with conn.cursor() as cur:
-                    # Update product
+                    # Update product (reset scrape_fail_count on success)
                     cur.execute("""
                         UPDATE products SET
                             current_price = %s,
                             original_price = COALESCE(%s, original_price),
                             lowest_price = %s,
                             highest_price = %s,
-                            last_updated_at = NOW()
+                            last_updated_at = NOW(),
+                            scrape_fail_count = 0
                         WHERE product_id = %s
                     """, (
                         new_price,
@@ -651,6 +680,38 @@ class PriceUpdater:
             logger.error(f"Database error updating {product['sku']}: {e}")
             self.stats.increment('failed')
             return False
+
+    def record_scrape_failure(self, product: Dict):
+        """
+        Record a scrape failure for a product.
+        Increments scrape_fail_count and updates last_updated_at so it moves out of the queue.
+
+        Args:
+            product: Product that failed to scrape
+        """
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would record failure for {product['sku']}")
+            return
+
+        try:
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE products SET
+                            scrape_fail_count = COALESCE(scrape_fail_count, 0) + 1,
+                            last_updated_at = NOW()
+                        WHERE product_id = %s
+                    """, (product['product_id'],))
+                    conn.commit()
+
+            current_fails = (product.get('scrape_fail_count') or 0) + 1
+            if current_fails >= self.MAX_SCRAPE_FAILURES:
+                logger.warning(f"  Product {product['sku']} reached max failures ({current_fails}), will be skipped in future runs")
+            else:
+                logger.info(f"  Recorded failure {current_fails}/{self.MAX_SCRAPE_FAILURES} for {product['sku']}")
+
+        except Exception as e:
+            logger.error(f"Failed to record scrape failure for {product['sku']}: {e}")
 
     def process_batch(self, products: List[Dict]) -> int:
         """
@@ -681,9 +742,13 @@ class PriceUpdater:
                 if self.update_product_price(product, scraped):
                     updated += 1
                     logger.info(f"  Updated: {product['current_price']} -> {scraped.get('current_price')}")
+                else:
+                    # Price update failed (no price in data, invalid format, etc.)
+                    self.record_scrape_failure(product)
             else:
                 self.stats.increment('failed')
                 logger.error(f"  Failed to scrape {product['sku']}")
+                self.record_scrape_failure(product)
 
             # Rate limiting
             if i < len(products) - 1:
@@ -737,12 +802,13 @@ class PriceUpdater:
         logger.info(f"\n[{retailer_id}] Completed: {total_updated}/{len(products)} updated")
         return total_updated
 
-    def run(self, retailer_id: Optional[str] = None) -> UpdateStats:
+    def run(self, retailer_id: Optional[str] = None, limit: Optional[int] = None) -> UpdateStats:
         """
         Run the price update process.
 
         Args:
             retailer_id: Optional filter for specific retailer
+            limit: Optional limit to update only N oldest products
 
         Returns:
             Update statistics
@@ -751,10 +817,12 @@ class PriceUpdater:
         logger.info("=" * 60)
         logger.info(f"Price Update Started: {start_time}")
         logger.info(f"Configuration: batch_size={self.batch_size}, parallel_workers={self.parallel_workers}, dry_run={self.dry_run}")
+        if limit:
+            logger.info(f"Limit: {limit} oldest products")
         logger.info("=" * 60)
 
-        # Get all products as flat list
-        all_products = self.get_all_products(retailer_id)
+        # Get products as flat list (oldest first if limit is set)
+        all_products = self.get_all_products(retailer_id, limit)
         total_products = len(all_products)
         self.stats.total_products = total_products
 
@@ -833,9 +901,13 @@ def main():
     env_delay = float(os.environ.get('UPDATE_DELAY', 1.0))
     env_parallel = int(os.environ.get('UPDATE_PARALLEL', 1))
     env_timeout = int(os.environ.get('UPDATE_TIMEOUT', 120))
+    env_limit = os.environ.get('UPDATE_LIMIT', None)
+    env_limit = int(env_limit) if env_limit else None
 
     parser = argparse.ArgumentParser(description='Update product prices')
     parser.add_argument('--retailer', '-r', help='Specific retailer ID (twd, hp, dh, btv, gbh, mgh)')
+    parser.add_argument('--limit', '-l', type=int, default=env_limit,
+                       help='Limit to N oldest products (default: all, env: UPDATE_LIMIT)')
     parser.add_argument('--batch-size', '-b', type=int, default=env_batch_size,
                        help=f'Batch size (default: {env_batch_size}, env: UPDATE_BATCH_SIZE)')
     parser.add_argument('--delay', '-d', type=float, default=env_delay,
@@ -860,7 +932,7 @@ def main():
         scrape_timeout=args.timeout
     )
 
-    stats = updater.run(retailer_id=args.retailer)
+    stats = updater.run(retailer_id=args.retailer, limit=args.limit)
 
     # Exit with error code if too many failures
     failure_rate = stats.failed / stats.total_products if stats.total_products > 0 else 0

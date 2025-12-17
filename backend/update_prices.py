@@ -13,6 +13,9 @@ Environment Variables:
 - DATABASE_URL: PostgreSQL connection string
 - UPDATE_BATCH_SIZE: Products per batch (default: 50)
 - UPDATE_DELAY: Delay between products in seconds (default: 1.0)
+- UPDATE_PARALLEL: Number of parallel workers (default: 1)
+- UPDATE_RETAILER: Optional specific retailer to update (twd, hp, dh, etc.)
+- UPDATE_LIMIT: Optional limit on number of products to update (oldest first)
 """
 
 import os
@@ -39,12 +42,15 @@ def main():
     delay = float(os.environ.get('UPDATE_DELAY', 1.0))
     parallel_workers = int(os.environ.get('UPDATE_PARALLEL', 1))  # 1=sequential, 2-6=parallel
     retailer = os.environ.get('UPDATE_RETAILER')  # Optional: specific retailer
+    limit_str = os.environ.get('UPDATE_LIMIT')  # Optional: limit number of products
+    limit = int(limit_str) if limit_str else None
 
     logger.info(f"Configuration:")
     logger.info(f"  Batch Size: {batch_size}")
     logger.info(f"  Delay: {delay}s")
     logger.info(f"  Parallel Workers: {parallel_workers}")
     logger.info(f"  Retailer Filter: {retailer or 'ALL'}")
+    logger.info(f"  Product Limit: {limit or 'NONE (all products)'}")
 
     # Initialize and run
     updater = PriceUpdater(
@@ -57,7 +63,7 @@ def main():
     )
 
     try:
-        stats = updater.run(retailer_id=retailer)
+        stats = updater.run(retailer_id=retailer, limit=limit)
 
         # Save run summary
         summary = {
@@ -67,7 +73,8 @@ def main():
                 'batch_size': batch_size,
                 'delay': delay,
                 'parallel_workers': parallel_workers,
-                'retailer': retailer
+                'retailer': retailer,
+                'limit': limit
             }
         }
 

@@ -155,15 +155,21 @@ is_active BOOLEAN DEFAULT TRUE
 ### Authentication
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/login` | Login with username/password |
-| GET | `/api/me` | Get current user info |
+| POST | `/api/auth/login` | Login with username/password, returns token |
+| POST | `/api/auth/logout` | Logout and clear session |
+| GET | `/api/auth/me` | Get current user info |
+
+**Authentication Methods:**
+- **Bearer Token** (recommended): Store token from login response in localStorage, send as `Authorization: Bearer <token>` header
+- **Cookie** (fallback): HTTP-only session cookie with `SameSite=None; Secure; Partitioned` for cross-origin
 
 ### Products
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/products` | List products with pagination, search, filters |
 | GET | `/api/products/{id}` | Get product detail with all matches |
-| GET | `/api/products/export` | Export products to CSV |
+| GET | `/api/products/export` | Export products to Excel (.xlsx) with hyperlinked prices |
+| POST | `/api/products/{id}/rescrape` | Rescrape prices for product and verified matches |
 
 ### Matches
 | Method | Endpoint | Description |
@@ -195,7 +201,7 @@ Product listing with:
 - Search by name/SKU/brand
 - Filter by category (multi-select), brand (multi-select), status (single-select), retailer (single-select)
 - Pagination
-- Export to CSV/Excel
+- Export to Excel (.xlsx) with hyperlinked prices
 
 ### `/products/[id]`
 Product detail view:
@@ -203,6 +209,7 @@ Product detail view:
 - Matched products from all retailers
 - Verify/reject matches
 - Add manual matches
+- **Rescrape Prices** button - updates prices for base product + all verified matches
 
 ### `/manual-add`
 4-step manual comparison wizard:

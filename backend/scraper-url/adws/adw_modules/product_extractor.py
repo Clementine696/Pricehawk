@@ -1471,39 +1471,52 @@ class HomeProExtractor(ProductExtractor):
                         product.images = [image]
 
         # 2b. If JSON-LD price not found, try HomePro-specific HTML price patterns
+        # NOTE: HomePro renders main product price in 'obcon-price-info' section
+        # The DOM structure places this AFTER some related product sections, so we can't cut by marker
         if not product.current_price:
             # HomePro specific price patterns - prioritized from most specific to general
-            # Based on actual HTML: <input id="gtmPrice-246513" value="209.0">
-            #                       <span class="amount">209</span>
-            #                       <div class="price">฿ 209</div>
+            # Focus on patterns that identify MAIN product price, not related products
             homepro_price_patterns = [
-                # GTM hidden input (most reliable) - id="gtmPrice-246513" value="209.0"
-                r'<input[^>]*id=["\']gtmPrice-\d+["\'][^>]*value=["\']([\d.]+)["\']',
-                # Discount/sale price span with amount class
-                r'<span[^>]*class=["\']amount["\'][^>]*>([\d,]+)</span>',
-                # Price div with ฿ symbol
-                r'<div[^>]*class=["\'](?:price|offer-price)["\'][^>]*>\s*฿\s*([\d,]+)',
-                # Price with ฿ symbol in various formats
-                r'฿\s*([\d,]+(?:\.\d{2})?)\s*</span>',
-                r'฿\s*([\d,]+(?:\.\d{2})?)\s*</div>',
-                # Price meta tag
+                # 1. obcon-price-info container (MOST RELIABLE for HomePro main product)
+                # Pattern: <span class="obcon-price-info">...<span class="currency">฿</span>...<span class="amount">1,190</span>
+                r'obcon-price-info[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
+                # 2. Price div with specific class pattern for main product (not cards/tiles)
+                r'<div[^>]*class="[^"]*price[^"]*"[^>]*>\s*(?:<[^>]*>)*\s*฿\s*([\d,]+)</div>',
+                # 3. Amount class with currency sibling (main product pattern)
+                r'<span[^>]*class="[^"]*currency[^"]*"[^>]*>฿</span>\s*(?:<[^>]*>)*\s*<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
+                # 4. Price meta tag
                 r'<meta[^>]*property=["\']product:price:amount["\'][^>]*content=["\']([\d.]+)["\']',
             ]
 
-            for pattern in homepro_price_patterns:
-                matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
-                if matches:
-                    # Filter to reasonable price range (1-100000 THB)
-                    for price_str in matches:
-                        try:
-                            price = float(price_str.replace(',', ''))
-                            if 1 <= price <= 100000:
-                                product.current_price = price
-                                break
-                        except ValueError:
-                            continue
-                if product.current_price:
-                    break
+            # First, try SKU-specific GTM input (most reliable if available)
+            if product.sku:
+                sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
+                sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
+                if sku_matches:
+                    try:
+                        price = float(sku_matches[0])
+                        if 1 <= price <= 500000:
+                            product.current_price = price
+                    except ValueError:
+                        pass
+
+            # If SKU-specific GTM didn't work, try other patterns
+            if not product.current_price:
+                for pattern in homepro_price_patterns:
+                    matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
+                    if matches:
+                        # Filter to reasonable price range - HomePro main products are usually > 50 THB
+                        for price_str in matches:
+                            try:
+                                price = float(price_str.replace(',', ''))
+                                # Use higher minimum (50) to avoid matching small related product prices
+                                if 50 <= price <= 500000:
+                                    product.current_price = price
+                                    break
+                            except ValueError:
+                                continue
+                    if product.current_price:
+                        break
 
         # 3. Extract original price from HTML (for discount calculation)
         # HomePro HTML: <div class="original-price">...<span class="amount">235</span>
@@ -1618,46 +1631,16 @@ class HomeProExtractor(ProductExtractor):
                     if potential_brand not in ['ML', 'CM', 'MM', 'KG', 'G', 'L', 'M', 'W', 'V', 'HP']:
                         product.brand = potential_brand
 
-        # 11. Fallback: use base extraction for missing fields
-        if not product.name or not product.current_price:
+        # 11. Fallback: use base extraction for missing fields (name only)
+        # NOTE: We do NOT use base extraction for price because HomePro's HTML structure
+        # has related products markers appearing BEFORE the main product price in the DOM
+        if not product.name:
             base_product = super().extract_from_html(html_content, url)
             if base_product:
                 if not product.name:
                     product.name = self._clean_homepro_text(base_product.name)
-                # Use base price only if we truly have nothing
-                # But reject prices that look like volume/size (50, 100, 250, 500, 1000 are common ml values)
-                if not product.current_price and base_product.current_price:
-                    price = base_product.current_price
-                    # Common volume values in ml that get mistaken for prices
-                    volume_values = [50, 100, 150, 200, 250, 300, 400, 500, 750, 1000]
-                    # Also check if price matches product name volume (e.g., "500ml" -> 500)
-                    is_volume_in_name = False
-                    if product.name:
-                        vol_match = re.search(r'(\d+)\s*(?:ml|มล|ลิตร|L|g|กรัม)', product.name, re.IGNORECASE)
-                        if vol_match:
-                            vol_value = int(vol_match.group(1))
-                            if price == vol_value or price == vol_value * 10:
-                                is_volume_in_name = True
-
-                    if not is_volume_in_name and price not in volume_values:
-                        if 10 <= price <= 50000:
-                            product.current_price = price
-
-                if not product.original_price and base_product.original_price:
-                    orig_price = base_product.original_price
-                    # Same volume filter for original price
-                    volume_values = [50, 100, 150, 200, 250, 300, 400, 500, 750, 1000]
-                    is_volume_in_name = False
-                    if product.name:
-                        vol_match = re.search(r'(\d+)\s*(?:ml|มล|ลิตร|L|g|กรัม)', product.name, re.IGNORECASE)
-                        if vol_match:
-                            vol_value = int(vol_match.group(1))
-                            if orig_price == vol_value or orig_price == vol_value * 10:
-                                is_volume_in_name = True
-
-                    if not is_volume_in_name and orig_price not in volume_values:
-                        if 10 <= orig_price <= 100000:
-                            product.original_price = orig_price
+                # NOTE: We intentionally DO NOT use base extraction for price
+                # HomePro's HTML structure causes base extraction to pick up related product prices
 
         product.retailer = "HomePro"
         return product

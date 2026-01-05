@@ -112,6 +112,7 @@ original_price DECIMAL(10, 2)
 lowest_price DECIMAL(10, 2)     -- Historical lowest
 highest_price DECIMAL(10, 2)    -- Historical highest
 last_updated_at TIMESTAMP
+scrape_fail_count INTEGER DEFAULT 0  -- Consecutive scrape failures (skip at 3)
 UNIQUE (retailer_id, sku)
 ```
 
@@ -371,11 +372,26 @@ python services/price_updater.py --parallel 3 --batch-size 50 --delay 1.0
 
 #### Environment Variables (for cron)
 ```env
-UPDATE_BATCH_SIZE=50
-UPDATE_DELAY=1.0
-UPDATE_PARALLEL=3
-UPDATE_RETAILER=        # Optional: specific retailer
+UPDATE_BATCH_SIZE=50      # Products per batch (default: 50)
+UPDATE_DELAY=1.0          # Delay between products in seconds (default: 1.0)
+UPDATE_PARALLEL=3         # Parallel workers (default: 1)
+UPDATE_RETAILER=          # Optional: specific retailer (twd, hp, dh, etc.)
+UPDATE_LIMIT=100          # Optional: limit to N oldest products (for hourly cron)
 ```
+
+#### Failure Tracking
+Products that fail to scrape are tracked with `scrape_fail_count`:
+- Each failed scrape increments the counter
+- Products with 3+ consecutive failures are automatically skipped
+- Counter resets to 0 on successful scrape
+- Prevents broken URLs from clogging the update queue
+
+#### Browser Memory Management
+The scraper includes memory management to prevent crashes on Railway:
+- Proactive browser restart every 10 scrapes
+- Memory cooldown pause every 15 products (10 second pause)
+- Automatic cleanup of Playwright temp directories
+- Batch cleanup every 3 batches
 
 ---
 
@@ -423,18 +439,59 @@ npm run dev
 
 ---
 
+## Cron Job Setup (Railway)
+
+### Price Update Cron Service
+Create a separate Railway service for the cron job:
+
+1. **Service Setup**
+   - Create new service in Railway
+   - Set command: `python update_prices.py`
+   - Set schedule: `0 * * * *` (hourly) or `0 2 * * *` (daily at 2 AM UTC)
+
+2. **Environment Variables**
+   ```env
+   DATABASE_URL=postgresql://...
+   UPDATE_BATCH_SIZE=50
+   UPDATE_DELAY=1.0
+   UPDATE_PARALLEL=3
+   UPDATE_LIMIT=100          # For hourly: process 100 oldest products
+   ```
+
+3. **How It Works**
+   - Fetches N oldest products (by `last_updated_at ASC NULLS FIRST`)
+   - Skips products with 3+ consecutive failures
+   - Splits work among parallel workers
+   - Updates prices and records failures
+   - Cleans up browser resources to prevent memory leaks
+
+### Recommended Configurations
+
+**Hourly Cron (Incremental)**
+```env
+UPDATE_LIMIT=100
+UPDATE_PARALLEL=3
+```
+- Processes 100 oldest products each hour
+- Good for keeping prices fresh without overloading
+
+**Daily Cron (Full Update)**
+```env
+UPDATE_LIMIT=           # No limit - process all
+UPDATE_PARALLEL=3
+```
+- Processes all products once per day
+- Run during off-peak hours (e.g., 2 AM)
+
+---
+
 ## Future Features (Planned)
 
-1. **Daily Price Updates**
-   - Automated scraping of all products
-   - Price history tracking
-   - Lowest/highest price updates
-
-2. **Price Alerts**
+1. **Price Alerts**
    - Notify when price drops
    - Configurable thresholds
 
-3. **Analytics Dashboard**
+2. **Analytics Dashboard**
    - Price trends over time
    - Retailer price comparison charts
    - Category-level insights

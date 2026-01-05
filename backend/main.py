@@ -862,6 +862,137 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
             }
 
 
+@app.post("/api/products/{product_id}/rescrape")
+def rescrape_product(product_id: int, user: dict = Depends(get_current_user)):
+    """
+    Rescrape prices for a product and its verified matches.
+    Only scrapes the base product and verified correct matches.
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get base product
+            cur.execute("""
+                SELECT p.product_id, p.sku, p.name, p.link, p.current_price,
+                       p.original_price, p.lowest_price, p.highest_price,
+                       r.name as retailer_name, r.retailer_id
+                FROM products p
+                JOIN retailers r ON p.retailer_id = r.retailer_id
+                WHERE p.product_id = %s
+            """, (product_id,))
+            base_product = cur.fetchone()
+
+            if not base_product:
+                raise HTTPException(status_code=404, detail="Product not found")
+
+            # Get verified correct matches only
+            cur.execute("""
+                SELECT p.product_id, p.sku, p.name, p.link, p.current_price,
+                       p.original_price, p.lowest_price, p.highest_price,
+                       r.name as retailer_name, r.retailer_id
+                FROM product_matches pm
+                JOIN products p ON pm.candidate_product_id = p.product_id
+                JOIN retailers r ON p.retailer_id = r.retailer_id
+                WHERE pm.base_product_id = %s
+                  AND pm.verified_by_user = TRUE
+                  AND pm.is_same = TRUE
+            """, (product_id,))
+            verified_matches = cur.fetchall()
+
+            # Collect all products to scrape
+            products_to_scrape = [base_product] + list(verified_matches)
+
+            results = []
+            for product in products_to_scrape:
+                url = product["link"]
+                if not url:
+                    results.append({
+                        "product_id": product["product_id"],
+                        "retailer_name": product["retailer_name"],
+                        "success": False,
+                        "error": "No URL available"
+                    })
+                    continue
+
+                # Scrape the URL
+                scrape_result = scrape_single_url(url)
+
+                if scrape_result.get("success"):
+                    scraped_data = scrape_result.get("data", {})
+                    new_price = scraped_data.get("current_price")
+                    new_original_price = scraped_data.get("original_price")
+
+                    if new_price is not None:
+                        try:
+                            new_price = float(new_price)
+                            old_price = float(product["current_price"]) if product["current_price"] else None
+                            lowest_price = float(product["lowest_price"]) if product["lowest_price"] else new_price
+                            highest_price = float(product["highest_price"]) if product["highest_price"] else new_price
+
+                            # Update lowest/highest
+                            if new_price < lowest_price:
+                                lowest_price = new_price
+                            if new_price > highest_price:
+                                highest_price = new_price
+
+                            # Update database
+                            cur.execute("""
+                                UPDATE products SET
+                                    current_price = %s,
+                                    original_price = COALESCE(%s, original_price),
+                                    lowest_price = %s,
+                                    highest_price = %s,
+                                    last_updated_at = NOW(),
+                                    scrape_fail_count = 0
+                                WHERE product_id = %s
+                            """, (new_price, new_original_price, lowest_price, highest_price, product["product_id"]))
+
+                            # Insert price history
+                            cur.execute("""
+                                INSERT INTO price_history (product_id, price)
+                                VALUES (%s, %s)
+                            """, (product["product_id"], new_price))
+
+                            results.append({
+                                "product_id": product["product_id"],
+                                "retailer_name": product["retailer_name"],
+                                "success": True,
+                                "old_price": old_price,
+                                "new_price": new_price,
+                                "price_changed": old_price != new_price if old_price else True
+                            })
+                        except (TypeError, ValueError) as e:
+                            results.append({
+                                "product_id": product["product_id"],
+                                "retailer_name": product["retailer_name"],
+                                "success": False,
+                                "error": f"Invalid price format: {new_price}"
+                            })
+                    else:
+                        results.append({
+                            "product_id": product["product_id"],
+                            "retailer_name": product["retailer_name"],
+                            "success": False,
+                            "error": "No price found in scraped data"
+                        })
+                else:
+                    results.append({
+                        "product_id": product["product_id"],
+                        "retailer_name": product["retailer_name"],
+                        "success": False,
+                        "error": scrape_result.get("error", "Unknown scrape error")
+                    })
+
+            conn.commit()
+
+            return {
+                "success": True,
+                "total_scraped": len(products_to_scrape),
+                "successful": sum(1 for r in results if r["success"]),
+                "failed": sum(1 for r in results if not r["success"]),
+                "results": results
+            }
+
+
 @app.get("/api/dashboard/stats")
 def get_dashboard_stats(user: dict = Depends(get_current_user)):
     """Get dashboard statistics - Thai Watsadu centric"""

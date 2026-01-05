@@ -57,6 +57,8 @@ export default function ProductDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [collapsedRetailers, setCollapsedRetailers] = useState<Set<string>>(new Set());
+  const [isRescraping, setIsRescraping] = useState(false);
+  const [rescrapeResult, setRescrapeResult] = useState<{success: boolean; message: string} | null>(null);
 
   useEffect(() => {
     if (productId) {
@@ -135,6 +137,46 @@ export default function ProductDetailPage() {
       console.error('Error undoing verification:', err);
     }
   };
+
+  const handleRescrape = async () => {
+    setIsRescraping(true);
+    setRescrapeResult(null);
+    try {
+      const response = await apiFetch(`/api/products/${productId}/rescrape`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) throw new Error('Failed to rescrape products');
+
+      const result = await response.json();
+
+      // Show result message
+      const successCount = result.successful || 0;
+      const failedCount = result.failed || 0;
+      setRescrapeResult({
+        success: failedCount === 0,
+        message: `Updated ${successCount} product${successCount !== 1 ? 's' : ''}${failedCount > 0 ? `, ${failedCount} failed` : ''}`
+      });
+
+      // Refresh product data to show new prices
+      await fetchProductDetail();
+
+      // Clear message after 5 seconds
+      setTimeout(() => setRescrapeResult(null), 5000);
+    } catch (err) {
+      console.error('Error rescraping products:', err);
+      setRescrapeResult({
+        success: false,
+        message: 'Failed to rescrape products'
+      });
+      setTimeout(() => setRescrapeResult(null), 5000);
+    } finally {
+      setIsRescraping(false);
+    }
+  };
+
+  // Count verified matches for rescrape button
+  const verifiedMatchCount = data?.matches.filter(m => m.verified_by_user && m.is_same).length || 0;
 
   const formatPrice = (price: number | null) => {
     if (price === null) return '-';
@@ -220,9 +262,27 @@ export default function ProductDetailPage() {
         </div>
 
         {/* Page Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Product Comparison Detail</h1>
-          <p className="text-gray-600 mt-1">Compare prices and verify product matches across retailers</p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Product Comparison Detail</h1>
+            <p className="text-gray-600 mt-1">Compare prices and verify product matches across retailers</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {rescrapeResult && (
+              <span className={`text-sm px-3 py-1 rounded-full ${rescrapeResult.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {rescrapeResult.message}
+              </span>
+            )}
+            <button
+              onClick={handleRescrape}
+              disabled={isRescraping}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title={`Rescrape Thai Watsadu + ${verifiedMatchCount} verified match${verifiedMatchCount !== 1 ? 'es' : ''}`}
+            >
+              <RotateCcw className={`w-4 h-4 ${isRescraping ? 'animate-spin' : ''}`} />
+              {isRescraping ? 'Rescraping...' : 'Rescrape Prices'}
+            </button>
+          </div>
         </div>
 
         {/* Main Content */}

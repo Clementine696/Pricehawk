@@ -11,8 +11,9 @@ import json
 import os
 import uuid
 import tempfile
-import csv
 import io
+from openpyxl import Workbook
+from openpyxl.styles import Font
 
 from database import get_user_by_username, get_db
 
@@ -390,23 +391,25 @@ def export_products(
     retailer: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
-    """Export products to CSV with price comparison across retailers"""
+    """Export products to Excel with price comparison across retailers (prices are hyperlinked to product pages)"""
     with get_db() as conn:
         with conn.cursor() as cur:
             # Get Thai Watsadu retailer ID (base retailer)
             cur.execute("SELECT retailer_id FROM retailers WHERE name = 'Thai Watsadu'")
             base_retailer = cur.fetchone()
             if not base_retailer:
-                # Return empty CSV if no base retailer
-                output = io.StringIO()
-                output.write('\ufeff')  # UTF-8 BOM for Excel
-                writer = csv.writer(output)
-                writer.writerow(['Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
-                                'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'])
+                # Return empty Excel if no base retailer
+                wb = Workbook()
+                ws = wb.active
+                ws.append(['Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
+                          'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'])
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
                 return Response(
                     content=output.getvalue(),
-                    media_type="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename=products_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename=products_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
                 )
             base_retailer_id = base_retailer["retailer_id"]
 
@@ -465,29 +468,40 @@ def export_products(
             cur.execute(query, params)
             base_products = cur.fetchall()
 
-            # Prepare CSV output with UTF-8 BOM for Excel compatibility with Thai characters
-            output = io.StringIO()
-            output.write('\ufeff')  # UTF-8 BOM
-            writer = csv.writer(output)
+            # Create Excel workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Products"
 
             # Write header row
-            writer.writerow([
-                'Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
-                'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status'
-            ])
+            headers = ['Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
+                      'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status']
+            ws.append(headers)
+
+            # Style header row
+            header_font = Font(bold=True)
+            for col_num, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.font = header_font
 
             # Define retailer order for columns (excluding Thai Watsadu which is base)
             retailer_order = ['HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House']
 
+            # Hyperlink style (blue, underlined)
+            link_font = Font(color="0563C1", underline="single")
+
             # Process each product
+            row_num = 2
             for bp in base_products:
                 base_price = float(bp["current_price"]) if bp["current_price"] else None
+                base_link = bp["link"] or ''
 
-                # Get verified correct matches from other retailers
+                # Get verified correct matches from other retailers (include link)
                 cur.execute("""
                     SELECT DISTINCT ON (r.retailer_id)
                         r.name as retailer_name,
-                        p2.current_price
+                        p2.current_price,
+                        p2.link
                     FROM product_matches pm
                     JOIN products p2 ON pm.candidate_product_id = p2.product_id
                     JOIN retailers r ON p2.retailer_id = r.retailer_id
@@ -498,17 +512,20 @@ def export_products(
                 """, (bp["product_id"],))
 
                 matches = cur.fetchall()
-                retailer_prices = {}
+                retailer_data = {}
                 for match in matches:
-                    retailer_prices[match["retailer_name"]] = float(match["current_price"]) if match["current_price"] else None
+                    retailer_data[match["retailer_name"]] = {
+                        "price": float(match["current_price"]) if match["current_price"] else None,
+                        "link": match["link"] or ''
+                    }
 
                 # Determine status
                 status = ''
                 if base_price:
                     all_prices = [base_price]
-                    for rp in retailer_prices.values():
-                        if rp:
-                            all_prices.append(rp)
+                    for rd in retailer_data.values():
+                        if rd["price"]:
+                            all_prices.append(rd["price"])
 
                     min_price = min(all_prices)
                     if base_price == min_price and len(all_prices) > 1:
@@ -519,27 +536,47 @@ def export_products(
                     elif base_price > min_price:
                         status = 'higher'
 
-                # Build row
-                row = [
-                    bp["name"] or '',
-                    bp["sku"] or '',
-                    bp["brand"] or '',
-                    bp["category"] or '',
-                    base_price if base_price else '',
-                ]
+                # Write row data
+                ws.cell(row=row_num, column=1, value=bp["name"] or '')
+                ws.cell(row=row_num, column=2, value=bp["sku"] or '')
+                ws.cell(row=row_num, column=3, value=bp["brand"] or '')
+                ws.cell(row=row_num, column=4, value=bp["category"] or '')
 
-                # Add retailer prices in order
-                for retailer in retailer_order:
-                    price = retailer_prices.get(retailer)
-                    row.append(price if price else '')
+                # Thai Watsadu price with hyperlink (column 5)
+                if base_price:
+                    cell = ws.cell(row=row_num, column=5, value=base_price)
+                    if base_link:
+                        cell.hyperlink = base_link
+                        cell.font = link_font
 
-                row.append(status)
-                writer.writerow(row)
+                # Retailer prices with hyperlinks (columns 6-10)
+                for col_offset, retailer_name in enumerate(retailer_order):
+                    col_num = 6 + col_offset
+                    data = retailer_data.get(retailer_name)
+                    if data and data["price"]:
+                        cell = ws.cell(row=row_num, column=col_num, value=data["price"])
+                        if data["link"]:
+                            cell.hyperlink = data["link"]
+                            cell.font = link_font
+
+                # Status (column 11)
+                ws.cell(row=row_num, column=11, value=status)
+
+                row_num += 1
+
+            # Auto-adjust column widths
+            for col_num, header in enumerate(headers, 1):
+                ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max(len(header) + 2, 12)
+
+            # Save to BytesIO
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
 
             return Response(
                 content=output.getvalue(),
-                media_type="text/csv",
-                headers={"Content-Disposition": f"attachment; filename=products_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename=products_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
             )
 
 

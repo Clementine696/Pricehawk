@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, setAuthToken, removeAuthToken, getAuthToken } from '@/lib/api';
 
 interface User {
   username: string;
@@ -25,18 +25,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function checkAuth() {
+    // If no token stored, skip auth check
+    const token = getAuthToken();
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
     try {
       // skipAuthRedirect: true because 401 is expected when not logged in
       const res = await apiFetch('/api/auth/me', { skipAuthRedirect: true });
       if (res.ok) {
         const data = await res.json();
         setUser(data);
+      } else {
+        // Token is invalid, clear it
+        removeAuthToken();
       }
     } catch (error) {
       // 401 is expected when not logged in, don't log it
       if (error instanceof Error && error.message !== 'Unauthorized') {
         console.error('Auth check failed:', error);
       }
+      removeAuthToken();
     } finally {
       setLoading(false);
     }
@@ -55,13 +66,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const data = await res.json();
+
+    // Store token in localStorage
+    if (data.token) {
+      setAuthToken(data.token);
+    }
+
     setUser({ username: data.username });
   }
 
   async function logout() {
-    await apiFetch('/api/auth/logout', {
-      method: 'POST',
-    });
+    try {
+      await apiFetch('/api/auth/logout', {
+        method: 'POST',
+      });
+    } catch (error) {
+      // Ignore logout errors
+      console.error('Logout error:', error);
+    }
+    // Always clear token and user state
+    removeAuthToken();
     setUser(null);
   }
 

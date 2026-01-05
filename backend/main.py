@@ -279,6 +279,7 @@ def get_products(
     brand: Optional[str] = None,
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
+    watched_only: Optional[bool] = False,
     user: dict = Depends(get_current_user)
 ):
     """Get Thai Watsadu products with price comparison across retailers"""
@@ -407,6 +408,15 @@ def get_products(
                 )"""
                 params.append(retailer)
 
+            # Filter by user's watched categories
+            if watched_only:
+                user_id = user.get("user_id")
+                if user_id:
+                    query += """ AND p.category IN (
+                        SELECT category FROM user_category_watchlist WHERE user_id = %s
+                    )"""
+                    params.append(user_id)
+
             # Get total count
             count_query = query.replace("SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link", "SELECT COUNT(*)")
             cur.execute(count_query, params)
@@ -529,6 +539,7 @@ def export_products(
     brand: Optional[str] = None,
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
+    watched_only: Optional[bool] = False,
     user: dict = Depends(get_current_user)
 ):
     """Export products to Excel with price comparison across retailers (prices are hyperlinked to product pages)"""
@@ -602,6 +613,15 @@ def export_products(
                     AND pm.is_same = TRUE
                 )"""
                 params.append(retailer)
+
+            # Filter by user's watched categories
+            if watched_only:
+                user_id = user.get("user_id")
+                if user_id:
+                    query += """ AND p.category IN (
+                        SELECT category FROM user_category_watchlist WHERE user_id = %s
+                    )"""
+                    params.append(user_id)
 
             query += " ORDER BY p.product_id"
 

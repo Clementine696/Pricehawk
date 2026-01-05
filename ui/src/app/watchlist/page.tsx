@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Eye, EyeOff, Search, Package } from 'lucide-react';
+import { Eye, EyeOff, Search, Package, Download, Loader2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
 interface CategoryItem {
@@ -17,6 +17,7 @@ export default function WatchlistPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [updating, setUpdating] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     fetchCategories();
@@ -71,6 +72,37 @@ export default function WatchlistPage() {
     }
   };
 
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const response = await apiFetch('/api/products/export?watched_only=true');
+      if (!response.ok) {
+        throw new Error('Failed to export products');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const now = new Date();
+      const timestamp = now.getFullYear().toString() +
+        (now.getMonth() + 1).toString().padStart(2, '0') +
+        now.getDate().toString().padStart(2, '0') + '_' +
+        now.getHours().toString().padStart(2, '0') +
+        now.getMinutes().toString().padStart(2, '0') +
+        now.getSeconds().toString().padStart(2, '0');
+      link.download = `watchlist_export_${timestamp}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting watchlist:', error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Filter categories by search
   const filteredCategories = categories.filter(c =>
     c.category.toLowerCase().includes(searchQuery.toLowerCase())
@@ -113,11 +145,32 @@ export default function WatchlistPage() {
     <MainLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Category Watchlist</h1>
-          <p className="text-gray-600 mt-1">
-            Select categories to watch for price changes. You are watching {watchedCategories.length} of {categories.length} categories.
-          </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Category Watchlist</h1>
+            <p className="text-gray-600 mt-1">
+              Select categories to watch for price changes. You are watching {watchedCategories.length} of {categories.length} categories.
+            </p>
+          </div>
+          {watchedCategories.length > 0 && (
+            <button
+              onClick={handleExport}
+              disabled={isExporting}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isExporting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Export Watchlist
+                </>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Search */}

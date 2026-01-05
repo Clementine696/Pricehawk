@@ -3,7 +3,7 @@
 import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check } from 'lucide-react';
+import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check, Eye } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
 // Multi-select dropdown component with search
@@ -269,6 +269,7 @@ function ProductsContent() {
   const [retailerFilter, setRetailerFilter] = useState(searchParams.get('retailer') || '');
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [isExporting, setIsExporting] = useState(false);
+  const [watchedOnly, setWatchedOnly] = useState(false);
   const pageSize = 10;
 
   // Retailer options for filter (excluding Thai Watsadu which is the base)
@@ -306,7 +307,7 @@ function ProductsContent() {
 
   useEffect(() => {
     fetchProducts();
-  }, [page, selectedCategories, selectedBrands, verificationFilter, retailerFilter]);
+  }, [page, selectedCategories, selectedBrands, verificationFilter, retailerFilter, watchedOnly]);
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -320,6 +321,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
+      if (watchedOnly) params.append('watched_only', 'true');
 
       const response = await apiFetch(`/api/products?${params}`);
       if (!response.ok) throw new Error('Failed to fetch products');
@@ -390,6 +392,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
+      if (watchedOnly) params.append('watched_only', 'true');
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {
@@ -542,6 +545,16 @@ function ProductsContent() {
               <RotateCcw className="w-4 h-4" />
               Reset
             </button>
+            <label className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+              <input
+                type="checkbox"
+                checked={watchedOnly}
+                onChange={(e) => setWatchedOnly(e.target.checked)}
+                className="w-4 h-4 text-cyan-500 border-gray-300 rounded focus:ring-cyan-500"
+              />
+              <Eye className="w-4 h-4 text-gray-500" />
+              <span className="text-sm text-gray-700">Watched Only</span>
+            </label>
             <button
               onClick={handleExport}
               disabled={isExporting}

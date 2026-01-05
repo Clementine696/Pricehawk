@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi import FastAPI, HTTPException, Response, Depends, Cookie
+from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import bcrypt
@@ -40,7 +40,7 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 # Session settings
-SESSION_EXPIRE_MINUTES = 30
+SESSION_EXPIRE_MINUTES = 10080  # 7 days
 COOKIE_NAME = "session_token"
 
 # In-memory session store (users now in PostgreSQL)
@@ -56,14 +56,27 @@ class UserResponse(BaseModel):
     username: str
 
 
-def get_current_user(session_token: Optional[str] = Cookie(None, alias=COOKIE_NAME)) -> dict:
-    """Validate session cookie and return user"""
-    if not session_token or session_token not in sessions:
+def get_current_user(
+    session_token: Optional[str] = Cookie(None, alias=COOKIE_NAME),
+    authorization: Optional[str] = Header(None)
+) -> dict:
+    """Validate session from cookie or Authorization header and return user"""
+    token = None
+
+    # First, try Authorization header (Bearer token)
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]  # Remove "Bearer " prefix
+
+    # Fall back to cookie
+    if not token:
+        token = session_token
+
+    if not token or token not in sessions:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    session = sessions[session_token]
+    session = sessions[token]
     if datetime.utcnow() > session["expires"]:
-        del sessions[session_token]
+        del sessions[token]
         raise HTTPException(status_code=401, detail="Session expired")
 
     return session["user"]
@@ -82,30 +95,49 @@ def login(data: LoginRequest, response: Response):
     expires = datetime.utcnow() + timedelta(minutes=SESSION_EXPIRE_MINUTES)
 
     sessions[token] = {
-        "user": {"username": user["username"]},
+        "user": {"user_id": user["user_id"], "username": user["username"]},
         "expires": expires,
     }
 
     # Set HTTP-only cookie
     # For cross-origin (Vercel frontend -> Railway backend), need SameSite=None + Secure=True
     is_production = os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("PRODUCTION")
-    response.set_cookie(
-        key=COOKIE_NAME,
-        value=token,
-        httponly=True,
-        max_age=SESSION_EXPIRE_MINUTES * 60,
-        samesite="none" if is_production else "lax",
-        secure=True if is_production else False,
-    )
 
-    return {"message": "Login successful", "username": user["username"]}
+    # Build cookie manually to support Partitioned attribute for cross-site cookies
+    if is_production:
+        # Cross-origin production: SameSite=None, Secure, Partitioned
+        cookie_value = f"{COOKIE_NAME}={token}; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age={SESSION_EXPIRE_MINUTES * 60}; Path=/"
+        response.headers.append("Set-Cookie", cookie_value)
+    else:
+        # Local development: standard cookie
+        response.set_cookie(
+            key=COOKIE_NAME,
+            value=token,
+            httponly=True,
+            max_age=SESSION_EXPIRE_MINUTES * 60,
+            samesite="lax",
+            secure=False,
+        )
+
+    return {"message": "Login successful", "username": user["username"], "token": token}
 
 
 @app.post("/api/auth/logout")
-def logout(response: Response, session_token: Optional[str] = Cookie(None, alias=COOKIE_NAME)):
-    """Logout and clear session cookie"""
-    if session_token and session_token in sessions:
-        del sessions[session_token]
+def logout(
+    response: Response,
+    session_token: Optional[str] = Cookie(None, alias=COOKIE_NAME),
+    authorization: Optional[str] = Header(None)
+):
+    """Logout and clear session"""
+    # Try Authorization header first
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+    if not token:
+        token = session_token
+
+    if token and token in sessions:
+        del sessions[token]
 
     is_production = os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("PRODUCTION")
     response.delete_cookie(
@@ -120,6 +152,114 @@ def logout(response: Response, session_token: Optional[str] = Cookie(None, alias
 def get_me(user: dict = Depends(get_current_user)):
     """Get current authenticated user"""
     return user
+
+
+# ============== Watchlist API ==============
+
+@app.get("/api/watchlist")
+def get_watchlist(user: dict = Depends(get_current_user)):
+    """Get user's category watchlist"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT category, created_at
+                FROM user_category_watchlist
+                WHERE user_id = %s
+                ORDER BY category
+            """, (user["user_id"],))
+            categories = cur.fetchall()
+
+            return {
+                "categories": [row["category"] for row in categories],
+                "total": len(categories)
+            }
+
+
+@app.post("/api/watchlist")
+def add_to_watchlist(data: dict, user: dict = Depends(get_current_user)):
+    """Add a category to user's watchlist"""
+    category = data.get("category")
+    if not category:
+        raise HTTPException(status_code=400, detail="Category is required")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Check if category exists in products
+            cur.execute("""
+                SELECT DISTINCT category FROM products
+                WHERE category = %s AND retailer_id = 'twd'
+            """, (category,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail="Category not found")
+
+            # Add to watchlist (ignore if already exists)
+            cur.execute("""
+                INSERT INTO user_category_watchlist (user_id, category)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id, category) DO NOTHING
+                RETURNING watchlist_id
+            """, (user["user_id"], category))
+            result = cur.fetchone()
+            conn.commit()
+
+            if result:
+                return {"message": "Category added to watchlist", "category": category}
+            else:
+                return {"message": "Category already in watchlist", "category": category}
+
+
+@app.delete("/api/watchlist/{category}")
+def remove_from_watchlist(category: str, user: dict = Depends(get_current_user)):
+    """Remove a category from user's watchlist"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM user_category_watchlist
+                WHERE user_id = %s AND category = %s
+                RETURNING watchlist_id
+            """, (user["user_id"], category))
+            result = cur.fetchone()
+            conn.commit()
+
+            if result:
+                return {"message": "Category removed from watchlist", "category": category}
+            else:
+                raise HTTPException(status_code=404, detail="Category not in watchlist")
+
+
+@app.get("/api/watchlist/categories")
+def get_available_categories(user: dict = Depends(get_current_user)):
+    """Get all available categories with watchlist status"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get all categories from Thai Watsadu products
+            cur.execute("""
+                SELECT DISTINCT p.category, COUNT(*) as product_count
+                FROM products p
+                WHERE p.retailer_id = 'twd' AND p.category IS NOT NULL AND p.category != ''
+                GROUP BY p.category
+                ORDER BY p.category
+            """)
+            all_categories = cur.fetchall()
+
+            # Get user's watched categories
+            cur.execute("""
+                SELECT category FROM user_category_watchlist
+                WHERE user_id = %s
+            """, (user["user_id"],))
+            watched = {row["category"] for row in cur.fetchall()}
+
+            return {
+                "categories": [
+                    {
+                        "category": row["category"],
+                        "product_count": row["product_count"],
+                        "is_watched": row["category"] in watched
+                    }
+                    for row in all_categories
+                ],
+                "total": len(all_categories)
+            }
 
 
 @app.get("/api/health")

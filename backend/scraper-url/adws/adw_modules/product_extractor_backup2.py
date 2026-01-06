@@ -988,52 +988,6 @@ class ThaiWatsaduExtractor(ProductExtractor):
                 elif isinstance(image, str):
                     product.images = [image]
 
-        # 2b. Extract price from __NEXT_DATA__ (Thai Watsadu uses Next.js)
-        # This is more reliable than JSON-LD and handles bulk vs individual pricing correctly
-        # The individual price is in: "price":"169" (with prUname:"EACH")
-        # The bulk price is in: "proPrice":160 (promotional bulk price - we want to AVOID this)
-        if not product.current_price:
-            # Look for __NEXT_DATA__ JSON
-            next_data_pattern = r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>'
-            next_data_match = re.search(next_data_pattern, html_content, re.DOTALL)
-            if next_data_match:
-                try:
-                    next_data_str = next_data_match.group(1)
-                    # Look for the individual price pattern: "price":"169" with EACH unit
-                    # This pattern appears in the product data, NOT the bulk promo section
-                    individual_price_pattern = r'"price"\s*:\s*"(\d+)"[^}]*"prUname"\s*:\s*"EACH'
-                    individual_match = re.search(individual_price_pattern, next_data_str)
-                    if individual_match:
-                        product.current_price = float(individual_match.group(1))
-                    else:
-                        # Fallback: look for "price":"XXX" where XXX is a number (not proPrice)
-                        # But avoid proPrice pattern
-                        price_pattern = r'"price"\s*:\s*"(\d+)"'
-                        price_matches = re.findall(price_pattern, next_data_str)
-                        if price_matches:
-                            # Get the first numeric price that's not in proPrice context
-                            for price_str in price_matches:
-                                price = float(price_str)
-                                if price > 0:
-                                    product.current_price = price
-                                    break
-                except Exception:
-                    pass
-
-            # Also extract original price (disc field = original/discount price)
-            if not product.original_price and next_data_match:
-                try:
-                    next_data_str = next_data_match.group(1)
-                    # Look for disc (original price before discount): "disc":"180.00"
-                    disc_pattern = r'"disc"\s*:\s*"([\d.]+)"'
-                    disc_match = re.search(disc_pattern, next_data_str)
-                    if disc_match:
-                        disc_price = float(disc_match.group(1))
-                        if disc_price > 0 and (not product.current_price or disc_price > product.current_price):
-                            product.original_price = disc_price
-                except Exception:
-                    pass
-
         # 3. Extract category from breadcrumb
         product.category = self._extract_thaiwatsadu_category(html_content)
 

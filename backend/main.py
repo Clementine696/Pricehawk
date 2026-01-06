@@ -302,6 +302,14 @@ def get_products(
             category_list = [c.strip() for c in category.split(',')] if category else []
             brand_list = [b.strip() for b in brand.split(',')] if brand else []
 
+            # Get user's watched categories if watched_only is enabled
+            watched_categories = []
+            if watched_only:
+                user_id = user.get("user_id")
+                if user_id:
+                    cur.execute("SELECT category FROM user_category_watchlist WHERE user_id = %s", (user_id,))
+                    watched_categories = [row["category"] for row in cur.fetchall()]
+
             # Get unique categories for filters (filtered by selected brands for cascading)
             category_query = """
                 SELECT DISTINCT category FROM products
@@ -312,6 +320,11 @@ def get_products(
                 placeholders = ','.join(['%s'] * len(brand_list))
                 category_query += f" AND brand IN ({placeholders})"
                 category_params.extend(brand_list)
+            # Filter categories by watchlist when watched_only is enabled
+            if watched_only and watched_categories:
+                placeholders = ','.join(['%s'] * len(watched_categories))
+                category_query += f" AND category IN ({placeholders})"
+                category_params.extend(watched_categories)
             category_query += " ORDER BY category"
             cur.execute(category_query, category_params)
             categories = [row["category"] for row in cur.fetchall()]
@@ -326,6 +339,11 @@ def get_products(
                 placeholders = ','.join(['%s'] * len(category_list))
                 brand_query += f" AND category IN ({placeholders})"
                 brand_params.extend(category_list)
+            # Filter brands by watchlist categories when watched_only is enabled
+            if watched_only and watched_categories:
+                placeholders = ','.join(['%s'] * len(watched_categories))
+                brand_query += f" AND category IN ({placeholders})"
+                brand_params.extend(watched_categories)
             brand_query += " ORDER BY brand"
             cur.execute(brand_query, brand_params)
             brands = [row["brand"] for row in cur.fetchall()]
@@ -496,7 +514,8 @@ def get_products(
                     product["retailer_prices"][match["retailer_name"]] = {
                         "price": float(match["current_price"]) if match["current_price"] else None,
                         "link": match["link"],
-                        "verified": bool(match["verified_by_user"] and match["is_same"])
+                        "verified": bool(match["verified_by_user"] and match["is_same"]),
+                        "price_change": None  # Will be populated below
                     }
 
                 # Determine status (cheapest, same, higher)
@@ -518,6 +537,67 @@ def get_products(
                         product["status"] = None
                 else:
                     product["status"] = None
+
+                # Get price changes for base product (last 7 days)
+                cur.execute("""
+                    SELECT price FROM price_history
+                    WHERE product_id = %s
+                      AND scraped_at < NOW() - INTERVAL '1 day'
+                    ORDER BY scraped_at ASC
+                    LIMIT 1
+                """, (bp["product_id"],))
+                old_price_row = cur.fetchone()
+                if old_price_row and product["base_price"]:
+                    old_price = float(old_price_row["price"])
+                    if old_price != product["base_price"]:
+                        change = product["base_price"] - old_price
+                        change_pct = (change / old_price) * 100 if old_price > 0 else 0
+                        product["base_price_change"] = {
+                            "old_price": old_price,
+                            "change": round(change, 2),
+                            "change_pct": round(change_pct, 1),
+                            "direction": "up" if change > 0 else "down"
+                        }
+                    else:
+                        product["base_price_change"] = None
+                else:
+                    product["base_price_change"] = None
+
+                # Get price changes for matched retailers
+                for retailer_name, rp in product["retailer_prices"].items():
+                    if rp["price"] is None:
+                        continue
+                    # Get the product_id for this retailer's match
+                    cur.execute("""
+                        SELECT p2.product_id
+                        FROM product_matches pm
+                        JOIN products p2 ON pm.candidate_product_id = p2.product_id
+                        JOIN retailers r ON p2.retailer_id = r.retailer_id
+                        WHERE pm.base_product_id = %s AND r.name = %s
+                          AND pm.verified_by_user = TRUE AND pm.is_same = TRUE
+                        LIMIT 1
+                    """, (bp["product_id"], retailer_name))
+                    match_product = cur.fetchone()
+                    if match_product:
+                        cur.execute("""
+                            SELECT price FROM price_history
+                            WHERE product_id = %s
+                              AND scraped_at < NOW() - INTERVAL '1 day'
+                            ORDER BY scraped_at ASC
+                            LIMIT 1
+                        """, (match_product["product_id"],))
+                        old_match_price = cur.fetchone()
+                        if old_match_price:
+                            old_price = float(old_match_price["price"])
+                            if old_price != rp["price"]:
+                                change = rp["price"] - old_price
+                                change_pct = (change / old_price) * 100 if old_price > 0 else 0
+                                rp["price_change"] = {
+                                    "old_price": old_price,
+                                    "change": round(change, 2),
+                                    "change_pct": round(change_pct, 1),
+                                    "direction": "up" if change > 0 else "down"
+                                }
 
                 products.append(product)
 
@@ -738,6 +818,92 @@ def export_products(
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={"Content-Disposition": f"attachment; filename=products_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
             )
+
+
+@app.get("/api/products/{product_id}/price-history")
+def get_price_history(
+    product_id: int,
+    days: int = 30,
+    user: dict = Depends(get_current_user)
+):
+    """Get price history for a product and its verified matches"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get base product info
+            cur.execute("""
+                SELECT p.product_id, p.name, r.name as retailer_name
+                FROM products p
+                JOIN retailers r ON p.retailer_id = r.retailer_id
+                WHERE p.product_id = %s
+            """, (product_id,))
+            base_product = cur.fetchone()
+            if not base_product:
+                raise HTTPException(status_code=404, detail="Product not found")
+
+            # Get price history for base product
+            cur.execute("""
+                SELECT price, scraped_at
+                FROM price_history
+                WHERE product_id = %s
+                  AND scraped_at >= NOW() - INTERVAL '%s days'
+                ORDER BY scraped_at ASC
+            """, (product_id, days))
+            base_history = cur.fetchall()
+
+            result = {
+                "base_product": {
+                    "product_id": base_product["product_id"],
+                    "name": base_product["name"],
+                    "retailer": base_product["retailer_name"],
+                    "history": [
+                        {
+                            "price": float(row["price"]),
+                            "date": row["scraped_at"].isoformat()
+                        }
+                        for row in base_history
+                    ]
+                },
+                "matched_products": []
+            }
+
+            # Get verified matches and their price history
+            cur.execute("""
+                SELECT DISTINCT ON (r.retailer_id)
+                    p2.product_id, p2.name, r.name as retailer_name
+                FROM product_matches pm
+                JOIN products p2 ON pm.candidate_product_id = p2.product_id
+                JOIN retailers r ON p2.retailer_id = r.retailer_id
+                WHERE pm.base_product_id = %s
+                  AND pm.verified_by_user = TRUE
+                  AND pm.is_same = TRUE
+                ORDER BY r.retailer_id, pm.updated_at DESC
+            """, (product_id,))
+            matches = cur.fetchall()
+
+            for match in matches:
+                cur.execute("""
+                    SELECT price, scraped_at
+                    FROM price_history
+                    WHERE product_id = %s
+                      AND scraped_at >= NOW() - INTERVAL '%s days'
+                    ORDER BY scraped_at ASC
+                """, (match["product_id"], days))
+                match_history = cur.fetchall()
+
+                result["matched_products"].append({
+                    "product_id": match["product_id"],
+                    "name": match["name"],
+                    "retailer": match["retailer_name"],
+                    "history": [
+                        {
+                            "price": float(row["price"]),
+                            "date": row["scraped_at"].isoformat()
+                        }
+                        for row in match_history
+                    ]
+                })
+
+            return result
 
 
 @app.get("/api/products/{product_id}")

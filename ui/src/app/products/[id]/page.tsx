@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, TrendingUp } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, TrendingUp, Loader2, RefreshCw } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import {
   LineChart,
@@ -63,6 +63,86 @@ interface PriceHistoryProduct {
 interface PriceHistoryData {
   base_product: PriceHistoryProduct;
   matched_products: PriceHistoryProduct[];
+}
+
+// Product image component with loading state and timeout retry
+function ProductImage({ src, alt, className }: { src: string | null; alt: string; className?: string }) {
+  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [retryCount, setRetryCount] = useState(0);
+  const [imgSrc, setImgSrc] = useState(src);
+
+  useEffect(() => {
+    if (!src) {
+      setStatus('error');
+      return;
+    }
+
+    setStatus('loading');
+    setImgSrc(src);
+
+    // Timeout - if image doesn't load in 8 seconds, trigger retry
+    const timeout = setTimeout(() => {
+      if (status === 'loading') {
+        handleRetry();
+      }
+    }, 8000);
+
+    return () => clearTimeout(timeout);
+  }, [src, retryCount]);
+
+  const handleRetry = () => {
+    if (retryCount < 3) {
+      // Add cache-busting parameter
+      const newSrc = src + (src?.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
+      setImgSrc(newSrc);
+      setRetryCount(prev => prev + 1);
+      setStatus('loading');
+    } else {
+      setStatus('error');
+    }
+  };
+
+  if (!src || status === 'error') {
+    return (
+      <div className={`bg-gray-100 rounded-lg flex flex-col items-center justify-center gap-2 ${className}`}>
+        <span className="text-gray-400">No image available</span>
+        {src && retryCount > 0 && (
+          <button
+            onClick={() => { setRetryCount(0); setStatus('loading'); }}
+            className="text-cyan-500 hover:text-cyan-600 text-sm flex items-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`relative ${className}`}>
+      {status === 'loading' && (
+        <div className="absolute inset-0 bg-gray-50 rounded-lg flex items-center justify-center z-10">
+          <Loader2 className="w-8 h-8 text-cyan-500 animate-spin" />
+        </div>
+      )}
+      <img
+        src={imgSrc || ''}
+        alt={alt}
+        className={`w-full h-full object-contain bg-gray-50 rounded-lg ${status === 'loading' ? 'opacity-0' : 'opacity-100'}`}
+        referrerPolicy="no-referrer"
+        loading="eager"
+        onLoad={() => setStatus('loaded')}
+        onError={() => {
+          if (retryCount < 3) {
+            handleRetry();
+          } else {
+            setStatus('error');
+          }
+        }}
+      />
+    </div>
+  );
 }
 
 // All competitor retailers configuration
@@ -348,31 +428,11 @@ export default function ProductDetailPage() {
 
             {/* Product Card */}
             <div className="bg-white rounded-b-lg shadow p-6 -mt-4">
-              <div className="w-full h-64 relative mb-4">
-                {product.image ? (
-                  <>
-                    <img
-                      src={product.image}
-                      alt={product.name}
-                      className="w-full h-64 object-contain bg-gray-50 rounded-lg"
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.style.display = 'none';
-                        const fallback = target.nextElementSibling as HTMLElement;
-                        if (fallback) fallback.style.display = 'flex';
-                      }}
-                    />
-                    <div className="w-full h-64 bg-gray-100 rounded-lg items-center justify-center absolute top-0 left-0 hidden">
-                      <span className="text-gray-400">No image available</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="w-full h-64 bg-gray-100 rounded-lg flex items-center justify-center">
-                    <span className="text-gray-400">No image available</span>
-                  </div>
-                )}
-              </div>
+              <ProductImage
+                src={product.image}
+                alt={product.name}
+                className="w-full h-64 mb-4"
+              />
 
               <h2 className="text-xl font-semibold text-gray-900 mb-2">{product.name}</h2>
 
@@ -509,31 +569,11 @@ export default function ProductDetailPage() {
                             {retailerMatches.map((match) => (
                               <div key={match.match_id} className="p-4 hover:bg-gray-50 transition-colors">
                                 <div className="flex gap-4">
-                                  <div className="w-20 h-20 flex-shrink-0 relative">
-                                    {match.product.image ? (
-                                      <>
-                                        <img
-                                          src={match.product.image}
-                                          alt={match.product.name}
-                                          className="w-20 h-20 object-contain bg-gray-50 rounded"
-                                          referrerPolicy="no-referrer"
-                                          onError={(e) => {
-                                            const target = e.target as HTMLImageElement;
-                                            target.style.display = 'none';
-                                            const fallback = target.nextElementSibling as HTMLElement;
-                                            if (fallback) fallback.style.display = 'flex';
-                                          }}
-                                        />
-                                        <div className="w-20 h-20 bg-gray-100 rounded items-center justify-center absolute top-0 left-0 hidden">
-                                          <span className="text-gray-400 text-xs">No img</span>
-                                        </div>
-                                      </>
-                                    ) : (
-                                      <div className="w-20 h-20 bg-gray-100 rounded flex items-center justify-center">
-                                        <span className="text-gray-400 text-xs">No img</span>
-                                      </div>
-                                    )}
-                                  </div>
+                                  <ProductImage
+                                    src={match.product.image}
+                                    alt={match.product.name}
+                                    className="w-20 h-20 flex-shrink-0"
+                                  />
 
                                   <div className="flex-1 min-w-0">
                                     <h4 className="font-medium text-gray-900 line-clamp-2">{match.product.name}</h4>

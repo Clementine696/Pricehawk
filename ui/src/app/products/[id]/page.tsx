@@ -70,45 +70,62 @@ function ProductImage({ src, alt, className }: { src: string | null; alt: string
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [retryCount, setRetryCount] = useState(0);
   const [imgSrc, setImgSrc] = useState(src);
+  const timeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const statusRef = React.useRef(status);
 
+  // Keep ref in sync with status
+  statusRef.current = status;
+
+  // Reset when src changes
   useEffect(() => {
     if (!src) {
       setStatus('error');
       return;
     }
-
     setStatus('loading');
     setImgSrc(src);
+    setRetryCount(0);
+  }, [src]);
 
-    // Timeout - if image doesn't load in 8 seconds, trigger retry
-    const timeout = setTimeout(() => {
-      if (status === 'loading') {
-        handleRetry();
+  // Handle timeout for loading - only runs when status is 'loading'
+  useEffect(() => {
+    if (status !== 'loading' || !src) {
+      return;
+    }
+
+    timeoutRef.current = setTimeout(() => {
+      // Check current status via ref to avoid stale closure
+      if (statusRef.current === 'loading') {
+        if (retryCount < 3) {
+          const newSrc = src + (src.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
+          setImgSrc(newSrc);
+          setRetryCount(prev => prev + 1);
+        } else {
+          setStatus('error');
+        }
       }
     }, 8000);
 
-    return () => clearTimeout(timeout);
-  }, [src, retryCount]);
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [status, src, retryCount]);
 
-  const handleRetry = () => {
-    if (retryCount < 3) {
-      // Add cache-busting parameter
-      const newSrc = src + (src?.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
-      setImgSrc(newSrc);
-      setRetryCount(prev => prev + 1);
-      setStatus('loading');
-    } else {
-      setStatus('error');
-    }
+  const handleManualRetry = () => {
+    setRetryCount(0);
+    setImgSrc(src);
+    setStatus('loading');
   };
 
   if (!src || status === 'error') {
     return (
       <div className={`bg-gray-100 rounded-lg flex flex-col items-center justify-center gap-2 ${className}`}>
         <span className="text-gray-400">No image available</span>
-        {src && retryCount > 0 && (
+        {src && (
           <button
-            onClick={() => { setRetryCount(0); setStatus('loading'); }}
+            onClick={handleManualRetry}
             className="text-cyan-500 hover:text-cyan-600 text-sm flex items-center gap-1"
           >
             <RefreshCw className="w-3 h-3" />
@@ -135,7 +152,9 @@ function ProductImage({ src, alt, className }: { src: string | null; alt: string
         onLoad={() => setStatus('loaded')}
         onError={() => {
           if (retryCount < 3) {
-            handleRetry();
+            const newSrc = src + (src.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
+            setImgSrc(newSrc);
+            setRetryCount(prev => prev + 1);
           } else {
             setStatus('error');
           }

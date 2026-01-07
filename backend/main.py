@@ -672,15 +672,46 @@ def export_products(
                 params.extend(brand_list)
 
             # Filter by verification status
+            # Use same logic as products table filter:
+            # Retailer is "done" if: has verified correct match OR all matches reviewed
+            # Retailer "needs review" if: no verified correct match AND has unreviewed matches
             if verified == "true":
+                # Products where all retailers are "done" (no retailer needs review)
                 query += """ AND NOT EXISTS (
                     SELECT 1 FROM product_matches pm
-                    WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
+                    WHERE pm.base_product_id = p.product_id
+                    AND NOT EXISTS (
+                        SELECT 1 FROM product_matches pm2
+                        WHERE pm2.base_product_id = pm.base_product_id
+                          AND pm2.retailer_id = pm.retailer_id
+                          AND pm2.verified_by_user = TRUE
+                          AND pm2.is_same = TRUE
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM product_matches pm3
+                        WHERE pm3.base_product_id = pm.base_product_id
+                          AND pm3.retailer_id = pm.retailer_id
+                          AND pm3.verified_by_user = FALSE
+                    )
                 )"""
             elif verified == "false":
+                # Products with at least one retailer that needs review
                 query += """ AND EXISTS (
                     SELECT 1 FROM product_matches pm
-                    WHERE pm.base_product_id = p.product_id AND pm.verified_by_user = FALSE
+                    WHERE pm.base_product_id = p.product_id
+                    AND NOT EXISTS (
+                        SELECT 1 FROM product_matches pm2
+                        WHERE pm2.base_product_id = pm.base_product_id
+                          AND pm2.retailer_id = pm.retailer_id
+                          AND pm2.verified_by_user = TRUE
+                          AND pm2.is_same = TRUE
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM product_matches pm3
+                        WHERE pm3.base_product_id = pm.base_product_id
+                          AND pm3.retailer_id = pm.retailer_id
+                          AND pm3.verified_by_user = FALSE
+                    )
                 )"""
 
             # Filter by specific retailer match

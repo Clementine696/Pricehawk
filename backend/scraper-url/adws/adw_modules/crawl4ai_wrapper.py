@@ -770,11 +770,24 @@ class Crawl4AIWrapper:
                                 f"exclude_external_images={self.config.exclude_external_images}, "
                                 f"verbose={self.config.verbose}")
 
+                    # Boonthavorn needs wait_for to ensure JSON-LD loads via JavaScript
+                    is_boonthavorn = 'boonthavorn' in url.lower()
+                    boonthavorn_wait_for = """
+                        () => {
+                            // Wait for JSON-LD with price or price element to appear
+                            const jsonLd = document.querySelector('script[type="application/ld+json"]');
+                            if (jsonLd && jsonLd.textContent.includes('"price"')) return true;
+                            // Fallback: wait for price display element
+                            const priceEl = document.querySelector('[class*="price"]');
+                            return priceEl && priceEl.textContent.length > 0;
+                        }
+                    """ if is_boonthavorn else None
+
                     run_config = CrawlerRunConfig(
                         stream=True,                                        # Process immediately
                         only_text=self.config.only_text,                    # From env: SCRAPER_ONLY_TEXT
                         exclude_external_images=self.config.exclude_external_images,  # From env: SCRAPER_EXCLUDE_EXTERNAL_IMAGES
-                        wait_for=None,                                      # Don't wait for JS if static
+                        wait_for=boonthavorn_wait_for,                      # Wait for price on Boonthavorn
 
                         word_count_threshold=self.config.min_content_length,
                         extraction_strategy=extraction_strategy,

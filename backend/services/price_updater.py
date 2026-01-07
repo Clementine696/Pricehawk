@@ -614,7 +614,15 @@ class PriceUpdater:
         new_original_price = scraped_data.get('original_price')
 
         if new_price is None:
-            logger.warning(f"No price in scraped data for {product['sku']}")
+            # Debug logging for Boonthavorn to diagnose Railway issues
+            product_url = product.get('link', '')
+            if 'boonthavorn' in product_url.lower():
+                logger.warning(f"[BOONTHAVORN DEBUG] No price for {product['sku']}")
+                logger.warning(f"[BOONTHAVORN DEBUG] URL: {product_url}")
+                logger.warning(f"[BOONTHAVORN DEBUG] Scraped data keys: {list(scraped_data.keys()) if scraped_data else 'None'}")
+                logger.warning(f"[BOONTHAVORN DEBUG] Scraped data: {str(scraped_data)[:500] if scraped_data else 'None'}")
+            else:
+                logger.warning(f"No price in scraped data for {product['sku']}")
             return False
 
         try:
@@ -747,7 +755,12 @@ class PriceUpdater:
                     self.record_scrape_failure(product)
             else:
                 self.stats.increment('failed')
-                logger.error(f"  Failed to scrape {product['sku']}")
+                # Debug logging for Boonthavorn when scraper returns nothing
+                if 'boonthavorn' in product.get('link', '').lower():
+                    logger.error(f"[BOONTHAVORN DEBUG] Scraper returned None for {product['sku']}")
+                    logger.error(f"[BOONTHAVORN DEBUG] URL: {product.get('link')}")
+                else:
+                    logger.error(f"  Failed to scrape {product['sku']}")
                 self.record_scrape_failure(product)
 
             # Rate limiting

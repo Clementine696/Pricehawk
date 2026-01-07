@@ -316,7 +316,7 @@ function ProductsContent() {
 
   useEffect(() => {
     fetchProducts();
-  }, [page, selectedCategories, selectedBrands, verificationFilter, retailerFilter, watchedOnly]);
+  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter, watchedOnly]);
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -360,9 +360,10 @@ function ProductsContent() {
     setSelectedBrands([]);
     setVerificationFilter('');
     setRetailerFilter('');
+    setWatchedOnly(false);
     setPage(1);
     router.push('/products', { scroll: false });
-    fetchProducts();
+    // Don't call fetchProducts() here - the useEffect will trigger it when state changes
   };
 
   const handleCategoryChange = (newCategories: string[]) => {

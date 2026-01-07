@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
 interface Product {
@@ -38,6 +38,122 @@ interface ProductDetailData {
   total_matches: number;
 }
 
+interface PriceHistoryPoint {
+  price: number;
+  date: string;
+}
+
+interface PriceHistoryProduct {
+  product_id: number;
+  name: string;
+  retailer: string;
+  history: PriceHistoryPoint[];
+}
+
+interface PriceHistoryData {
+  base_product: PriceHistoryProduct;
+  matched_products: PriceHistoryProduct[];
+}
+
+// Product image component with loading state and timeout retry
+function ProductImage({ src, alt, className }: { src: string | null; alt: string; className?: string }) {
+  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [retryCount, setRetryCount] = useState(0);
+  const [imgSrc, setImgSrc] = useState(src);
+  const timeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const statusRef = React.useRef(status);
+
+  // Keep ref in sync with status
+  statusRef.current = status;
+
+  // Reset when src changes
+  useEffect(() => {
+    if (!src) {
+      setStatus('error');
+      return;
+    }
+    setStatus('loading');
+    setImgSrc(src);
+    setRetryCount(0);
+  }, [src]);
+
+  // Handle timeout for loading - only runs when status is 'loading'
+  useEffect(() => {
+    if (status !== 'loading' || !src) {
+      return;
+    }
+
+    timeoutRef.current = setTimeout(() => {
+      // Check current status via ref to avoid stale closure
+      if (statusRef.current === 'loading') {
+        if (retryCount < 3) {
+          const newSrc = src + (src.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
+          setImgSrc(newSrc);
+          setRetryCount(prev => prev + 1);
+        } else {
+          setStatus('error');
+        }
+      }
+    }, 8000);
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [status, src, retryCount]);
+
+  const handleManualRetry = () => {
+    setRetryCount(0);
+    setImgSrc(src);
+    setStatus('loading');
+  };
+
+  if (!src || status === 'error') {
+    return (
+      <div className={`bg-gray-100 rounded-lg flex flex-col items-center justify-center gap-2 ${className}`}>
+        <span className="text-gray-400">No image available</span>
+        {src && (
+          <button
+            onClick={handleManualRetry}
+            className="text-cyan-500 hover:text-cyan-600 text-sm flex items-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`relative ${className}`}>
+      {status === 'loading' && (
+        <div className="absolute inset-0 bg-gray-50 rounded-lg flex items-center justify-center z-10">
+          <Loader2 className="w-8 h-8 text-cyan-500 animate-spin" />
+        </div>
+      )}
+      <img
+        src={imgSrc || ''}
+        alt={alt}
+        className={`w-full h-full object-contain bg-gray-50 rounded-lg ${status === 'loading' ? 'opacity-0' : 'opacity-100'}`}
+        referrerPolicy="no-referrer"
+        loading="eager"
+        onLoad={() => setStatus('loaded')}
+        onError={() => {
+          if (retryCount < 3) {
+            const newSrc = src + (src.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
+            setImgSrc(newSrc);
+            setRetryCount(prev => prev + 1);
+          } else {
+            setStatus('error');
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 // All competitor retailers configuration
 const COMPETITORS = [
   { id: 'hp', name: 'HomePro', nameTh: 'โฮมโปร', color: '#1E88E5', bgClass: 'bg-blue-500', logo: '/logos/homepro.png' },
@@ -57,6 +173,8 @@ export default function ProductDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [collapsedRetailers, setCollapsedRetailers] = useState<Set<string>>(new Set());
+  const [isRescraping, setIsRescraping] = useState(false);
+  const [rescrapeResult, setRescrapeResult] = useState<{success: boolean; message: string} | null>(null);
 
   useEffect(() => {
     if (productId) {
@@ -135,6 +253,46 @@ export default function ProductDetailPage() {
       console.error('Error undoing verification:', err);
     }
   };
+
+  const handleRescrape = async () => {
+    setIsRescraping(true);
+    setRescrapeResult(null);
+    try {
+      const response = await apiFetch(`/api/products/${productId}/rescrape`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) throw new Error('Failed to rescrape products');
+
+      const result = await response.json();
+
+      // Show result message
+      const successCount = result.successful || 0;
+      const failedCount = result.failed || 0;
+      setRescrapeResult({
+        success: failedCount === 0,
+        message: `Updated ${successCount} product${successCount !== 1 ? 's' : ''}${failedCount > 0 ? `, ${failedCount} failed` : ''}`
+      });
+
+      // Refresh product data to show new prices
+      await fetchProductDetail();
+
+      // Clear message after 5 seconds
+      setTimeout(() => setRescrapeResult(null), 5000);
+    } catch (err) {
+      console.error('Error rescraping products:', err);
+      setRescrapeResult({
+        success: false,
+        message: 'Failed to rescrape products'
+      });
+      setTimeout(() => setRescrapeResult(null), 5000);
+    } finally {
+      setIsRescraping(false);
+    }
+  };
+
+  // Count verified matches for rescrape button
+  const verifiedMatchCount = data?.matches.filter(m => m.verified_by_user && m.is_same).length || 0;
 
   const formatPrice = (price: number | null) => {
     if (price === null) return '-';
@@ -220,9 +378,27 @@ export default function ProductDetailPage() {
         </div>
 
         {/* Page Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Product Comparison Detail</h1>
-          <p className="text-gray-600 mt-1">Compare prices and verify product matches across retailers</p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Product Comparison Detail</h1>
+            <p className="text-gray-600 mt-1">Compare prices and verify product matches across retailers</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {rescrapeResult && (
+              <span className={`text-sm px-3 py-1 rounded-full ${rescrapeResult.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {rescrapeResult.message}
+              </span>
+            )}
+            <button
+              onClick={handleRescrape}
+              disabled={isRescraping}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title={`Resync Thai Watsadu + ${verifiedMatchCount} verified match${verifiedMatchCount !== 1 ? 'es' : ''}`}
+            >
+              <RotateCcw className={`w-4 h-4 ${isRescraping ? 'animate-spin' : ''}`} />
+              {isRescraping ? 'Resyncing...' : 'Resync Prices'}
+            </button>
+          </div>
         </div>
 
         {/* Main Content */}
@@ -237,31 +413,11 @@ export default function ProductDetailPage() {
 
             {/* Product Card */}
             <div className="bg-white rounded-b-lg shadow p-6 -mt-4">
-              <div className="w-full h-64 relative mb-4">
-                {product.image ? (
-                  <>
-                    <img
-                      src={product.image}
-                      alt={product.name}
-                      className="w-full h-64 object-contain bg-gray-50 rounded-lg"
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.style.display = 'none';
-                        const fallback = target.nextElementSibling as HTMLElement;
-                        if (fallback) fallback.style.display = 'flex';
-                      }}
-                    />
-                    <div className="w-full h-64 bg-gray-100 rounded-lg items-center justify-center absolute top-0 left-0 hidden">
-                      <span className="text-gray-400">No image available</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="w-full h-64 bg-gray-100 rounded-lg flex items-center justify-center">
-                    <span className="text-gray-400">No image available</span>
-                  </div>
-                )}
-              </div>
+              <ProductImage
+                src={product.image}
+                alt={product.name}
+                className="w-full h-64 mb-4"
+              />
 
               <h2 className="text-xl font-semibold text-gray-900 mb-2">{product.name}</h2>
 
@@ -398,31 +554,11 @@ export default function ProductDetailPage() {
                             {retailerMatches.map((match) => (
                               <div key={match.match_id} className="p-4 hover:bg-gray-50 transition-colors">
                                 <div className="flex gap-4">
-                                  <div className="w-20 h-20 flex-shrink-0 relative">
-                                    {match.product.image ? (
-                                      <>
-                                        <img
-                                          src={match.product.image}
-                                          alt={match.product.name}
-                                          className="w-20 h-20 object-contain bg-gray-50 rounded"
-                                          referrerPolicy="no-referrer"
-                                          onError={(e) => {
-                                            const target = e.target as HTMLImageElement;
-                                            target.style.display = 'none';
-                                            const fallback = target.nextElementSibling as HTMLElement;
-                                            if (fallback) fallback.style.display = 'flex';
-                                          }}
-                                        />
-                                        <div className="w-20 h-20 bg-gray-100 rounded items-center justify-center absolute top-0 left-0 hidden">
-                                          <span className="text-gray-400 text-xs">No img</span>
-                                        </div>
-                                      </>
-                                    ) : (
-                                      <div className="w-20 h-20 bg-gray-100 rounded flex items-center justify-center">
-                                        <span className="text-gray-400 text-xs">No img</span>
-                                      </div>
-                                    )}
-                                  </div>
+                                  <ProductImage
+                                    src={match.product.image}
+                                    alt={match.product.name}
+                                    className="w-20 h-20 flex-shrink-0"
+                                  />
 
                                   <div className="flex-1 min-w-0">
                                     <h4 className="font-medium text-gray-900 line-clamp-2">{match.product.name}</h4>

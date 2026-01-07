@@ -407,7 +407,7 @@ function ProductsContent() {
         now.getHours().toString().padStart(2, '0') +
         now.getMinutes().toString().padStart(2, '0') +
         now.getSeconds().toString().padStart(2, '0');
-      link.download = `products_export_${timestamp}.csv`;
+      link.download = `products_export_${timestamp}.xlsx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

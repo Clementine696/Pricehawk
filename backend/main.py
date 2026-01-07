@@ -727,6 +727,25 @@ def export_products(
             # Define retailer order for columns (excluding Thai Watsadu which is base)
             retailer_order = ['HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House']
 
+            # Retailer name aliases - map canonical names to possible DB names
+            retailer_aliases = {
+                'MegaHome': ['Mega Home', 'megahome'],
+                'Do Home': ['DoHome', 'dohome'],
+                'Global House': ['GlobalHouse', 'globalhouse'],
+                'HomePro': ['Home Pro', 'homepro'],
+            }
+
+            def get_retailer_data(retailer_data_dict, retailer_name):
+                """Get retailer data, checking canonical name and aliases."""
+                # Try canonical name first
+                if retailer_name in retailer_data_dict:
+                    return retailer_data_dict[retailer_name]
+                # Try aliases
+                for alias in retailer_aliases.get(retailer_name, []):
+                    if alias in retailer_data_dict:
+                        return retailer_data_dict[alias]
+                return None
+
             # Hyperlink style (blue, underlined)
             link_font = Font(color="0563C1", underline="single")
 
@@ -792,7 +811,7 @@ def export_products(
                 # Retailer prices with hyperlinks (columns 6-10)
                 for col_offset, retailer_name in enumerate(retailer_order):
                     col_num = 6 + col_offset
-                    data = retailer_data.get(retailer_name)
+                    data = get_retailer_data(retailer_data, retailer_name)
                     if data and data["price"]:
                         cell = ws.cell(row=row_num, column=col_num, value=data["price"])
                         if data["link"]:

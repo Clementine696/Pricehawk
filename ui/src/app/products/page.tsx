@@ -254,6 +254,29 @@ interface Retailer {
 
 const RETAILER_ORDER = ['Thai Watsadu', 'HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House'];
 
+// Map alternative retailer names to the canonical name used in RETAILER_ORDER
+const RETAILER_NAME_ALIASES: Record<string, string> = {
+  'Mega Home': 'MegaHome',
+  'megahome': 'MegaHome',
+  'DoHome': 'Do Home',
+  'GlobalHouse': 'Global House',
+  'Home Pro': 'HomePro',
+};
+
+// Get retailer price data, checking both canonical name and aliases
+const getRetailerPrice = (retailerPrices: Record<string, RetailerPrice> | undefined, retailerName: string): RetailerPrice | undefined => {
+  if (!retailerPrices) return undefined;
+  // Try canonical name first
+  if (retailerPrices[retailerName]) return retailerPrices[retailerName];
+  // Try to find by alias (reverse lookup)
+  for (const [alias, canonical] of Object.entries(RETAILER_NAME_ALIASES)) {
+    if (canonical === retailerName && retailerPrices[alias]) {
+      return retailerPrices[alias];
+    }
+  }
+  return undefined;
+};
+
 function ProductsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -643,7 +666,7 @@ function ProductsContent() {
                       // Collect all prices for comparison
                       const allPrices = [
                         product.base_price,
-                        ...otherRetailers.map(r => product.retailer_prices?.[r]?.price ?? null)
+                        ...otherRetailers.map(r => getRetailerPrice(product.retailer_prices, r)?.price ?? null)
                       ];
 
                       return (
@@ -699,7 +722,7 @@ function ProductsContent() {
                             ) : <span className="text-gray-400">-</span>}
                           </td>
                           {otherRetailers.map((retailer) => {
-                            const priceData = product.retailer_prices?.[retailer];
+                            const priceData = getRetailerPrice(product.retailer_prices, retailer);
                             const priceCategory = getPriceCategory(priceData?.price ?? null, allPrices);
                             const isUnverified = priceData?.price && priceData?.verified === false;
                             return (

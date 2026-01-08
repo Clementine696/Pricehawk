@@ -484,7 +484,7 @@ export default function ProductDetailPage() {
               )}
 
               <div className="mt-4 pt-4 border-t border-gray-200 text-sm text-gray-500">
-                Last updated: {formatLastUpdated(product.last_updated_at)}
+                Updated: {formatLastUpdated(product.last_updated_at)}
               </div>
             </div>
           </div>

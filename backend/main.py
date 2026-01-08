@@ -779,6 +779,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
             cur.execute("""
                 SELECT p.product_id, p.sku, p.name, p.brand, p.category,
                        p.current_price, p.original_price, p.link, p.image,
+                       p.last_updated_at,
                        r.name as retailer_name, r.retailer_id
                 FROM products p
                 JOIN retailers r ON p.retailer_id = r.retailer_id
@@ -801,6 +802,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
                 "image": product["image"],
                 "retailer_name": product["retailer_name"],
                 "retailer_id": product["retailer_id"],
+                "last_updated_at": product["last_updated_at"].isoformat() if product["last_updated_at"] else None,
             }
 
             # Get all matches for this product
@@ -821,6 +823,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
                     p2.original_price as matched_original_price,
                     p2.link as matched_link,
                     p2.image as matched_image,
+                    p2.last_updated_at as matched_last_updated_at,
                     r.name as matched_retailer_name,
                     r.retailer_id as matched_retailer_id
                 FROM product_matches pm
@@ -877,6 +880,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
                                     "image": row["matched_image"],
                                     "retailer_name": row["matched_retailer_name"],
                                     "retailer_id": row["matched_retailer_id"],
+                                    "last_updated_at": row["matched_last_updated_at"].isoformat() if row["matched_last_updated_at"] else None,
                                 }
                             })
                             break  # Only one verified correct match per retailer
@@ -902,6 +906,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
                                 "image": row["matched_image"],
                                 "retailer_name": row["matched_retailer_name"],
                                 "retailer_id": row["matched_retailer_id"],
+                                "last_updated_at": row["matched_last_updated_at"].isoformat() if row["matched_last_updated_at"] else None,
                             }
                         })
 

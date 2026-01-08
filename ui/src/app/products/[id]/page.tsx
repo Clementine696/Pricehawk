@@ -30,6 +30,7 @@ interface Product {
   image: string | null;
   retailer_name: string;
   retailer_id: string;
+  last_updated_at: string | null;
 }
 
 interface Match {
@@ -333,6 +334,25 @@ export default function ProductDetailPage() {
     return `฿${price.toLocaleString()}`;
   };
 
+  const formatLastUpdated = (dateStr: string | null) => {
+    if (!dateStr) return 'Never';
+    // Database stores UTC timestamps - ensure we parse as UTC
+    // If the string doesn't have timezone info, append 'Z' to indicate UTC
+    const utcDateStr = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
+    const date = new Date(utcDateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} min${diffMins > 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+    return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
   const getConfidenceColor = (score: number | null) => {
     if (score === null) return 'bg-gray-500';
     if (score >= 0.9) return 'bg-green-500';
@@ -496,6 +516,10 @@ export default function ProductDetailPage() {
                   View on {product.retailer_name}
                 </a>
               )}
+
+              <div className="mt-4 pt-4 border-t border-gray-200 text-sm text-gray-500">
+                Last updated: {formatLastUpdated(product.last_updated_at)}
+              </div>
             </div>
           </div>
 
@@ -636,6 +660,9 @@ export default function ProductDetailPage() {
                                         {match.is_same ? 'Verified' : 'Rejected'}
                                       </span>
                                     )}
+                                    <div className="text-xs text-gray-400 mt-1">
+                                      Updated: {formatLastUpdated(match.product.last_updated_at)}
+                                    </div>
                                   </div>
                                 </div>
 

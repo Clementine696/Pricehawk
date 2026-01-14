@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Script from 'next/script';
 import { AuthProvider } from '@/context/AuthContext';
 import PageViewTracker from '@/components/PageViewTracker';
+import PageUnloadTracker from '@/components/PageUnloadTracker';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -43,6 +44,7 @@ export default function RootLayout({
       <body>
         <AuthProvider>
           <PageViewTracker />
+          <PageUnloadTracker />
           {children}
         </AuthProvider>
       </body>

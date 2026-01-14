@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { apiFetch, setAuthToken, removeAuthToken, getAuthToken } from '@/lib/api';
+import { setUserId, trackLogin, trackLogout } from '@/lib/analytics';
 
 interface User {
   username: string;
@@ -38,6 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         setUser(data);
+        // Set user ID in Google Analytics for logged-in sessions
+        setUserId(data.username);
       } else {
         // Token is invalid, clear it
         removeAuthToken();
@@ -73,6 +76,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setUser({ username: data.username });
+    
+    // Track login event in Google Analytics
+    trackLogin(data.username);
   }
 
   async function logout() {
@@ -87,6 +93,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Always clear token and user state
     removeAuthToken();
     setUser(null);
+    
+    // Track logout event and clear user ID in Google Analytics
+    trackLogout();
   }
 
   return (

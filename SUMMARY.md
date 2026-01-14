@@ -492,6 +492,88 @@ UPDATE_PARALLEL=3
 
 ---
 
+## Recent Changes (January 2026)
+
+### Session & Authentication
+- **Session expiry extended to 7 days** (previously 30 minutes)
+  - `SESSION_EXPIRE_MINUTES = 10080` in `backend/main.py` line 44
+
+### Products Page Enhancements
+- **"Watched Only" filter** - Checkbox to filter products table and export to only categories in user's watchlist
+- **Export from Watchlist page** - Simple export button on watchlist page
+- **Category/Brand dropdowns filter** - When "Watched Only" is enabled, dropdowns only show watched categories
+- **Price change indicators** - Trending arrows (green down ↓, red up ↑) on products list showing recent price changes
+
+### Product Detail Page
+- **Price History Graph** - Interactive chart with time range toggles (7D, 1M, 3M, 6M, 1Y) using Recharts
+- **Last Updated timestamps** - Shows when each product (base and matched) was last scraped
+  - Format: "Just now", "X mins ago", "X hours ago", "X days ago", or full date
+  - UTC timezone handling: timestamps from DB (UTC) are properly converted to local time
+- **Image loading improvements** - ProductImage component with:
+  - Loading spinner
+  - 8-second timeout with auto-retry (up to 3 times)
+  - Manual retry button
+
+### Retailer Name Aliasing
+MegaHome is stored as "Mega Home" in database but frontend expects "MegaHome". Added alias handling:
+
+**Frontend** (`ui/src/app/products/page.tsx`):
+```typescript
+const RETAILER_NAME_ALIASES: Record<string, string> = {
+  'Mega Home': 'MegaHome',
+  'megahome': 'MegaHome',
+  'DoHome': 'Do Home',
+  'GlobalHouse': 'Global House',
+  'Home Pro': 'HomePro',
+};
+```
+
+**Backend Export** (`backend/main.py` ~line 730):
+```python
+retailer_aliases = {
+    'MegaHome': ['Mega Home', 'megahome'],
+    'Do Home': ['DoHome', 'dohome'],
+    'Global House': ['GlobalHouse', 'globalhouse'],
+    'HomePro': ['Home Pro', 'homepro'],
+}
+```
+
+### Export Verification Filter Fix
+Fixed export to use same verification logic as products table:
+- **Before**: Export's "verified" filter was stricter (required NO unreviewed matches)
+- **After**: Matches table filter logic (verified = no retailers needing review)
+- This ensures export count matches table count when filtering
+
+### Boonthavorn Scraping Fix
+Fixed scraping failures on Railway (worked locally):
+- Added `wait_for` condition in `crawl4ai_wrapper.py` specifically for Boonthavorn URLs
+- Waits for JSON-LD with price or price element to appear before extracting data
+
+### Google Analytics
+Added Google Analytics tracking (`G-Y4YCTMYX01`) in `ui/src/app/layout.tsx`:
+- Uses Next.js `<Script>` component with `strategy="afterInteractive"`
+- Automatically tracks page views across all pages
+
+### Dashboard Statistics
+The dashboard (`/api/dashboard/stats`) calculates:
+| Stat | Calculation |
+|------|-------------|
+| Total Products | Count of Thai Watsadu products only |
+| Retailers | Count of all retailers |
+| Pending Reviews | TWD products with at least 1 retailer needing review |
+| Product Matches | `Total Products - Pending Reviews` |
+
+**"Needs Review" logic**: A retailer needs review if:
+1. No verified correct match exists (`verified_by_user = TRUE AND is_same = TRUE`)
+2. AND there are still unreviewed matches (`verified_by_user = FALSE`)
+
+This same logic is used in:
+- Dashboard pending reviews count
+- Products table verified/unverified filter
+- Export verified/unverified filter
+
+---
+
 ## Future Features (Planned)
 
 1. **Price Alerts**

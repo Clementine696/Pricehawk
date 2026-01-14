@@ -17,6 +17,7 @@ import {
   Legend,
   ResponsiveContainer
 } from 'recharts';
+import { trackProductView, trackMatchVerification } from '@/lib/analytics';
 
 interface Product {
   product_id: number;
@@ -230,6 +231,15 @@ export default function ProductDetailPage() {
       }
       const result = await response.json();
       setData(result);
+      
+      // Track product view
+      if (result?.product) {
+        trackProductView(
+          result.product.product_id,
+          result.product.name || 'Unknown Product',
+          result.product.retailer_name || 'Unknown Retailer'
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -259,6 +269,9 @@ export default function ProductDetailPage() {
           ),
         };
       });
+      
+      // Track match verification
+      trackMatchVerification(matchId, isSame);
     } catch (err) {
       console.error('Error verifying match:', err);
     }

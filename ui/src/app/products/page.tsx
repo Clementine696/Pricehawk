@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check, Eye, TrendingUp, TrendingDown } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { trackExport, trackSearch, trackFilter } from '@/lib/analytics';
 
 // Multi-select dropdown component with search
 function MultiSelect({
@@ -375,6 +376,10 @@ function ProductsContent() {
     setPage(1);
     updateURL({ search, page: 1 });
     fetchProducts();
+    // Track search event
+    if (search) {
+      trackSearch(search);
+    }
   };
 
   const handleReset = () => {
@@ -393,12 +398,16 @@ function ProductsContent() {
     setSelectedCategories(newCategories);
     setPage(1);
     updateURL({ category: newCategories.join(','), page: 1 });
+    // Track filter usage
+    trackFilter('category', newCategories.join(', '));
   };
 
   const handleBrandChange = (newBrands: string[]) => {
     setSelectedBrands(newBrands);
     setPage(1);
     updateURL({ brand: newBrands.join(','), page: 1 });
+    // Track filter usage
+    trackFilter('brand', newBrands.join(', '));
   };
 
   const handleFilterChange = (filterName: string, value: string) => {
@@ -409,6 +418,10 @@ function ProductsContent() {
     setters[filterName]?.(value);
     setPage(1);
     updateURL({ [filterName]: value, page: 1 });
+    // Track filter usage
+    if (value) {
+      trackFilter(filterName, value);
+    }
   };
 
   const handlePageChange = (newPage: number) => {
@@ -448,6 +461,9 @@ function ProductsContent() {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
+      
+      // Track export event
+      trackExport('products_xlsx', products.length);
     } catch (error) {
       console.error('Error exporting products:', error);
     } finally {

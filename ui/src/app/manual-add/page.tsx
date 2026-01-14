@@ -7,6 +7,7 @@ import { Plus, RotateCcw, Check, X, ExternalLink, Info, CheckCircle } from 'luci
 import Link from 'next/link';
 import Image from 'next/image';
 import { apiFetch } from '@/lib/api';
+import { trackManualComparison } from '@/lib/analytics';
 
 // Types
 type ComparisonStage = 'input' | 'review' | 'scraping' | 'results';
@@ -554,6 +555,9 @@ function ManualAddContent() {
 
     try {
       const validCompetitors = competitorEntries.filter((e) => e.retailer && e.url.trim());
+
+      // Track manual comparison initiation
+      trackManualComparison(validCompetitors.length);
 
       // Collect all URLs to scrape
       const urlsToScrape = [

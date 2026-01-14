@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header
+from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import bcrypt
@@ -12,10 +12,22 @@ import os
 import uuid
 import tempfile
 import io
+import logging
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from database import get_user_by_username, get_db
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('user_sessions.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="PriceHawk API")
 
@@ -46,6 +58,17 @@ COOKIE_NAME = "session_token"
 
 # In-memory session store (users now in PostgreSQL)
 sessions: dict[str, dict] = {}
+
+# Helper function to get client IP
+def get_client_ip(request: Request) -> str:
+    """Extract client IP from request headers or direct connection"""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else "unknown"
 
 
 class LoginRequest(BaseModel):
@@ -80,25 +103,40 @@ def get_current_user(
         del sessions[token]
         raise HTTPException(status_code=401, detail="Session expired")
 
+    # Update last activity time for session tracking
+    session["last_activity"] = datetime.utcnow()
+
     return session["user"]
 
 
 @app.post("/api/auth/login")
-def login(data: LoginRequest, response: Response):
+def login(data: LoginRequest, response: Response, request: Request):
     """Login and set session cookie"""
     user = get_user_by_username(data.username)
 
     if not user or not verify_password(data.password, user["hashed_password"]):
+        logger.warning(f"Failed login attempt for username: {data.username} from IP: {get_client_ip(request)}")
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     # Create session token
     token = secrets.token_urlsafe(32)
     expires = datetime.utcnow() + timedelta(minutes=SESSION_EXPIRE_MINUTES)
+    login_time = datetime.utcnow()
 
     sessions[token] = {
         "user": {"user_id": user["user_id"], "username": user["username"]},
         "expires": expires,
+        "login_time": login_time,
+        "last_activity": login_time,
+        "ip_address": get_client_ip(request),
+        "user_agent": request.headers.get("User-Agent", "unknown"),
     }
+
+    # Log successful login
+    logger.info(
+        f"LOGIN | User: {user['username']} | IP: {get_client_ip(request)} | "
+        f"Time: {login_time.isoformat()} | User-Agent: {request.headers.get('User-Agent', 'unknown')}"
+    )
 
     # Set HTTP-only cookie
     # For cross-origin (Vercel frontend -> Railway backend), need SameSite=None + Secure=True
@@ -126,6 +164,7 @@ def login(data: LoginRequest, response: Response):
 @app.post("/api/auth/logout")
 def logout(
     response: Response,
+    request: Request,
     session_token: Optional[str] = Cookie(None, alias=COOKIE_NAME),
     authorization: Optional[str] = Header(None)
 ):
@@ -138,6 +177,19 @@ def logout(
         token = session_token
 
     if token and token in sessions:
+        session = sessions[token]
+        username = session["user"]["username"]
+        login_time = session.get("login_time", datetime.utcnow())
+        logout_time = datetime.utcnow()
+        session_duration = (logout_time - login_time).total_seconds()
+        
+        # Log logout with session duration
+        logger.info(
+            f"LOGOUT | User: {username} | IP: {get_client_ip(request)} | "
+            f"Login: {login_time.isoformat()} | Logout: {logout_time.isoformat()} | "
+            f"Duration: {session_duration:.0f} seconds ({session_duration/60:.1f} minutes)"
+        )
+        
         del sessions[token]
 
     is_production = os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("PRODUCTION")
@@ -149,10 +201,74 @@ def logout(
     return {"message": "Logged out"}
 
 
+@app.post("/api/auth/page-unload")
+def page_unload(
+    request: Request,
+    session_token: Optional[str] = Cookie(None, alias=COOKIE_NAME),
+    authorization: Optional[str] = Header(None)
+):
+    """Track when user closes page/browser tab (called via sendBeacon)"""
+    # Try Authorization header first
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+    if not token:
+        token = session_token
+
+    if token and token in sessions:
+        session = sessions[token]
+        username = session["user"]["username"]
+        login_time = session.get("login_time", datetime.utcnow())
+        unload_time = datetime.utcnow()
+        session_duration = (unload_time - login_time).total_seconds()
+        
+        # Log page unload
+        logger.info(
+            f"PAGE_UNLOAD | User: {username} | IP: {get_client_ip(request)} | "
+            f"Login: {login_time.isoformat()} | Unload: {unload_time.isoformat()} | "
+            f"Duration: {session_duration:.0f} seconds ({session_duration/60:.1f} minutes)"
+        )
+        
+        # Update last activity time (don't delete session - they might come back)
+        session["last_activity"] = unload_time
+    
+    return {"message": "Page unload tracked"}
+
+
 @app.get("/api/auth/me", response_model=UserResponse)
 def get_me(user: dict = Depends(get_current_user)):
     """Get current authenticated user"""
     return user
+
+
+@app.get("/api/auth/sessions")
+def get_active_sessions(user: dict = Depends(get_current_user)):
+    """Get all active sessions (admin only - shows all logged-in users)"""
+    active_sessions = []
+    current_time = datetime.utcnow()
+    
+    for token, session in sessions.items():
+        if current_time <= session["expires"]:
+            login_time = session.get("login_time", current_time)
+            last_activity = session.get("last_activity", login_time)
+            session_duration = (current_time - login_time).total_seconds()
+            idle_time = (current_time - last_activity).total_seconds()
+            
+            active_sessions.append({
+                "username": session["user"]["username"],
+                "login_time": login_time.isoformat(),
+                "last_activity": last_activity.isoformat(),
+                "session_duration_seconds": int(session_duration),
+                "session_duration_minutes": round(session_duration / 60, 1),
+                "idle_time_seconds": int(idle_time),
+                "ip_address": session.get("ip_address", "unknown"),
+                "user_agent": session.get("user_agent", "unknown"),
+            })
+    
+    return {
+        "active_sessions": active_sessions,
+        "total_active": len(active_sessions),
+    }
 
 
 # ============== Watchlist API ==============

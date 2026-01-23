@@ -28,6 +28,11 @@ const menuItems = [
     label: 'Watchlist',
     icon: Eye,
   },
+    {
+    href: '/comparison',
+    label: 'Comparison',
+    icon: GitCompare,
+  },
 ];
 
 export const Sidebar: React.FC = () => {

@@ -67,6 +67,8 @@ def get_user_by_username(username: str):
 USERS = [
     ("kajorn", "Riskakajorn"),
     ("punyie", "organ"),
+    ("maneerat", "Rissumaneerat"),
+    ("mask", "123"),
     # ("sakda", "Chgrusakda"),
     # ("yanaphat", "Chgyuyannaphat"),
     # ("pailin", "Chgchopailin"),

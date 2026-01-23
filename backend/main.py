@@ -1432,6 +1432,98 @@ def get_retailers_with_stats(user: dict = Depends(get_current_user)):
 
 # ============== Matches API ==============
 
+@app.get("/api/matches/grouped")
+def get_matches_grouped(user: dict = Depends(get_current_user)):
+    """Get product matches grouped by base product and retailer"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get all matches grouped by base product
+            cur.execute("""
+                SELECT
+                    pm.match_id,
+                    pm.is_same,
+                    pm.confidence_score,
+                    pm.reason,
+                    pm.match_type,
+                    pm.verified_by_user,
+                    p1.product_id as base_product_id,
+                    p1.name as base_name,
+                    p1.sku as base_sku,
+                    p1.current_price as base_price,
+                    p1.image as base_image,
+                    r1.name as base_retailer,
+                    r1.retailer_id as base_retailer_id,
+                    p2.product_id as candidate_product_id,
+                    p2.name as candidate_name,
+                    p2.sku as candidate_sku,
+                    p2.current_price as candidate_price,
+                    p2.image as candidate_image,
+                    r2.name as candidate_retailer,
+                    r2.retailer_id as candidate_retailer_id
+                FROM product_matches pm
+                JOIN products p1 ON pm.base_product_id = p1.product_id
+                JOIN retailers r1 ON p1.retailer_id = r1.retailer_id
+                JOIN products p2 ON pm.candidate_product_id = p2.product_id
+                JOIN retailers r2 ON p2.retailer_id = r2.retailer_id
+                ORDER BY p1.name, r2.name, pm.confidence_score DESC NULLS LAST
+            """)
+            rows = cur.fetchall()
+
+            # Group by base product
+            products_map = {}
+            for row in rows:
+                base_id = row["base_product_id"]
+                
+                if base_id not in products_map:
+                    products_map[base_id] = {
+                        "base_product": {
+                            "product_id": row["base_product_id"],
+                            "name": row["base_name"],
+                            "sku": row["base_sku"],
+                            "retailer_name": row["base_retailer"],
+                            "retailer_id": row["base_retailer_id"],
+                            "current_price": float(row["base_price"]) if row["base_price"] else None,
+                            "image": row["base_image"],
+                        },
+                        "matches_by_retailer": {}
+                    }
+                
+                retailer_id = row["candidate_retailer_id"]
+                retailer_name = row["candidate_retailer"]
+                
+                if retailer_id not in products_map[base_id]["matches_by_retailer"]:
+                    products_map[base_id]["matches_by_retailer"][retailer_id] = {
+                        "retailer_name": retailer_name,
+                        "retailer_id": retailer_id,
+                        "matches": []
+                    }
+                
+                products_map[base_id]["matches_by_retailer"][retailer_id]["matches"].append({
+                    "match_id": row["match_id"],
+                    "is_same": row["is_same"],
+                    "confidence_score": float(row["confidence_score"]) if row["confidence_score"] else None,
+                    "reason": row["reason"],
+                    "match_type": row["match_type"],
+                    "verified_by_user": row["verified_by_user"],
+                    "candidate_product": {
+                        "product_id": row["candidate_product_id"],
+                        "name": row["candidate_name"],
+                        "sku": row["candidate_sku"],
+                        "retailer_name": row["candidate_retailer"],
+                        "current_price": float(row["candidate_price"]) if row["candidate_price"] else None,
+                        "image": row["candidate_image"],
+                    }
+                })
+            
+            # Convert to list and transform matches_by_retailer to list
+            products = []
+            for product in products_map.values():
+                product["matches_by_retailer"] = list(product["matches_by_retailer"].values())
+                products.append(product)
+
+            return {"products": products}
+
+
 @app.get("/api/matches")
 def get_matches(user: dict = Depends(get_current_user)):
     """Get product matches for review"""

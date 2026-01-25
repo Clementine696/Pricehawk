@@ -5,8 +5,18 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, TrendingUp, Loader2, RefreshCw } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
+} from 'recharts';
 import { trackProductView, trackMatchVerification } from '@/lib/analytics';
 
 interface Product {
@@ -177,12 +187,36 @@ export default function ProductDetailPage() {
   const [collapsedRetailers, setCollapsedRetailers] = useState<Set<string>>(new Set());
   const [isRescraping, setIsRescraping] = useState(false);
   const [rescrapeResult, setRescrapeResult] = useState<{success: boolean; message: string} | null>(null);
+  const [priceHistory, setPriceHistory] = useState<PriceHistoryData | null>(null);
+  const [historyDays, setHistoryDays] = useState<number>(30);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   useEffect(() => {
     if (productId) {
       fetchProductDetail();
     }
   }, [productId]);
+
+  useEffect(() => {
+    if (productId) {
+      fetchPriceHistory();
+    }
+  }, [productId, historyDays]);
+
+  const fetchPriceHistory = async () => {
+    setIsLoadingHistory(true);
+    try {
+      const response = await apiFetch(`/api/products/${productId}/price-history?days=${historyDays}`);
+      if (response.ok) {
+        const result = await response.json();
+        setPriceHistory(result);
+      }
+    } catch (err) {
+      console.error('Error fetching price history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   const fetchProductDetail = async () => {
     setIsLoading(true);
@@ -719,6 +753,117 @@ export default function ProductDetailPage() {
               })}
             </div>
           </div>
+        </div>
+
+        {/* Price History Chart */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-cyan-500" />
+              Price History
+            </h2>
+            <div className="flex gap-2">
+              {[7, 30, 90, 180, 365].map((days) => (
+                <button
+                  key={days}
+                  onClick={() => setHistoryDays(days)}
+                  className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                    historyDays === days
+                      ? 'bg-cyan-500 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {days === 7 ? '7D' : days === 30 ? '1M' : days === 90 ? '3M' : days === 180 ? '6M' : '1Y'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {isLoadingHistory ? (
+            <div className="h-80 flex items-center justify-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
+            </div>
+          ) : priceHistory && (priceHistory.base_product.history.length > 0 || priceHistory.matched_products.some(p => p.history.length > 0)) ? (
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={(() => {
+                    // Combine all price history into chart data
+                    const allDates = new Set<string>();
+                    priceHistory.base_product.history.forEach(h => allDates.add(h.date.split('T')[0]));
+                    priceHistory.matched_products.forEach(p => p.history.forEach(h => allDates.add(h.date.split('T')[0])));
+
+                    const sortedDates = Array.from(allDates).sort();
+
+                    return sortedDates.map(date => {
+                      const point: Record<string, string | number | null> = { date };
+
+                      // Find base product price for this date
+                      const basePrice = priceHistory.base_product.history.find(h => h.date.split('T')[0] === date);
+                      point[priceHistory.base_product.retailer] = basePrice?.price ?? null;
+
+                      // Find matched products prices for this date
+                      priceHistory.matched_products.forEach(mp => {
+                        const mpPrice = mp.history.find(h => h.date.split('T')[0] === date);
+                        point[mp.retailer] = mpPrice?.price ?? null;
+                      });
+
+                      return point;
+                    });
+                  })()}
+                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(value: string) => {
+                      const date = new Date(value);
+                      return `${date.getDate()}/${date.getMonth() + 1}`;
+                    }}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(value: number) => `฿${value.toLocaleString()}`}
+                  />
+                  <Tooltip
+                    formatter={(value: number) => [`฿${value?.toLocaleString() ?? '-'}`, '']}
+                    labelFormatter={(label: string) => {
+                      const date = new Date(label);
+                      return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+                    }}
+                  />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey={priceHistory.base_product.retailer}
+                    stroke="#06b6d4"
+                    strokeWidth={2}
+                    dot={false}
+                    connectNulls
+                  />
+                  {priceHistory.matched_products.map((mp, index) => {
+                    const colors = ['#1E88E5', '#43A047', '#7B1FA2', '#F57C00', '#E64A19'];
+                    return (
+                      <Line
+                        key={mp.product_id}
+                        type="monotone"
+                        dataKey={mp.retailer}
+                        stroke={colors[index % colors.length]}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                    );
+                  })}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-80 flex items-center justify-center text-gray-500">
+              No price history data available for the selected period
+            </div>
+          )}
         </div>
       </div>
     </MainLayout>

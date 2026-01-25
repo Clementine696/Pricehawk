@@ -111,3 +111,6 @@ INSERT INTO retailers (retailer_id, name, domain) VALUES
     ('btv', 'Boonthavorn', 'boonthavorn.com'),
     ('gbh', 'Global House', 'globalhouse.co.th')
 ON CONFLICT (retailer_id) DO NOTHING;
+
+
+ALTER TABLE products ADD COLUMN scrape_fail_count INTEGER DEFAULT 0;

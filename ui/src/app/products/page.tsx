@@ -3,7 +3,7 @@
 import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check } from 'lucide-react';
+import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check, TrendingUp, TrendingDown } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { trackExport, trackSearch, trackFilter } from '@/lib/analytics';
 
@@ -220,10 +220,18 @@ function SingleSelect({
   );
 }
 
+interface PriceChange {
+  old_price: number;
+  change: number;
+  change_pct: number;
+  direction: 'up' | 'down';
+}
+
 interface RetailerPrice {
   price: number | null;
   link: string | null;
   verified?: boolean;
+  price_change?: PriceChange | null;
 }
 
 interface Product {
@@ -234,6 +242,7 @@ interface Product {
   category: string | null;
   base_price: number | null;
   base_link: string | null;
+  base_price_change?: PriceChange | null;
   status: 'cheapest' | 'same' | 'higher' | null;
   retailer_prices: Record<string, RetailerPrice>;
   is_verified: boolean;
@@ -330,7 +339,7 @@ function ProductsContent() {
 
   useEffect(() => {
     fetchProducts();
-  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter]); //watchedOnly --
+  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter]);
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -344,6 +353,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
+
 
       const response = await apiFetch(`/api/products?${params}`);
       if (!response.ok) throw new Error('Failed to fetch products');
@@ -486,6 +496,23 @@ function ProductsContent() {
       case 'same': return 'text-gray-500';
       default: return 'text-cyan-600';
     }
+  };
+
+  const PriceChangeIndicator = ({ change }: { change: PriceChange | null | undefined }) => {
+    if (!change) return null;
+    const isDown = change.direction === 'down';
+    return (
+      <span
+        className={`inline-flex items-center text-xs ml-1 ${isDown ? 'text-green-600' : 'text-red-500'}`}
+        title={`Was ฿${change.old_price.toLocaleString()} (${change.change_pct > 0 ? '+' : ''}${change.change_pct}%)`}
+      >
+        {isDown ? (
+          <TrendingDown className="w-3 h-3" />
+        ) : (
+          <TrendingUp className="w-3 h-3" />
+        )}
+      </span>
+    );
   };
 
   const getStatusBadge = (status: string | null) => {
@@ -683,16 +710,19 @@ function ProductsContent() {
                           </td>
                           <td className="px-4 py-2 text-sm whitespace-nowrap">
                             {product.base_price ? (
-                              <a
-                                href={product.base_link || '#'}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className={`inline-flex items-center gap-1 hover:underline ${getPriceColorClass(getPriceCategory(product.base_price, allPrices))}`}
-                              >
-                                {formatPrice(product.base_price)}
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
+                              <span className="inline-flex items-center">
+                                <a
+                                  href={product.base_link || '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className={`inline-flex items-center gap-1 hover:underline ${getPriceColorClass(getPriceCategory(product.base_price, allPrices))}`}
+                                >
+                                  {formatPrice(product.base_price)}
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                                <PriceChangeIndicator change={product.base_price_change} />
+                              </span>
                             ) : <span className="text-gray-400">-</span>}
                           </td>
                           {otherRetailers.map((retailer) => {
@@ -702,18 +732,21 @@ function ProductsContent() {
                             return (
                               <td key={retailer} className="px-4 py-2 text-sm whitespace-nowrap">
                                 {priceData?.price ? (
-                                  <a
-                                    href={priceData.link || '#'}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className={`inline-flex items-center gap-1 hover:underline ${isUnverified ? 'italic opacity-70' : ''} ${getPriceColorClass(priceCategory)}`}
-                                    title={isUnverified ? 'Unverified match - click to review' : undefined}
-                                  >
-                                    {formatPrice(priceData.price)}
-                                    {isUnverified && <span className="text-yellow-500">?</span>}
-                                    <ExternalLink className="w-3 h-3" />
-                                  </a>
+                                  <span className="inline-flex items-center">
+                                    <a
+                                      href={priceData.link || '#'}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className={`inline-flex items-center gap-1 hover:underline ${isUnverified ? 'italic opacity-70' : ''} ${getPriceColorClass(priceCategory)}`}
+                                      title={isUnverified ? 'Unverified match - click to review' : undefined}
+                                    >
+                                      {formatPrice(priceData.price)}
+                                      {isUnverified && <span className="text-yellow-500">?</span>}
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                    <PriceChangeIndicator change={priceData.price_change} />
+                                  </span>
                                 ) : <span className="text-gray-400">-</span>}
                               </td>
                             );

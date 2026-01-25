@@ -155,15 +155,21 @@ is_active BOOLEAN DEFAULT TRUE
 ### Authentication
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/login` | Login with username/password |
-| GET | `/api/me` | Get current user info |
+| POST | `/api/auth/login` | Login with username/password, returns token |
+| POST | `/api/auth/logout` | Logout and clear session |
+| GET | `/api/auth/me` | Get current user info |
+
+**Authentication Methods:**
+- **Bearer Token** (recommended): Store token from login response in localStorage, send as `Authorization: Bearer <token>` header
+- **Cookie** (fallback): HTTP-only session cookie with `SameSite=None; Secure; Partitioned` for cross-origin
 
 ### Products
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/products` | List products with pagination, search, filters |
 | GET | `/api/products/{id}` | Get product detail with all matches |
-| GET | `/api/products/export` | Export products to CSV |
+| GET | `/api/products/export` | Export products to Excel (.xlsx) with hyperlinked prices |
+| POST | `/api/products/{id}/rescrape` | Rescrape prices for product and verified matches |
 
 ### Matches
 | Method | Endpoint | Description |
@@ -195,7 +201,7 @@ Product listing with:
 - Search by name/SKU/brand
 - Filter by category (multi-select), brand (multi-select), status (single-select), retailer (single-select)
 - Pagination
-- Export to CSV/Excel
+- Export to Excel (.xlsx) with hyperlinked prices
 
 ### `/products/[id]`
 Product detail view:
@@ -203,6 +209,7 @@ Product detail view:
 - Matched products from all retailers
 - Verify/reject matches
 - Add manual matches
+- **Rescrape Prices** button - updates prices for base product + all verified matches
 
 ### `/manual-add`
 4-step manual comparison wizard:
@@ -483,6 +490,32 @@ UPDATE_PARALLEL=3
 - Processes all products once per day
 - Run during off-peak hours (e.g., 2 AM)
 
+
+3. **How It Works**
+   - Fetches N oldest products (by `last_updated_at ASC NULLS FIRST`)
+   - Skips products with 3+ consecutive failures
+   - Splits work among parallel workers
+   - Updates prices and records failures
+   - Cleans up browser resources to prevent memory leaks
+
+### Recommended Configurations
+
+**Hourly Cron (Incremental)**
+```env
+UPDATE_LIMIT=100
+UPDATE_PARALLEL=3
+```
+- Processes 100 oldest products each hour
+- Good for keeping prices fresh without overloading
+
+**Daily Cron (Full Update)**
+```env
+UPDATE_LIMIT=           # No limit - process all
+UPDATE_PARALLEL=3
+```
+- Processes all products once per day
+- Run during off-peak hours (e.g., 2 AM)
+
 ---
 
 ## Recent Changes (January 2026)
@@ -564,6 +597,83 @@ This same logic is used in:
 - Dashboard pending reviews count
 - Products table verified/unverified filter
 - Export verified/unverified filter
+
+---
+
+## Watchlist SKU Groups (Added January 2026)
+
+A new feature for tracking products by SKU numbers across retailers, with bulk import/export capabilities.
+
+### Database Schema
+```sql
+-- Watchlist SKU Groups
+CREATE TABLE watchlist_sku_groups (
+    group_id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    display_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- SKU Group Products (many-to-many)
+CREATE TABLE watchlist_sku_group_products (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER REFERENCES watchlist_sku_groups(group_id) ON DELETE CASCADE,
+    sku VARCHAR(50) NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(group_id, sku)
+);
+```
+
+### Features
+
+#### 1. Excel Bulk Import
+- **Endpoint**: `POST /api/watchlist/sku-groups/import-excel`
+- **Format**: Reads `SKU_Number` and `S-dept` columns from Excel file
+- **Logic**:
+  - Groups SKUs by `S-dept` column value
+  - Auto-creates watchlist groups (name = `s_dept.lower().replace(' ', '-')`)
+  - Validates SKUs against products table (retailer_id='twd')
+  - Returns detailed results: groups_created, groups_updated, skus_added, skus_not_found
+- **Frontend**: Green "Import Excel" button with import result modal
+
+#### 2. Group Management
+- **List Groups**: `GET /api/watchlist/sku-groups` - Returns all groups with product count
+- **Create Group**: `POST /api/watchlist/sku-groups` - Create new group
+- **Delete Group**: `DELETE /api/watchlist/sku-groups/{group_id}` - Cascade deletes products
+- **Add Product**: `POST /api/watchlist/sku-groups/{group_id}/products/{sku}`
+- **Remove Product**: `DELETE /api/watchlist/sku-groups/{group_id}/products/{sku}`
+
+#### 3. Excel Export
+- **Endpoint**: `GET /api/watchlist/sku-groups/{group_id}/export`
+- **Format**: Same as products page export (Excel with hyperlinked prices)
+- **Includes**:
+  - All 6 retailers (Thai Watsadu, HomePro, MegaHome, Do Home, Boonthavorn, Global House)
+  - Prices are hyperlinked to product pages
+  - Status column (cheapest/same/higher)
+  - Products sorted by SKU
+- **Frontend**: Green "Export" button next to "Manage Products"
+
+#### 4. UI Features
+- **Main Page**: Full-width single-column layout showing group cards
+  - Each card shows: display name, description, product count
+  - Actions: Export (green), Manage Products (cyan), Delete (red)
+- **Manage Products Modal**: Fullscreen split view
+  - **Left side**: Added products in group (green background)
+  - **Right side**: Available products to add (white background)
+  - Format: `SKU | Price | Name` in single line, sorted by SKU
+  - Small 8x8 product images
+  - Search bar to filter available products
+- **Sidebar**: Navigation updated
+  - "Watchlist Category" (was "Watchlist Groups")
+  - "Watchlist SKU" (was "Watchlist SKU Groups")
+
+### Technical Details
+- Uses pandas for Excel processing (`pandas>=2.0.0`)
+- Frontend uses Next.js 14 with TypeScript and Tailwind CSS
+- Product display uses monospace font for SKU alignment
+- Export generates timestamped filename: `{group_name}_export_YYYYMMDD_HHMMSS.xlsx`
 
 ---
 

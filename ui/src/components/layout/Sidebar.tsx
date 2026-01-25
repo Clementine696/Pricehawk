@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle } from 'lucide-react';
+import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle, Eye, BookmarkCheck } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 const menuItems = [
@@ -23,16 +23,21 @@ const menuItems = [
     label: 'Manual Add',
     icon: PlusCircle,
   },
-  // {
-  //   href: '/comparison',
-  //   label: 'Manual Comparison',
-  //   icon: GitCompare,
-  // }
-  // {
-  //   href: '/settings',
-  //   label: 'Scraping Settings',
-  //   icon: Settings,
-  // },
+  {
+    href: '/watchlist-category',
+    label: 'Watchlist Category',
+    icon: Eye,
+  },
+  {
+    href: '/watchlist-sku',
+    label: 'Watchlist SKU',
+    icon: BookmarkCheck,
+  },
+    {
+    href: '/comparison',
+    label: 'Comparison',
+    icon: GitCompare,
+  },
 ];
 
 export const Sidebar: React.FC = () => {

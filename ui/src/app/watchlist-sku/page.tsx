@@ -222,8 +222,8 @@ export default function WatchlistSkuGroupsPage() {
         
         // Extract unique brands and categories from all products
         const products = data.products || [];
-        const brands = [...new Set(products.map((p: AvailableProduct) => p.brand).filter(Boolean))].sort();
-        const categories = [...new Set(products.map((p: AvailableProduct) => p.category).filter(Boolean))].sort();
+        const brands = Array.from(new Set(products.map((p: AvailableProduct) => p.brand).filter(Boolean))).sort();
+        const categories = Array.from(new Set(products.map((p: AvailableProduct) => p.category).filter(Boolean))).sort();
         setAllBrands(brands as string[]);
         setAllCategories(categories as string[]);
       }
@@ -243,8 +243,8 @@ export default function WatchlistSkuGroupsPage() {
   }, [showAddProductModal, searchTerm, selectedBrands, selectedCategories]);
 
   const handleCreateGroup = async () => {
-    if (!newGroupName.trim() || !newGroupDisplayName.trim()) {
-      alert('Please provide both name and display name');
+    if (!newGroupName.trim()) {
+      alert('Please provide a group name');
       return;
     }
 
@@ -256,16 +256,12 @@ export default function WatchlistSkuGroupsPage() {
         },
         body: JSON.stringify({
           name: newGroupName.trim(),
-          display_name: newGroupDisplayName.trim(),
-          description: newGroupDescription.trim(),
         }),
       });
 
       if (response.ok) {
         setShowCreateModal(false);
         setNewGroupName('');
-        setNewGroupDisplayName('');
-        setNewGroupDescription('');
         fetchGroups();
       } else {
         const error = await response.json();

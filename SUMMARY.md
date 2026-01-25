@@ -574,6 +574,83 @@ This same logic is used in:
 
 ---
 
+## Watchlist SKU Groups (Added January 2026)
+
+A new feature for tracking products by SKU numbers across retailers, with bulk import/export capabilities.
+
+### Database Schema
+```sql
+-- Watchlist SKU Groups
+CREATE TABLE watchlist_sku_groups (
+    group_id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    display_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- SKU Group Products (many-to-many)
+CREATE TABLE watchlist_sku_group_products (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER REFERENCES watchlist_sku_groups(group_id) ON DELETE CASCADE,
+    sku VARCHAR(50) NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(group_id, sku)
+);
+```
+
+### Features
+
+#### 1. Excel Bulk Import
+- **Endpoint**: `POST /api/watchlist/sku-groups/import-excel`
+- **Format**: Reads `SKU_Number` and `S-dept` columns from Excel file
+- **Logic**:
+  - Groups SKUs by `S-dept` column value
+  - Auto-creates watchlist groups (name = `s_dept.lower().replace(' ', '-')`)
+  - Validates SKUs against products table (retailer_id='twd')
+  - Returns detailed results: groups_created, groups_updated, skus_added, skus_not_found
+- **Frontend**: Green "Import Excel" button with import result modal
+
+#### 2. Group Management
+- **List Groups**: `GET /api/watchlist/sku-groups` - Returns all groups with product count
+- **Create Group**: `POST /api/watchlist/sku-groups` - Create new group
+- **Delete Group**: `DELETE /api/watchlist/sku-groups/{group_id}` - Cascade deletes products
+- **Add Product**: `POST /api/watchlist/sku-groups/{group_id}/products/{sku}`
+- **Remove Product**: `DELETE /api/watchlist/sku-groups/{group_id}/products/{sku}`
+
+#### 3. Excel Export
+- **Endpoint**: `GET /api/watchlist/sku-groups/{group_id}/export`
+- **Format**: Same as products page export (Excel with hyperlinked prices)
+- **Includes**:
+  - All 6 retailers (Thai Watsadu, HomePro, MegaHome, Do Home, Boonthavorn, Global House)
+  - Prices are hyperlinked to product pages
+  - Status column (cheapest/same/higher)
+  - Products sorted by SKU
+- **Frontend**: Green "Export" button next to "Manage Products"
+
+#### 4. UI Features
+- **Main Page**: Full-width single-column layout showing group cards
+  - Each card shows: display name, description, product count
+  - Actions: Export (green), Manage Products (cyan), Delete (red)
+- **Manage Products Modal**: Fullscreen split view
+  - **Left side**: Added products in group (green background)
+  - **Right side**: Available products to add (white background)
+  - Format: `SKU | Price | Name` in single line, sorted by SKU
+  - Small 8x8 product images
+  - Search bar to filter available products
+- **Sidebar**: Navigation updated
+  - "Watchlist Category" (was "Watchlist Groups")
+  - "Watchlist SKU" (was "Watchlist SKU Groups")
+
+### Technical Details
+- Uses pandas for Excel processing (`pandas>=2.0.0`)
+- Frontend uses Next.js 14 with TypeScript and Tailwind CSS
+- Product display uses monospace font for SKU alignment
+- Export generates timestamped filename: `{group_name}_export_YYYYMMDD_HHMMSS.xlsx`
+
+---
+
 ## Future Features (Planned)
 
 1. **Price Alerts**

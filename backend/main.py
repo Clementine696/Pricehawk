@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header, Request
+from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import bcrypt
@@ -13,8 +13,9 @@ import uuid
 import tempfile
 import io
 import logging
-from openpyxl import Workbook
-from openpyxl.styles import Font
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, PatternFill
+import pandas as pd
 
 from database import get_user_by_username, get_db
 
@@ -271,7 +272,829 @@ def get_active_sessions(user: dict = Depends(get_current_user)):
     }
 
 
-# ============== Watchlist API ==============
+# ============== Watchlist API (Global Category Groups) ==============
+
+@app.get("/api/watchlist/groups")
+def get_watchlist_groups(user: dict = Depends(get_current_user)):
+    """Get all watchlist groups with their categories"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get all groups
+            cur.execute("""
+                SELECT 
+                    wg.group_id,
+                    wg.name,
+                    wg.display_name,
+                    wg.description,
+                    wg.created_at,
+                    wg.updated_at
+                FROM watchlist_groups wg
+                ORDER BY wg.display_name
+            """)
+            groups = cur.fetchall()
+
+            result = []
+            for group in groups:
+                # Get categories for this group
+                cur.execute("""
+                    SELECT wgc.category, wgc.added_at,
+                           COUNT(DISTINCT p.product_id) as product_count
+                    FROM watchlist_group_categories wgc
+                    LEFT JOIN products p ON p.category = wgc.category AND p.retailer_id = 'twd'
+                    WHERE wgc.group_id = %s
+                    GROUP BY wgc.category, wgc.added_at
+                    ORDER BY wgc.category
+                """, (group["group_id"],))
+                categories = cur.fetchall()
+
+                result.append({
+                    "group_id": group["group_id"],
+                    "name": group["name"],
+                    "display_name": group["display_name"],
+                    "description": group["description"],
+                    "categories": [
+                        {
+                            "category": cat["category"],
+                            "product_count": cat["product_count"],
+                            "added_at": cat["added_at"].isoformat() if cat["added_at"] else None
+                        }
+                        for cat in categories
+                    ],
+                    "total_categories": len(categories),
+                    "created_at": group["created_at"].isoformat() if group["created_at"] else None
+                })
+
+            return {"groups": result, "total": len(result)}
+
+
+@app.post("/api/watchlist/groups")
+def create_watchlist_group(data: dict, user: dict = Depends(get_current_user)):
+    """Create a new watchlist group"""
+    name = data.get("name")
+    display_name = data.get("display_name")
+    description = data.get("description", "")
+
+    if not name or not display_name:
+        raise HTTPException(status_code=400, detail="Name and display_name are required")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    INSERT INTO watchlist_groups (name, display_name, description)
+                    VALUES (%s, %s, %s)
+                    RETURNING group_id, name, display_name, description
+                """, (name, display_name, description))
+                result = cur.fetchone()
+                conn.commit()
+
+                return {
+                    "message": "Watchlist group created",
+                    "group": dict(result)
+                }
+            except Exception as e:
+                conn.rollback()
+                if "unique" in str(e).lower():
+                    raise HTTPException(status_code=400, detail="Watchlist group name already exists")
+                raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/watchlist/groups/{group_id}")
+def delete_watchlist_group(group_id: int, user: dict = Depends(get_current_user)):
+    """Delete a watchlist group"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM watchlist_groups
+                WHERE group_id = %s
+                RETURNING group_id
+            """, (group_id,))
+            result = cur.fetchone()
+            conn.commit()
+
+            if result:
+                return {"message": "Watchlist group deleted", "group_id": group_id}
+            else:
+                raise HTTPException(status_code=404, detail="Watchlist group not found")
+
+
+@app.post("/api/watchlist/groups/{group_id}/categories")
+def add_category_to_group(group_id: int, data: dict, user: dict = Depends(get_current_user)):
+    """Add a category to a watchlist group"""
+    category = data.get("category")
+    if not category:
+        raise HTTPException(status_code=400, detail="Category is required")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Check if group exists
+            cur.execute("SELECT group_id FROM watchlist_groups WHERE group_id = %s", (group_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Watchlist group not found")
+
+            # Check if category exists in products
+            cur.execute("""
+                SELECT DISTINCT category FROM products
+                WHERE category = %s AND retailer_id = 'twd'
+            """, (category,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail="Category not found in products")
+
+            # Add category to group (ignore if already exists)
+            cur.execute("""
+                INSERT INTO watchlist_group_categories (group_id, category)
+                VALUES (%s, %s)
+                ON CONFLICT (group_id, category) DO NOTHING
+                RETURNING id
+            """, (group_id, category))
+            result = cur.fetchone()
+            
+            # Update group updated_at
+            cur.execute("""
+                UPDATE watchlist_groups 
+                SET updated_at = NOW() 
+                WHERE group_id = %s
+            """, (group_id,))
+            
+            conn.commit()
+
+            if result:
+                return {"message": "Category added to watchlist group", "category": category}
+            else:
+                return {"message": "Category already in watchlist group", "category": category}
+
+
+@app.delete("/api/watchlist/groups/{group_id}/categories/{category}")
+def remove_category_from_group(group_id: int, category: str, user: dict = Depends(get_current_user)):
+    """Remove a category from a watchlist group"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM watchlist_group_categories
+                WHERE group_id = %s AND category = %s
+                RETURNING id
+            """, (group_id, category))
+            result = cur.fetchone()
+            
+            # Update group updated_at
+            if result:
+                cur.execute("""
+                    UPDATE watchlist_groups 
+                    SET updated_at = NOW() 
+                    WHERE group_id = %s
+                """, (group_id,))
+            
+            conn.commit()
+
+            if result:
+                return {"message": "Category removed from watchlist group", "category": category}
+            else:
+                raise HTTPException(status_code=404, detail="Category not in watchlist group")
+
+
+@app.get("/api/watchlist/categories/available")
+def get_available_categories_for_groups(user: dict = Depends(get_current_user)):
+    """Get all available categories that can be added to watchlist groups"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get all categories from Thai Watsadu products
+            cur.execute("""
+                SELECT DISTINCT p.category, COUNT(*) as product_count
+                FROM products p
+                WHERE p.retailer_id = 'twd' AND p.category IS NOT NULL AND p.category != ''
+                GROUP BY p.category
+                ORDER BY p.category
+            """)
+            all_categories = cur.fetchall()
+
+            return {
+                "categories": [
+                    {
+                        "category": row["category"],
+                        "product_count": row["product_count"]
+                    }
+                    for row in all_categories
+                ],
+                "total": len(all_categories)
+            }
+
+
+# ============== Watchlist SKU Groups ==============
+
+@app.get("/api/watchlist/sku-groups")
+def get_sku_watchlist_groups(user: dict = Depends(get_current_user)):
+    """Get all SKU-based watchlist groups with their products"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get all groups
+            cur.execute("""
+                SELECT group_id, name, created_at, updated_at
+                FROM watchlist_sku_groups
+                ORDER BY updated_at DESC
+            """)
+            groups = cur.fetchall()
+            
+            result = []
+            for group in groups:
+                # Get products for this group with product details
+                cur.execute("""
+                    SELECT 
+                        wsgp.sku,
+                        wsgp.added_at,
+                        p.name,
+                        p.image,
+                        p.current_price,
+                        p.category
+                    FROM watchlist_sku_group_products wsgp
+                    LEFT JOIN products p ON wsgp.sku = p.sku AND p.retailer_id = 'twd'
+                    WHERE wsgp.group_id = %s
+                    ORDER BY wsgp.added_at DESC
+                """, (group["group_id"],))
+                products = cur.fetchall()
+                
+                result.append({
+                    "group_id": group["group_id"],
+                    "name": group["name"],
+                    "created_at": group["created_at"].isoformat() if group["created_at"] else None,
+                    "updated_at": group["updated_at"].isoformat() if group["updated_at"] else None,
+                    "products": [
+                        {
+                            "sku": p["sku"],
+                            "name": p["name"],
+                            "image_url": p["image"],
+                            "price": float(p["current_price"]) if p["current_price"] else None,
+                            "category": p["category"],
+                            "added_at": p["added_at"].isoformat() if p["added_at"] else None
+                        }
+                        for p in products
+                    ],
+                    "product_count": len(products)
+                })
+            
+            return {"groups": result, "total": len(result)}
+
+
+@app.post("/api/watchlist/sku-groups")
+def create_sku_watchlist_group(data: dict, user: dict = Depends(get_current_user)):
+    """Create a new SKU-based watchlist group"""
+    name = data.get("name", "").strip()
+    
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    INSERT INTO watchlist_sku_groups (name)
+                    VALUES (%s)
+                    RETURNING group_id, name, created_at, updated_at
+                """, (name,))
+                group = cur.fetchone()
+                conn.commit()
+                
+                return {
+                    "group_id": group["group_id"],
+                    "name": group["name"],
+                    "created_at": group["created_at"].isoformat() if group["created_at"] else None,
+                    "updated_at": group["updated_at"].isoformat() if group["updated_at"] else None,
+                    "products": [],
+                    "product_count": 0
+                }
+            except Exception as e:
+                conn.rollback()
+                if "unique constraint" in str(e).lower():
+                    raise HTTPException(status_code=400, detail="Group name already exists")
+                raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/watchlist/sku-groups/{group_id}")
+def delete_sku_watchlist_group(group_id: int, user: dict = Depends(get_current_user)):
+    """Delete a SKU-based watchlist group"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM watchlist_sku_groups WHERE group_id = %s", (group_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Group not found")
+            conn.commit()
+            return {"message": "Group deleted successfully"}
+
+
+@app.post("/api/watchlist/sku-groups/{group_id}/products")
+def add_product_to_sku_group(group_id: int, data: dict, user: dict = Depends(get_current_user)):
+    """Add a product (by SKU) to a SKU-based watchlist group"""
+    sku = data.get("sku", "").strip()
+    
+    if not sku:
+        raise HTTPException(status_code=400, detail="SKU is required")
+    
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Check if group exists
+            cur.execute("SELECT group_id FROM watchlist_sku_groups WHERE group_id = %s", (group_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Group not found")
+            
+            # Check if product exists
+            cur.execute("""
+                SELECT sku, name FROM products 
+                WHERE sku = %s AND retailer_id = 'twd'
+                LIMIT 1
+            """, (sku,))
+            product = cur.fetchone()
+            if not product:
+                raise HTTPException(status_code=400, detail="Product not found")
+            
+            try:
+                # Add product to group
+                cur.execute("""
+                    INSERT INTO watchlist_sku_group_products (group_id, sku)
+                    VALUES (%s, %s)
+                    ON CONFLICT (group_id, sku) DO NOTHING
+                """, (group_id, sku))
+                
+                # Update group's updated_at timestamp
+                cur.execute("""
+                    UPDATE watchlist_sku_groups
+                    SET updated_at = CURRENT_TIMESTAMP
+                    WHERE group_id = %s
+                """, (group_id,))
+                
+                conn.commit()
+                return {"message": "Product added to group successfully", "sku": sku}
+            except Exception as e:
+                conn.rollback()
+                raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/watchlist/sku-groups/import-excel")
+async def import_excel_to_sku_groups(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user)
+):
+    """Import Excel file to create SKU watchlist groups based on S-dept column"""
+    
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="File must be an Excel file (.xlsx or .xls)")
+    
+    try:
+        # Read Excel file
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents))
+        
+        # Validate required columns
+        required_columns = ['SKU_Number', 'S-dept']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Missing required columns: {', '.join(missing_columns)}. Expected columns: SKU_Number, PRNAME, Brand, S-dept, Dept"
+            )
+        
+        # Remove rows with missing SKU_Number or S-dept
+        df = df.dropna(subset=['SKU_Number', 'S-dept'])
+        
+        if len(df) == 0:
+            raise HTTPException(status_code=400, detail="No valid data found in Excel file")
+        
+        # Convert SKU_Number to string and clean
+        df['SKU_Number'] = df['SKU_Number'].astype(str).str.strip()
+        df['S-dept'] = df['S-dept'].astype(str).str.strip()
+        
+        # Group by S-dept
+        grouped = df.groupby('S-dept')['SKU_Number'].apply(list).to_dict()
+        
+        results = {
+            "groups_created": [],
+            "groups_updated": [],
+            "skus_added": {},
+            "skus_not_found": {},
+            "total_rows": len(df),
+            "groups_processed": len(grouped)
+        }
+        
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                for s_dept, skus in grouped.items():
+                    # Remove duplicates
+                    skus = list(set(skus))
+                    
+                    # Use S-dept name directly as group name
+                    group_name = s_dept
+                    
+                    # Check if group exists
+                    cur.execute("""
+                        SELECT group_id FROM watchlist_sku_groups WHERE name = %s
+                    """, (group_name,))
+                    existing_group = cur.fetchone()
+                    
+                    if existing_group:
+                        group_id = existing_group['group_id']
+                        results["groups_updated"].append(s_dept)
+                    else:
+                        # Create new group
+                        try:
+                            cur.execute("""
+                                INSERT INTO watchlist_sku_groups (name)
+                                VALUES (%s)
+                                RETURNING group_id
+                            """, (group_name,))
+                            group_id = cur.fetchone()['group_id']
+                            results["groups_created"].append(s_dept)
+                        except Exception as e:
+                            print(f"Error creating group {s_dept}: {e}")
+                            continue
+                    
+                    # Verify which SKUs exist in products table
+                    cur.execute("""
+                        SELECT DISTINCT sku FROM products 
+                        WHERE sku = ANY(%s) AND retailer_id = 'twd'
+                    """, (skus,))
+                    valid_skus = [row['sku'] for row in cur.fetchall()]
+                    invalid_skus = [sku for sku in skus if sku not in valid_skus]
+                    
+                    added_count = 0
+                    already_exists_count = 0
+                    
+                    # Add valid SKUs to group
+                    for sku in valid_skus:
+                        try:
+                            cur.execute("""
+                                INSERT INTO watchlist_sku_group_products (group_id, sku)
+                                VALUES (%s, %s)
+                                ON CONFLICT (group_id, sku) DO NOTHING
+                            """, (group_id, sku))
+                            if cur.rowcount > 0:
+                                added_count += 1
+                            else:
+                                already_exists_count += 1
+                        except Exception as e:
+                            print(f"Error adding SKU {sku} to group {s_dept}: {e}")
+                            continue
+                    
+                    # Update group timestamp
+                    cur.execute("""
+                        UPDATE watchlist_sku_groups
+                        SET updated_at = CURRENT_TIMESTAMP
+                        WHERE group_id = %s
+                    """, (group_id,))
+                    
+                    results["skus_added"][s_dept] = {
+                        "added": added_count,
+                        "already_exists": already_exists_count,
+                        "total_valid": len(valid_skus)
+                    }
+                    
+                    if invalid_skus:
+                        results["skus_not_found"][s_dept] = invalid_skus
+                
+                conn.commit()
+        
+        return results
+        
+    except pd.errors.EmptyDataError:
+        raise HTTPException(status_code=400, detail="Excel file is empty")
+    except Exception as e:
+        print(f"Error importing Excel: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing Excel file: {str(e)}")
+
+
+@app.delete("/api/watchlist/sku-groups/{group_id}/products/{sku}")
+def remove_product_from_sku_group(group_id: int, sku: str, user: dict = Depends(get_current_user)):
+    """Remove a product from a SKU-based watchlist group"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM watchlist_sku_group_products
+                WHERE group_id = %s AND sku = %s
+            """, (group_id, sku))
+            
+            if cur.rowcount > 0:
+                # Update group's updated_at timestamp
+                cur.execute("""
+                    UPDATE watchlist_sku_groups
+                    SET updated_at = CURRENT_TIMESTAMP
+                    WHERE group_id = %s
+                """, (group_id,))
+                conn.commit()
+                return {"message": "Product removed from group successfully"}
+            else:
+                raise HTTPException(status_code=404, detail="Product not in watchlist group")
+
+
+@app.get("/api/watchlist/sku-groups/{group_id}/export")
+def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
+    """Export SKU group products to Excel with price comparison across retailers (same format as products export)"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get group info
+            cur.execute("""
+                SELECT name FROM watchlist_sku_groups WHERE group_id = %s
+            """, (group_id,))
+            group = cur.fetchone()
+            if not group:
+                raise HTTPException(status_code=404, detail="Group not found")
+            
+            # Get Thai Watsadu retailer ID (base retailer)
+            cur.execute("SELECT retailer_id FROM retailers WHERE name = 'Thai Watsadu'")
+            base_retailer = cur.fetchone()
+            if not base_retailer:
+                raise HTTPException(status_code=404, detail="Thai Watsadu retailer not found")
+            base_retailer_id = base_retailer["retailer_id"]
+            
+            # Get products in this group from Thai Watsadu
+            cur.execute("""
+                SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link
+                FROM watchlist_sku_group_products wsg
+                JOIN products p ON wsg.sku = p.sku AND p.retailer_id = %s
+                WHERE wsg.group_id = %s
+                ORDER BY p.sku
+            """, (base_retailer_id, group_id))
+            base_products = cur.fetchall()
+            
+            if not base_products:
+                raise HTTPException(status_code=404, detail="No products found in this group")
+            
+            # Create Excel workbook
+            wb = Workbook()
+            ws = wb.active
+            # Sanitize sheet name - remove invalid characters: / \ ? * [ ]
+            sheet_name = group["name"][:31]
+            for char in ['/', '\\', '?', '*', '[', ']']:
+                sheet_name = sheet_name.replace(char, '-')
+            ws.title = sheet_name
+            
+            # Write header row
+            headers = ['Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
+                      'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status']
+            ws.append(headers)
+            
+            # Style header row
+            header_font = Font(bold=True)
+            for col_num, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.font = header_font
+            
+            # Define retailer order for columns (excluding Thai Watsadu which is base)
+            retailer_order = ['HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House']
+            
+            # Retailer name aliases
+            retailer_aliases = {
+                'MegaHome': ['Mega Home', 'megahome'],
+                'Do Home': ['DoHome', 'dohome'],
+                'Global House': ['GlobalHouse', 'globalhouse'],
+                'HomePro': ['Home Pro', 'homepro'],
+            }
+            
+            def get_retailer_data(retailer_data_dict, retailer_name):
+                """Get retailer data, checking canonical name and aliases."""
+                if retailer_name in retailer_data_dict:
+                    return retailer_data_dict[retailer_name]
+                for alias in retailer_aliases.get(retailer_name, []):
+                    if alias in retailer_data_dict:
+                        return retailer_data_dict[alias]
+                return None
+            
+            # Hyperlink style (blue, underlined)
+            link_font = Font(color="0563C1", underline="single")
+            
+            # Color fills for price comparison (pastel)
+            dark_green_fill = PatternFill(start_color="00C057", end_color="00C057", fill_type="solid")
+            light_green_fill = PatternFill(start_color="ABDB77", end_color="ABDB77", fill_type="solid")
+            dark_red_fill = PatternFill(start_color="D16969", end_color="D16969", fill_type="solid")
+            light_red_fill = PatternFill(start_color="DB9D9D", end_color="DB9D9D", fill_type="solid")
+            grey_fill = PatternFill(start_color="E8E8E8", end_color="E8E8E8", fill_type="solid")
+            white_font = Font(color="FFFFFF", underline="single")
+            
+            # Process each product
+            row_num = 2
+            for bp in base_products:
+                base_price = float(bp["current_price"]) if bp["current_price"] else None
+                base_link = bp["link"] or ''
+                
+                # Get verified correct matches from other retailers
+                cur.execute("""
+                    SELECT DISTINCT ON (r.retailer_id)
+                        r.name as retailer_name,
+                        p2.current_price,
+                        p2.link
+                    FROM product_matches pm
+                    JOIN products p2 ON pm.candidate_product_id = p2.product_id
+                    JOIN retailers r ON p2.retailer_id = r.retailer_id
+                    WHERE pm.base_product_id = %s
+                      AND pm.verified_by_user = TRUE
+                      AND pm.is_same = TRUE
+                    ORDER BY r.retailer_id, pm.confidence_score DESC NULLS LAST
+                """, (bp["product_id"],))
+                
+                matches = cur.fetchall()
+                retailer_data = {}
+                for match in matches:
+                    retailer_data[match["retailer_name"]] = {
+                        "price": float(match["current_price"]) if match["current_price"] else None,
+                        "link": match["link"] or ''
+                    }
+                
+                # Collect all prices for comparison
+                all_prices = []
+                if base_price:
+                    all_prices.append(base_price)
+                for rd in retailer_data.values():
+                    if rd["price"]:
+                        all_prices.append(rd["price"])
+                
+                # Determine min and max prices
+                min_price = min(all_prices) if all_prices else None
+                max_price = max(all_prices) if all_prices else None
+                
+                # Determine status
+                status = ''
+                if base_price:
+                    if len(all_prices) == 1:
+                        status = 'No Competitor Data'
+                    elif base_price == min_price:
+                        if all(p == min_price for p in all_prices):
+                            status = 'Cheapest (Shared)'
+                        else:
+                            status = 'Cheapest'
+                    elif base_price == max_price:
+                        if all(p == max_price for p in all_prices):
+                            status = 'Most Expensive (Shared)'
+                        else:
+                            status = 'Most Expensive'
+                
+                # Write row data
+                ws.cell(row=row_num, column=1, value=bp["name"] or '')
+                ws.cell(row=row_num, column=2, value=bp["sku"] or '')
+                ws.cell(row=row_num, column=3, value=bp["brand"] or '')
+                ws.cell(row=row_num, column=4, value=bp["category"] or '')
+                
+                # Thai Watsadu price with hyperlink and color
+                if base_price:
+                    cell = ws.cell(row=row_num, column=5, value=base_price)
+                    if base_link:
+                        cell.hyperlink = base_link
+                    
+                    # Apply color based on price comparison
+                    if len(all_prices) > 1:
+                        if base_price == min_price:
+                            # Cheapest
+                            if all(p == min_price for p in all_prices):
+                                # Same as others (light green)
+                                cell.fill = light_green_fill
+                            else:
+                                # Unique cheapest (dark green)
+                                cell.fill = dark_green_fill
+                                cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
+                        elif base_price == max_price:
+                            # Most expensive
+                            if all(p == max_price for p in all_prices):
+                                # Same as others (light red)
+                                cell.fill = light_red_fill
+                            else:
+                                # Unique most expensive (dark red)
+                                cell.fill = dark_red_fill
+                                cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
+                        else:
+                            # Keep default hyperlink font
+                            if base_link:
+                                cell.font = link_font
+                    elif base_link:
+                        cell.font = link_font
+                
+                # Retailer prices with hyperlinks and colors
+                for col_offset, retailer_name in enumerate(retailer_order):
+                    col_num = 6 + col_offset
+                    data = get_retailer_data(retailer_data, retailer_name)
+                    if data and data["price"]:
+                        cell = ws.cell(row=row_num, column=col_num, value=data["price"])
+                        
+                        # Apply color based on price comparison
+                        if len(all_prices) > 1:
+                            # Check if same as TWD (grey)
+                            if base_price and data["price"] == base_price:
+                                cell.fill = grey_fill
+                            elif data["price"] == min_price:
+                                # Cheapest
+                                if all(p == min_price for p in all_prices):
+                                    # Same as others (light green)
+                                    cell.fill = light_green_fill
+                                else:
+                                    # Unique cheapest (dark green)
+                                    cell.fill = dark_green_fill
+                                    cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
+                            elif data["price"] == max_price:
+                                # Most expensive
+                                if all(p == max_price for p in all_prices):
+                                    # Same as others (light red)
+                                    cell.fill = light_red_fill
+                                else:
+                                    # Unique most expensive (dark red)
+                                    cell.fill = dark_red_fill
+                                    cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
+                            else:
+                                # Middle price - keep default
+                                if data["link"]:
+                                    cell.hyperlink = data["link"]
+                                    cell.font = link_font
+                        else:
+                            if data["link"]:
+                                cell.hyperlink = data["link"]
+                                cell.font = link_font
+                        
+                        # Set hyperlink if not already set by color logic
+                        if data["link"] and not cell.hyperlink:
+                            cell.hyperlink = data["link"]
+                
+                # Status
+                ws.cell(row=row_num, column=11, value=status)
+                
+                row_num += 1
+            
+            # Auto-adjust column widths
+            for col_num, header in enumerate(headers, 1):
+                ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max(len(header) + 2, 12)
+            
+            # Save to BytesIO
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            
+            return Response(
+                content=output.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={group['name']}_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
+            )
+
+
+@app.get("/api/watchlist/products/available")
+def get_available_products_for_sku_groups(
+    search: str = "",
+    category: str = "",
+    brand: str = "",
+    limit: int = 50,
+    user: dict = Depends(get_current_user)
+):
+    """Get available products that can be added to SKU watchlist groups"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT DISTINCT 
+                    p.sku, 
+                    p.name,
+                    p.brand,
+                    p.category,
+                    p.current_price,
+                    p.image
+                FROM products p
+                WHERE p.retailer_id = 'twd' 
+                AND p.sku IS NOT NULL 
+                AND p.sku != ''
+            """
+            params = []
+            
+            if search:
+                query += " AND (p.name ILIKE %s OR p.sku ILIKE %s)"
+                search_param = f"%{search}%"
+                params.extend([search_param, search_param])
+            
+            # Parse comma-separated values for multi-select filters
+            category_list = [c.strip() for c in category.split(',')] if category else []
+            brand_list = [b.strip() for b in brand.split(',')] if brand else []
+            
+            if category_list:
+                placeholders = ','.join(['%s'] * len(category_list))
+                query += f" AND p.category IN ({placeholders})"
+                params.extend(category_list)
+            
+            if brand_list:
+                placeholders = ','.join(['%s'] * len(brand_list))
+                query += f" AND p.brand IN ({placeholders})"
+                params.extend(brand_list)
+            
+            query += " ORDER BY p.name LIMIT %s"
+            params.append(limit)
+            
+            cur.execute(query, params)
+            products = cur.fetchall()
+            
+            return {
+                "products": [
+                    {
+                        "sku": row["sku"],
+                        "name": row["name"],
+                        "brand": row["brand"],
+                        "category": row["category"],
+                        "price": float(row["current_price"]) if row["current_price"] else None,
+                        "image_url": row["image"]
+                    }
+                    for row in products
+                ],
+                "total": len(products)
+            }
+
+
+# ============== OLD User-Specific Watchlist (Deprecated) ==============
 
 @app.get("/api/watchlist")
 def get_watchlist(user: dict = Depends(get_current_user)):
@@ -896,6 +1719,14 @@ def export_products(
             # Hyperlink style (blue, underlined)
             link_font = Font(color="0563C1", underline="single")
 
+            # Color fills for price comparison (pastel)
+            dark_green_fill = PatternFill(start_color="00C057", end_color="00C057", fill_type="solid")
+            light_green_fill = PatternFill(start_color="ABDB77", end_color="ABDB77", fill_type="solid")
+            dark_red_fill = PatternFill(start_color="D16969", end_color="D16969", fill_type="solid")
+            light_red_fill = PatternFill(start_color="DB9D9D", end_color="DB9D9D", fill_type="solid")
+            grey_fill = PatternFill(start_color="E8E8E8", end_color="E8E8E8", fill_type="solid")
+            white_font = Font(color="FFFFFF", underline="single")
+
             # Process each product
             row_num = 2
             for bp in base_products:
@@ -925,22 +1756,33 @@ def export_products(
                         "link": match["link"] or ''
                     }
 
+                # Collect all prices for comparison
+                all_prices = []
+                if base_price:
+                    all_prices.append(base_price)
+                for rd in retailer_data.values():
+                    if rd["price"]:
+                        all_prices.append(rd["price"])
+
+                # Determine min and max prices
+                min_price = min(all_prices) if all_prices else None
+                max_price = max(all_prices) if all_prices else None
+
                 # Determine status
                 status = ''
                 if base_price:
-                    all_prices = [base_price]
-                    for rd in retailer_data.values():
-                        if rd["price"]:
-                            all_prices.append(rd["price"])
-
-                    min_price = min(all_prices)
-                    if base_price == min_price and len(all_prices) > 1:
+                    if len(all_prices) == 1:
+                        status = 'No Competitor Data'
+                    elif base_price == min_price:
                         if all(p == min_price for p in all_prices):
-                            status = 'same'
+                            status = 'Cheapest (Shared)'
                         else:
-                            status = 'cheapest'
-                    elif base_price > min_price:
-                        status = 'higher'
+                            status = 'Cheapest'
+                    elif base_price == max_price:
+                        if all(p == max_price for p in all_prices):
+                            status = 'Most Expensive (Shared)'
+                        else:
+                            status = 'Most Expensive'
 
                 # Write row data
                 ws.cell(row=row_num, column=1, value=bp["name"] or '')
@@ -948,22 +1790,82 @@ def export_products(
                 ws.cell(row=row_num, column=3, value=bp["brand"] or '')
                 ws.cell(row=row_num, column=4, value=bp["category"] or '')
 
-                # Thai Watsadu price with hyperlink (column 5)
+                # Thai Watsadu price with hyperlink (column 5) and color
                 if base_price:
                     cell = ws.cell(row=row_num, column=5, value=base_price)
                     if base_link:
                         cell.hyperlink = base_link
+                    
+                    # Apply color based on price comparison
+                    if len(all_prices) > 1:
+                        if base_price == min_price:
+                            # Cheapest
+                            if all(p == min_price for p in all_prices):
+                                # Same as others (light green)
+                                cell.fill = light_green_fill
+                            else:
+                                # Unique cheapest (dark green)
+                                cell.fill = dark_green_fill
+                                cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
+                        elif base_price == max_price:
+                            # Most expensive
+                            if all(p == max_price for p in all_prices):
+                                # Same as others (light red)
+                                cell.fill = light_red_fill
+                            else:
+                                # Unique most expensive (dark red)
+                                cell.fill = dark_red_fill
+                                cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
+                        else:
+                            # Keep default hyperlink font
+                            if base_link:
+                                cell.font = link_font
+                    elif base_link:
                         cell.font = link_font
 
-                # Retailer prices with hyperlinks (columns 6-10)
+                # Retailer prices with hyperlinks (columns 6-10) and colors
                 for col_offset, retailer_name in enumerate(retailer_order):
                     col_num = 6 + col_offset
                     data = get_retailer_data(retailer_data, retailer_name)
                     if data and data["price"]:
                         cell = ws.cell(row=row_num, column=col_num, value=data["price"])
-                        if data["link"]:
+                        
+                        # Apply color based on price comparison
+                        if len(all_prices) > 1:
+                            # Check if same as TWD (grey)
+                            if base_price and data["price"] == base_price:
+                                cell.fill = grey_fill
+                            elif data["price"] == min_price:
+                                # Cheapest
+                                if all(p == min_price for p in all_prices):
+                                    # Same as others (light green)
+                                    cell.fill = light_green_fill
+                                else:
+                                    # Unique cheapest (dark green)
+                                    cell.fill = dark_green_fill
+                                    cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
+                            elif data["price"] == max_price:
+                                # Most expensive
+                                if all(p == max_price for p in all_prices):
+                                    # Same as others (light red)
+                                    cell.fill = light_red_fill
+                                else:
+                                    # Unique most expensive (dark red)
+                                    cell.fill = dark_red_fill
+                                    cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
+                            else:
+                                # Middle price - keep default
+                                if data["link"]:
+                                    cell.hyperlink = data["link"]
+                                    cell.font = link_font
+                        else:
+                            if data["link"]:
+                                cell.hyperlink = data["link"]
+                                cell.font = link_font
+                        
+                        # Set hyperlink if not already set by color logic
+                        if data["link"] and not cell.hyperlink:
                             cell.hyperlink = data["link"]
-                            cell.font = link_font
 
                 # Status (column 11)
                 ws.cell(row=row_num, column=11, value=status)

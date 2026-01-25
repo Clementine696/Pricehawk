@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle, Eye } from 'lucide-react';
+import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle, Eye, BookmarkCheck } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 const menuItems = [
@@ -24,9 +24,14 @@ const menuItems = [
     icon: PlusCircle,
   },
   {
-    href: '/watchlist',
-    label: 'Watchlist',
+    href: '/watchlist-category',
+    label: 'Watchlist Category',
     icon: Eye,
+  },
+  {
+    href: '/watchlist-sku',
+    label: 'Watchlist SKU',
+    icon: BookmarkCheck,
   },
     {
     href: '/comparison',

@@ -490,6 +490,32 @@ UPDATE_PARALLEL=3
 - Processes all products once per day
 - Run during off-peak hours (e.g., 2 AM)
 
+
+3. **How It Works**
+   - Fetches N oldest products (by `last_updated_at ASC NULLS FIRST`)
+   - Skips products with 3+ consecutive failures
+   - Splits work among parallel workers
+   - Updates prices and records failures
+   - Cleans up browser resources to prevent memory leaks
+
+### Recommended Configurations
+
+**Hourly Cron (Incremental)**
+```env
+UPDATE_LIMIT=100
+UPDATE_PARALLEL=3
+```
+- Processes 100 oldest products each hour
+- Good for keeping prices fresh without overloading
+
+**Daily Cron (Full Update)**
+```env
+UPDATE_LIMIT=           # No limit - process all
+UPDATE_PARALLEL=3
+```
+- Processes all products once per day
+- Run during off-peak hours (e.g., 2 AM)
+
 ---
 
 ## Recent Changes (January 2026)

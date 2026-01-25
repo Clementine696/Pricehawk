@@ -387,6 +387,7 @@ function ProductsContent() {
     setSelectedBrands([]);
     setVerificationFilter('');
     setRetailerFilter('');
+    // setWatchedOnly(false);
     setPage(1);
     router.push('/products', { scroll: false });
     // Don't call fetchProducts() here - the useEffect will trigger it when state changes

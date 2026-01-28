@@ -5,18 +5,18 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, TrendingUp, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer
-} from 'recharts';
+// import {
+//   LineChart,
+//   Line,
+//   XAxis,
+//   YAxis,
+//   CartesianGrid,
+//   Tooltip,
+//   Legend,
+//   ResponsiveContainer
+// } from 'recharts';
 import { trackProductView, trackMatchVerification } from '@/lib/analytics';
 
 interface Product {
@@ -50,22 +50,22 @@ interface ProductDetailData {
   total_matches: number;
 }
 
-interface PriceHistoryPoint {
-  price: number;
-  date: string;
-}
+// interface PriceHistoryPoint {
+//   price: number;
+//   date: string;
+// }
 
-interface PriceHistoryProduct {
-  product_id: number;
-  name: string;
-  retailer: string;
-  history: PriceHistoryPoint[];
-}
+// interface PriceHistoryProduct {
+//   product_id: number;
+//   name: string;
+//   retailer: string;
+//   history: PriceHistoryPoint[];
+// }
 
-interface PriceHistoryData {
-  base_product: PriceHistoryProduct;
-  matched_products: PriceHistoryProduct[];
-}
+// interface PriceHistoryData {
+//   base_product: PriceHistoryProduct;
+//   matched_products: PriceHistoryProduct[];
+// }
 
 interface WatchlistGroup {
   group_id: number;
@@ -193,9 +193,9 @@ export default function ProductDetailPage() {
   const [collapsedRetailers, setCollapsedRetailers] = useState<Set<string>>(new Set());
   const [isRescraping, setIsRescraping] = useState(false);
   const [rescrapeResult, setRescrapeResult] = useState<{success: boolean; message: string} | null>(null);
-  const [priceHistory, setPriceHistory] = useState<PriceHistoryData | null>(null);
-  const [historyDays, setHistoryDays] = useState<number>(30);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  // const [priceHistory, setPriceHistory] = useState<PriceHistoryData | null>(null);
+  // const [historyDays, setHistoryDays] = useState<number>(30);
+  // const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [watchlistGroups, setWatchlistGroups] = useState<WatchlistGroup[]>([]);
   const [showAddWatchlistModal, setShowAddWatchlistModal] = useState(false);
   const [allWatchlistGroups, setAllWatchlistGroups] = useState<{group_id: number; name: string}[]>([]);
@@ -209,26 +209,26 @@ export default function ProductDetailPage() {
     }
   }, [productId]);
 
-  useEffect(() => {
-    if (productId) {
-      fetchPriceHistory();
-    }
-  }, [productId, historyDays]);
+  // useEffect(() => {
+  //   if (productId) {
+  //     fetchPriceHistory();
+  //   }
+  // }, [productId, historyDays]);
 
-  const fetchPriceHistory = async () => {
-    setIsLoadingHistory(true);
-    try {
-      const response = await apiFetch(`/api/products/${productId}/price-history?days=${historyDays}`);
-      if (response.ok) {
-        const result = await response.json();
-        setPriceHistory(result);
-      }
-    } catch (err) {
-      console.error('Error fetching price history:', err);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
+  // const fetchPriceHistory = async () => {
+  //   setIsLoadingHistory(true);
+  //   try {
+  //     const response = await apiFetch(`/api/products/${productId}/price-history?days=${historyDays}`);
+  //     if (response.ok) {
+  //       const result = await response.json();
+  //       setPriceHistory(result);
+  //     }
+  //   } catch (err) {
+  //     console.error('Error fetching price history:', err);
+  //   } finally {
+  //     setIsLoadingHistory(false);
+  //   }
+  // };
 
   const fetchWatchlistGroups = async () => {
     try {
@@ -888,8 +888,8 @@ export default function ProductDetailPage() {
           </div>
         </div>
 
-        {/* Price History Chart */}
-        <div className="bg-white rounded-lg shadow p-6">
+        {/* Price History Chart - Commented out */}
+        {/* <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-cyan-500" />
@@ -997,7 +997,7 @@ export default function ProductDetailPage() {
               No price history data available for the selected period
             </div>
           )}
-        </div>
+        </div> */}
       </div>
 
       {/* Add to Watchlist Modal */}

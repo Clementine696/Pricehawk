@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(move AI_AGENT_INSTRUCTIONS.md ai_sum )",
+      "Bash(move:*)",
+      "Bash(wc:*)"
+    ]
+  }
+}

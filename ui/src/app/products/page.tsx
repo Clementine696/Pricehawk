@@ -182,6 +182,7 @@ function SingleSelect({
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
+        title={selectedOption?.label || placeholder}
       >
         <span className={`truncate ${!value ? 'text-gray-500' : 'text-gray-900'}`}>
           {selectedOption?.label || placeholder}
@@ -286,6 +287,7 @@ function ProductsContent() {
   const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [brands, setBrands] = useState<string[]>([]);
+  const [watchlistGroups, setWatchlistGroups] = useState<{ group_id: number; name: string }[]>([]);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -300,6 +302,7 @@ function ProductsContent() {
   );
   const [verificationFilter, setVerificationFilter] = useState(searchParams.get('verified') || '');
   const [retailerFilter, setRetailerFilter] = useState(searchParams.get('retailer') || '');
+  const [watchlistFilter, setWatchlistFilter] = useState(searchParams.get('watchlist') || '');
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [isExporting, setIsExporting] = useState(false);
   const pageSize = 10;
@@ -322,6 +325,7 @@ function ProductsContent() {
       brand: selectedBrands.join(','),
       verified: verificationFilter,
       retailer: retailerFilter,
+      watchlist: watchlistFilter,
       page,
       ...newParams
     };
@@ -337,9 +341,29 @@ function ProductsContent() {
     router.push(queryString ? `?${queryString}` : '/products', { scroll: false });
   };
 
+  // Fetch watchlist groups on mount
+  useEffect(() => {
+    fetchWatchlistGroups();
+  }, []);
+
   useEffect(() => {
     fetchProducts();
-  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter]);
+  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter, watchlistFilter]);
+
+  const fetchWatchlistGroups = async () => {
+    try {
+      const response = await apiFetch('/api/watchlist/sku-groups');
+      if (!response.ok) throw new Error('Failed to fetch watchlist groups');
+      const data = await response.json();
+      // Sort groups alphabetically by name
+      const sortedGroups = (data.groups || []).sort((a: { name: string }, b: { name: string }) =>
+        a.name.localeCompare(b.name)
+      );
+      setWatchlistGroups(sortedGroups);
+    } catch (error) {
+      console.error('Error fetching watchlist groups:', error);
+    }
+  };
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -353,6 +377,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
+      if (watchlistFilter) params.append('watchlist_group_id', watchlistFilter);
 
 
       const response = await apiFetch(`/api/products?${params}`);
@@ -387,7 +412,7 @@ function ProductsContent() {
     setSelectedBrands([]);
     setVerificationFilter('');
     setRetailerFilter('');
-    // setWatchedOnly(false);
+    setWatchlistFilter('');
     setPage(1);
     router.push('/products', { scroll: false });
     // Don't call fetchProducts() here - the useEffect will trigger it when state changes
@@ -413,6 +438,7 @@ function ProductsContent() {
     const setters: Record<string, (v: string) => void> = {
       verified: setVerificationFilter,
       retailer: setRetailerFilter,
+      watchlist: setWatchlistFilter,
     };
     setters[filterName]?.(value);
     setPage(1);
@@ -437,6 +463,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
+      if (watchlistFilter) params.append('watchlist_group_id', watchlistFilter);
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {
@@ -601,6 +628,13 @@ function ProductsContent() {
               onChange={(value) => handleFilterChange('retailer', value)}
               placeholder="All Retailers"
               className="w-[150px]"
+            />
+            <SingleSelect
+              options={watchlistGroups.map(g => ({ value: g.group_id.toString(), label: g.name }))}
+              value={watchlistFilter}
+              onChange={(value) => handleFilterChange('watchlist', value)}
+              placeholder="Watchlist"
+              className="w-[180px]"
             />
             <button
               onClick={handleReset}

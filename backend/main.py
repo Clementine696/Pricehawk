@@ -486,11 +486,11 @@ def get_sku_watchlist_groups(user: dict = Depends(get_current_user)):
     """Get all SKU-based watchlist groups with their products"""
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Get all groups
+            # Get all groups sorted alphabetically
             cur.execute("""
                 SELECT group_id, name, created_at, updated_at
                 FROM watchlist_sku_groups
-                ORDER BY updated_at DESC
+                ORDER BY name ASC
             """)
             groups = cur.fetchall()
             
@@ -1219,6 +1219,7 @@ def get_products(
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
     watched_only: Optional[bool] = False,
+    watchlist_group_id: Optional[int] = None,
     user: dict = Depends(get_current_user)
 ):
     """Get Thai Watsadu products with price comparison across retailers"""
@@ -1373,6 +1374,13 @@ def get_products(
                         SELECT category FROM user_category_watchlist WHERE user_id = %s
                     )"""
                     params.append(user_id)
+
+            # Filter by watchlist group (SKU-based watchlist)
+            if watchlist_group_id:
+                query += """ AND p.sku IN (
+                    SELECT sku FROM watchlist_sku_group_products WHERE group_id = %s
+                )"""
+                params.append(watchlist_group_id)
 
             # Get total count
             count_query = query.replace("SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link", "SELECT COUNT(*)")
@@ -1559,6 +1567,7 @@ def export_products(
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
     watched_only: Optional[bool] = False,
+    watchlist_group_id: Optional[int] = None,
     user: dict = Depends(get_current_user)
 ):
     """Export products to Excel with price comparison across retailers (prices are hyperlinked to product pages)"""
@@ -1672,6 +1681,13 @@ def export_products(
                         SELECT category FROM user_category_watchlist WHERE user_id = %s
                     )"""
                     params.append(user_id)
+
+            # Filter by watchlist group (SKU-based watchlist)
+            if watchlist_group_id:
+                query += """ AND p.sku IN (
+                    SELECT sku FROM watchlist_sku_group_products WHERE group_id = %s
+                )"""
+                params.append(watchlist_group_id)
 
             query += " ORDER BY p.product_id"
 

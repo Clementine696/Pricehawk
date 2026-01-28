@@ -675,6 +675,57 @@ CREATE TABLE watchlist_sku_group_products (
 - Product display uses monospace font for SKU alignment
 - Export generates timestamped filename: `{group_name}_export_YYYYMMDD_HHMMSS.xlsx`
 
+### Recent UI Updates (January 2026)
+
+#### Import Results Modal Redesign
+Updated the Excel import results modal with cleaner design ([page.tsx:596-779](ui/src/app/watchlist-sku/page.tsx#L596-L779)):
+- **Styling Improvements**:
+  - Border colors changed to `border-gray-300` for better definition
+  - White backgrounds for headers and statistics sections
+  - Gray-50 background for main content area
+  - Rounded-2xl card with shadow-sm for modern look
+
+- **Equal Height Tables**:
+  - Both "Groups Updated" and "SKUs Added" tables set to `h-[300px]`
+  - Scrollable overflow for consistent layout
+
+- **Unified Button Group**:
+  - Combined "Export" and "Expand All" buttons at SKUs Not Found section
+  - Single border with separator between buttons
+  - Aligned at same level as section header
+
+- **Text Updates**:
+  - Changed "ไฟล์ถูกประมวลผลเรียบร้อยแล้ว" to English: "File has been processed successfully"
+
+#### Custom Sidebar Icon
+Added custom list-checks SVG icon for Watchlist SKU ([Sidebar.tsx:10-30](ui/src/components/layout/Sidebar.tsx#L10-L30)):
+```typescript
+const ListChecks: React.FC<{ className?: string }> = ({ className }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+       fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="m3 17 2 2 4-4"></path>
+    <path d="m3 7 2 2 4-4"></path>
+    <path d="M13 6h8"></path>
+    <path d="M13 12h8"></path>
+    <path d="M13 18h8"></path>
+  </svg>
+);
+```
+
+#### Comparison Page Search Enhancement
+Enhanced product search to support both name and SKU ([page.tsx:138-145](ui/src/app/comparison/page.tsx#L138-L145)):
+```typescript
+const filteredProducts = products.filter((product) => {
+  const lowerSearch = searchTerm.toLowerCase();
+  return (
+    product.base_product.name?.toLowerCase().includes(lowerSearch) ||
+    product.base_product.sku?.toLowerCase().includes(lowerSearch)
+  );
+});
+```
+- Placeholder updated to "Search by name or SKU..."
+- Case-insensitive search across both fields
+
 ---
 
 ## Future Features (Planned)

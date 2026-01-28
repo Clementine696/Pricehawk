@@ -422,42 +422,123 @@ def add_product_to_sku_group(group_id: int, data: dict, user: dict = Depends(get
                 raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/watchlist/sku-groups/test-upload")
+async def test_file_upload(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user)
+):
+    """Test endpoint to verify file upload is working"""
+    print(f"\n{'='*60}")
+    print(f"TEST UPLOAD ENDPOINT HIT")
+    print(f"{'='*60}")
+
+    try:
+        print(f"User: {user.get('username', 'Unknown')}")
+        print(f"File received: {file.filename}")
+        print(f"Content type: {file.content_type}")
+
+        # Read file to get size
+        contents = await file.read()
+        file_size = len(contents)
+
+        print(f"File size: {file_size} bytes ({file_size / 1024:.2f} KB, {file_size / 1024 / 1024:.2f} MB)")
+
+        return {
+            "success": True,
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "size_bytes": file_size,
+            "size_kb": round(file_size / 1024, 2),
+            "size_mb": round(file_size / 1024 / 1024, 2),
+            "message": "File upload test successful"
+        }
+    except Exception as e:
+        print(f"ERROR in test upload: {e}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Test upload failed: {str(e)}")
+
+
+@app.options("/api/watchlist/sku-groups/import-excel")
+async def import_excel_options():
+    """Handle OPTIONS request for CORS pre-flight"""
+    return Response(status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    })
+
+
 @app.post("/api/watchlist/sku-groups/import-excel")
 async def import_excel_to_sku_groups(
     file: UploadFile = File(...),
     user: dict = Depends(get_current_user)
 ):
     """Import Excel file to create SKU watchlist groups based on S-dept column"""
-    
+
+    print(f"\n{'='*60}")
+    print(f"ENDPOINT HIT: /api/watchlist/sku-groups/import-excel")
+    print(f"Timestamp: {datetime.now().isoformat()}")
+    print(f"User: {user.get('username', 'Unknown')} (ID: {user.get('user_id', 'N/A')})")
+    print(f"{'='*60}")
+
+    # Check if file was received
+    if not file:
+        print(f"ERROR: No file received in request")
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    print(f"File object received successfully")
+    print(f"File content_type: {file.content_type}")
+    print(f"File filename: {file.filename}")
+
     if not file.filename.endswith(('.xlsx', '.xls')):
+        print(f"ERROR: Invalid file type - {file.filename}")
         raise HTTPException(status_code=400, detail="File must be an Excel file (.xlsx or .xls)")
-    
+
     try:
         # Read Excel file
+        print(f"Reading Excel file...")
         contents = await file.read()
+        file_size = len(contents)
+        print(f"File size: {file_size} bytes ({file_size / 1024:.2f} KB)")
+
+        print(f"Parsing Excel with pandas...")
         df = pd.read_excel(io.BytesIO(contents))
+        print(f"Excel parsed successfully. Total rows: {len(df)}, Columns: {list(df.columns)}")
         
         # Validate required columns
+        print(f"Validating columns...")
         required_columns = ['SKU_Number', 'S-dept']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
+            print(f"ERROR: Missing columns: {missing_columns}")
+            print(f"Available columns: {list(df.columns)}")
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Missing required columns: {', '.join(missing_columns)}. Expected columns: SKU_Number, PRNAME, Brand, S-dept, Dept"
             )
-        
+        print(f"Column validation passed")
+
         # Remove rows with missing SKU_Number or S-dept
+        rows_before = len(df)
         df = df.dropna(subset=['SKU_Number', 'S-dept'])
-        
+        rows_after = len(df)
+        print(f"Removed {rows_before - rows_after} rows with missing SKU_Number or S-dept")
+
         if len(df) == 0:
+            print(f"ERROR: No valid data after cleanup")
             raise HTTPException(status_code=400, detail="No valid data found in Excel file")
-        
+
         # Convert SKU_Number to string and clean
+        print(f"Converting and cleaning data...")
         df['SKU_Number'] = df['SKU_Number'].astype(str).str.strip()
         df['S-dept'] = df['S-dept'].astype(str).str.strip()
-        
+        print(f"Data conversion complete")
+
         # Group by S-dept
+        print(f"Grouping by S-dept...")
         grouped = df.groupby('S-dept')['SKU_Number'].apply(list).to_dict()
+        print(f"Found {len(grouped)} unique S-dept groups")
         
         results = {
             "groups_created": [],
@@ -467,27 +548,44 @@ async def import_excel_to_sku_groups(
             "total_rows": len(df),
             "groups_processed": len(grouped)
         }
-        
+
+        print(f"------------------------------------------------------------")
+        print(f"Starting database operations...")
+        print(f"Opening database connection...")
+
         with get_db() as conn:
             with conn.cursor() as cur:
+                print(f"Database connection established successfully")
+                print(f"Processing {len(grouped)} S-dept groups...")
+                print(f"------------------------------------------------------------")
+
+                group_counter = 0
                 for s_dept, skus in grouped.items():
+                    group_counter += 1
+                    print(f"\n[GROUP {group_counter}/{len(grouped)}] Processing S-dept: '{s_dept}'")
+
                     # Remove duplicates
+                    skus_before_dedup = len(skus)
                     skus = list(set(skus))
-                    
+                    print(f"  - SKUs in this group: {len(skus)} (removed {skus_before_dedup - len(skus)} duplicates)")
+
                     # Use S-dept name directly as group name
                     group_name = s_dept
-                    
+
                     # Check if group exists
+                    print(f"  - Checking if group '{group_name}' exists...")
                     cur.execute("""
                         SELECT group_id FROM watchlist_sku_groups WHERE name = %s
                     """, (group_name,))
                     existing_group = cur.fetchone()
-                    
+
                     if existing_group:
                         group_id = existing_group['group_id']
+                        print(f"  - Group EXISTS (group_id: {group_id}), will UPDATE")
                         results["groups_updated"].append(s_dept)
                     else:
                         # Create new group
+                        print(f"  - Group DOES NOT EXIST, creating new group...")
                         try:
                             cur.execute("""
                                 INSERT INTO watchlist_sku_groups (name)
@@ -495,23 +593,33 @@ async def import_excel_to_sku_groups(
                                 RETURNING group_id
                             """, (group_name,))
                             group_id = cur.fetchone()['group_id']
+                            print(f"  - Group CREATED successfully (group_id: {group_id})")
                             results["groups_created"].append(s_dept)
                         except Exception as e:
-                            print(f"Error creating group {s_dept}: {e}")
+                            print(f"  - ERROR creating group '{s_dept}': {e}")
+                            print(f"  - Skipping this group due to error")
                             continue
-                    
+
                     # Verify which SKUs exist in products table
+                    print(f"  - Validating {len(skus)} SKUs against products table...")
                     cur.execute("""
-                        SELECT DISTINCT sku FROM products 
+                        SELECT DISTINCT sku FROM products
                         WHERE sku = ANY(%s) AND retailer_id = 'twd'
                     """, (skus,))
                     valid_skus = [row['sku'] for row in cur.fetchall()]
                     invalid_skus = [sku for sku in skus if sku not in valid_skus]
-                    
+
+                    print(f"  - Validation complete: {len(valid_skus)} valid, {len(invalid_skus)} not found in products")
+                    if invalid_skus and len(invalid_skus) <= 10:
+                        print(f"  - Invalid SKUs: {invalid_skus}")
+                    elif invalid_skus:
+                        print(f"  - Invalid SKUs (first 10): {invalid_skus[:10]}")
+
                     added_count = 0
                     already_exists_count = 0
-                    
+
                     # Add valid SKUs to group
+                    print(f"  - Adding {len(valid_skus)} valid SKUs to group...")
                     for sku in valid_skus:
                         try:
                             cur.execute("""
@@ -524,33 +632,72 @@ async def import_excel_to_sku_groups(
                             else:
                                 already_exists_count += 1
                         except Exception as e:
-                            print(f"Error adding SKU {sku} to group {s_dept}: {e}")
+                            print(f"  - ERROR adding SKU '{sku}' to group '{s_dept}': {e}")
                             continue
-                    
+
+                    print(f"  - SKU insertion complete: {added_count} new, {already_exists_count} already existed")
+
                     # Update group timestamp
+                    print(f"  - Updating group timestamp...")
                     cur.execute("""
                         UPDATE watchlist_sku_groups
                         SET updated_at = CURRENT_TIMESTAMP
                         WHERE group_id = %s
                     """, (group_id,))
-                    
+                    print(f"  - Group timestamp updated")
+
                     results["skus_added"][s_dept] = {
                         "added": added_count,
                         "already_exists": already_exists_count,
                         "total_valid": len(valid_skus)
                     }
-                    
+
                     if invalid_skus:
                         results["skus_not_found"][s_dept] = invalid_skus
-                
+
+                print(f"\n------------------------------------------------------------")
+                print(f"All groups processed, committing transaction...")
                 conn.commit()
-        
+                print(f"Transaction committed successfully")
+
+        print(f"\n============================================================")
+        print(f"=== EXCEL IMPORT COMPLETED SUCCESSFULLY ===")
+        print(f"============================================================")
+        print(f"Summary:")
+        print(f"  - Total rows processed: {results['total_rows']}")
+        print(f"  - S-dept groups processed: {results['groups_processed']}")
+        print(f"  - Groups created: {len(results['groups_created'])}")
+        print(f"  - Groups updated: {len(results['groups_updated'])}")
+
+        total_added = sum(info['added'] for info in results['skus_added'].values())
+        total_already_exists = sum(info['already_exists'] for info in results['skus_added'].values())
+        total_not_found = sum(len(skus) for skus in results['skus_not_found'].values())
+
+        print(f"  - SKUs added: {total_added}")
+        print(f"  - SKUs already existed: {total_already_exists}")
+        print(f"  - SKUs not found in products: {total_not_found}")
+        print(f"============================================================")
+
         return results
-        
+
     except pd.errors.EmptyDataError:
+        print(f"ERROR: Excel file is empty (pd.errors.EmptyDataError)")
         raise HTTPException(status_code=400, detail="Excel file is empty")
+    except HTTPException as he:
+        # Re-raise HTTP exceptions (like column validation errors)
+        print(f"ERROR: HTTPException - {he.detail}")
+        raise
     except Exception as e:
-        print(f"Error importing Excel: {e}")
+        print(f"============================================================")
+        print(f"=== EXCEL IMPORT FAILED ===")
+        print(f"============================================================")
+        print(f"ERROR: Unexpected error during Excel import")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error message: {str(e)}")
+        print(f"Error details:")
+        import traceback
+        print(traceback.format_exc())
+        print(f"============================================================")
         raise HTTPException(status_code=500, detail=f"Error processing Excel file: {str(e)}")
 
 

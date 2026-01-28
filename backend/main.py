@@ -422,6 +422,53 @@ def add_product_to_sku_group(group_id: int, data: dict, user: dict = Depends(get
                 raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/watchlist/sku-groups/test-upload")
+async def test_file_upload(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user)
+):
+    """Test endpoint to verify file upload is working"""
+    print(f"\n{'='*60}")
+    print(f"TEST UPLOAD ENDPOINT HIT")
+    print(f"{'='*60}")
+
+    try:
+        print(f"User: {user.get('username', 'Unknown')}")
+        print(f"File received: {file.filename}")
+        print(f"Content type: {file.content_type}")
+
+        # Read file to get size
+        contents = await file.read()
+        file_size = len(contents)
+
+        print(f"File size: {file_size} bytes ({file_size / 1024:.2f} KB, {file_size / 1024 / 1024:.2f} MB)")
+
+        return {
+            "success": True,
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "size_bytes": file_size,
+            "size_kb": round(file_size / 1024, 2),
+            "size_mb": round(file_size / 1024 / 1024, 2),
+            "message": "File upload test successful"
+        }
+    except Exception as e:
+        print(f"ERROR in test upload: {e}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Test upload failed: {str(e)}")
+
+
+@app.options("/api/watchlist/sku-groups/import-excel")
+async def import_excel_options():
+    """Handle OPTIONS request for CORS pre-flight"""
+    return Response(status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    })
+
+
 @app.post("/api/watchlist/sku-groups/import-excel")
 async def import_excel_to_sku_groups(
     file: UploadFile = File(...),

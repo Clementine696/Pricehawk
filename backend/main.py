@@ -274,211 +274,6 @@ def get_active_sessions(user: dict = Depends(get_current_user)):
 
 # ============== Watchlist API (Global Category Groups) ==============
 
-@app.get("/api/watchlist/groups")
-def get_watchlist_groups(user: dict = Depends(get_current_user)):
-    """Get all watchlist groups with their categories"""
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # Get all groups
-            cur.execute("""
-                SELECT 
-                    wg.group_id,
-                    wg.name,
-                    wg.display_name,
-                    wg.description,
-                    wg.created_at,
-                    wg.updated_at
-                FROM watchlist_groups wg
-                ORDER BY wg.display_name
-            """)
-            groups = cur.fetchall()
-
-            result = []
-            for group in groups:
-                # Get categories for this group
-                cur.execute("""
-                    SELECT wgc.category, wgc.added_at,
-                           COUNT(DISTINCT p.product_id) as product_count
-                    FROM watchlist_group_categories wgc
-                    LEFT JOIN products p ON p.category = wgc.category AND p.retailer_id = 'twd'
-                    WHERE wgc.group_id = %s
-                    GROUP BY wgc.category, wgc.added_at
-                    ORDER BY wgc.category
-                """, (group["group_id"],))
-                categories = cur.fetchall()
-
-                result.append({
-                    "group_id": group["group_id"],
-                    "name": group["name"],
-                    "display_name": group["display_name"],
-                    "description": group["description"],
-                    "categories": [
-                        {
-                            "category": cat["category"],
-                            "product_count": cat["product_count"],
-                            "added_at": cat["added_at"].isoformat() if cat["added_at"] else None
-                        }
-                        for cat in categories
-                    ],
-                    "total_categories": len(categories),
-                    "created_at": group["created_at"].isoformat() if group["created_at"] else None
-                })
-
-            return {"groups": result, "total": len(result)}
-
-
-@app.post("/api/watchlist/groups")
-def create_watchlist_group(data: dict, user: dict = Depends(get_current_user)):
-    """Create a new watchlist group"""
-    name = data.get("name")
-    display_name = data.get("display_name")
-    description = data.get("description", "")
-
-    if not name or not display_name:
-        raise HTTPException(status_code=400, detail="Name and display_name are required")
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            try:
-                cur.execute("""
-                    INSERT INTO watchlist_groups (name, display_name, description)
-                    VALUES (%s, %s, %s)
-                    RETURNING group_id, name, display_name, description
-                """, (name, display_name, description))
-                result = cur.fetchone()
-                conn.commit()
-
-                return {
-                    "message": "Watchlist group created",
-                    "group": dict(result)
-                }
-            except Exception as e:
-                conn.rollback()
-                if "unique" in str(e).lower():
-                    raise HTTPException(status_code=400, detail="Watchlist group name already exists")
-                raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/watchlist/groups/{group_id}")
-def delete_watchlist_group(group_id: int, user: dict = Depends(get_current_user)):
-    """Delete a watchlist group"""
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                DELETE FROM watchlist_groups
-                WHERE group_id = %s
-                RETURNING group_id
-            """, (group_id,))
-            result = cur.fetchone()
-            conn.commit()
-
-            if result:
-                return {"message": "Watchlist group deleted", "group_id": group_id}
-            else:
-                raise HTTPException(status_code=404, detail="Watchlist group not found")
-
-
-@app.post("/api/watchlist/groups/{group_id}/categories")
-def add_category_to_group(group_id: int, data: dict, user: dict = Depends(get_current_user)):
-    """Add a category to a watchlist group"""
-    category = data.get("category")
-    if not category:
-        raise HTTPException(status_code=400, detail="Category is required")
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # Check if group exists
-            cur.execute("SELECT group_id FROM watchlist_groups WHERE group_id = %s", (group_id,))
-            if not cur.fetchone():
-                raise HTTPException(status_code=404, detail="Watchlist group not found")
-
-            # Check if category exists in products
-            cur.execute("""
-                SELECT DISTINCT category FROM products
-                WHERE category = %s AND retailer_id = 'twd'
-            """, (category,))
-            if not cur.fetchone():
-                raise HTTPException(status_code=400, detail="Category not found in products")
-
-            # Add category to group (ignore if already exists)
-            cur.execute("""
-                INSERT INTO watchlist_group_categories (group_id, category)
-                VALUES (%s, %s)
-                ON CONFLICT (group_id, category) DO NOTHING
-                RETURNING id
-            """, (group_id, category))
-            result = cur.fetchone()
-            
-            # Update group updated_at
-            cur.execute("""
-                UPDATE watchlist_groups 
-                SET updated_at = NOW() 
-                WHERE group_id = %s
-            """, (group_id,))
-            
-            conn.commit()
-
-            if result:
-                return {"message": "Category added to watchlist group", "category": category}
-            else:
-                return {"message": "Category already in watchlist group", "category": category}
-
-
-@app.delete("/api/watchlist/groups/{group_id}/categories/{category}")
-def remove_category_from_group(group_id: int, category: str, user: dict = Depends(get_current_user)):
-    """Remove a category from a watchlist group"""
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                DELETE FROM watchlist_group_categories
-                WHERE group_id = %s AND category = %s
-                RETURNING id
-            """, (group_id, category))
-            result = cur.fetchone()
-            
-            # Update group updated_at
-            if result:
-                cur.execute("""
-                    UPDATE watchlist_groups 
-                    SET updated_at = NOW() 
-                    WHERE group_id = %s
-                """, (group_id,))
-            
-            conn.commit()
-
-            if result:
-                return {"message": "Category removed from watchlist group", "category": category}
-            else:
-                raise HTTPException(status_code=404, detail="Category not in watchlist group")
-
-
-@app.get("/api/watchlist/categories/available")
-def get_available_categories_for_groups(user: dict = Depends(get_current_user)):
-    """Get all available categories that can be added to watchlist groups"""
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # Get all categories from Thai Watsadu products
-            cur.execute("""
-                SELECT DISTINCT p.category, COUNT(*) as product_count
-                FROM products p
-                WHERE p.retailer_id = 'twd' AND p.category IS NOT NULL AND p.category != ''
-                GROUP BY p.category
-                ORDER BY p.category
-            """)
-            all_categories = cur.fetchall()
-
-            return {
-                "categories": [
-                    {
-                        "category": row["category"],
-                        "product_count": row["product_count"]
-                    }
-                    for row in all_categories
-                ],
-                "total": len(all_categories)
-            }
-
-
 # ============== Watchlist SKU Groups ==============
 
 @app.get("/api/watchlist/sku-groups")
@@ -486,11 +281,11 @@ def get_sku_watchlist_groups(user: dict = Depends(get_current_user)):
     """Get all SKU-based watchlist groups with their products"""
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Get all groups
+            # Get all groups sorted alphabetically
             cur.execute("""
                 SELECT group_id, name, created_at, updated_at
                 FROM watchlist_sku_groups
-                ORDER BY updated_at DESC
+                ORDER BY name ASC
             """)
             groups = cur.fetchall()
             
@@ -1219,6 +1014,7 @@ def get_products(
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
     watched_only: Optional[bool] = False,
+    watchlist_group_id: Optional[int] = None,
     user: dict = Depends(get_current_user)
 ):
     """Get Thai Watsadu products with price comparison across retailers"""
@@ -1296,9 +1092,21 @@ def get_products(
             params = [base_retailer_id]
 
             if search:
-                query += " AND (p.name ILIKE %s OR p.sku ILIKE %s OR p.brand ILIKE %s)"
-                search_param = f"%{search}%"
-                params.extend([search_param, search_param, search_param])
+                # Check if search contains multiple SKUs (comma, newline, or space separated)
+                # Replace newlines and commas with spaces, then split and filter
+                search_normalized = search.replace('\n', ' ').replace('\r', ' ').replace(',', ' ')
+                search_values = [s.strip() for s in search_normalized.split() if s.strip()]
+
+                if len(search_values) > 1:
+                    # Multiple SKUs - use exact match with IN clause
+                    placeholders = ','.join(['%s'] * len(search_values))
+                    query += f" AND p.sku IN ({placeholders})"
+                    params.extend(search_values)
+                else:
+                    # Single search term - use ILIKE for partial matching (name, sku, or brand)
+                    query += " AND (p.name ILIKE %s OR p.sku ILIKE %s OR p.brand ILIKE %s)"
+                    search_param = f"%{search}%"
+                    params.extend([search_param, search_param, search_param])
 
             if category_list:
                 placeholders = ','.join(['%s'] * len(category_list))
@@ -1373,6 +1181,13 @@ def get_products(
                         SELECT category FROM user_category_watchlist WHERE user_id = %s
                     )"""
                     params.append(user_id)
+
+            # Filter by watchlist group (SKU-based watchlist)
+            if watchlist_group_id:
+                query += """ AND p.sku IN (
+                    SELECT sku FROM watchlist_sku_group_products WHERE group_id = %s
+                )"""
+                params.append(watchlist_group_id)
 
             # Get total count
             count_query = query.replace("SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link", "SELECT COUNT(*)")
@@ -1559,6 +1374,7 @@ def export_products(
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
     watched_only: Optional[bool] = False,
+    watchlist_group_id: Optional[int] = None,
     user: dict = Depends(get_current_user)
 ):
     """Export products to Excel with price comparison across retailers (prices are hyperlinked to product pages)"""
@@ -1596,9 +1412,21 @@ def export_products(
             params = [base_retailer_id]
 
             if search:
-                query += " AND (p.name ILIKE %s OR p.sku ILIKE %s OR p.brand ILIKE %s)"
-                search_param = f"%{search}%"
-                params.extend([search_param, search_param, search_param])
+                # Check if search contains multiple SKUs (comma, newline, or space separated)
+                # Replace newlines and commas with spaces, then split and filter
+                search_normalized = search.replace('\n', ' ').replace('\r', ' ').replace(',', ' ')
+                search_values = [s.strip() for s in search_normalized.split() if s.strip()]
+
+                if len(search_values) > 1:
+                    # Multiple SKUs - use exact match with IN clause
+                    placeholders = ','.join(['%s'] * len(search_values))
+                    query += f" AND p.sku IN ({placeholders})"
+                    params.extend(search_values)
+                else:
+                    # Single search term - use ILIKE for partial matching (name, sku, or brand)
+                    query += " AND (p.name ILIKE %s OR p.sku ILIKE %s OR p.brand ILIKE %s)"
+                    search_param = f"%{search}%"
+                    params.extend([search_param, search_param, search_param])
 
             if category_list:
                 placeholders = ','.join(['%s'] * len(category_list))
@@ -1672,6 +1500,13 @@ def export_products(
                         SELECT category FROM user_category_watchlist WHERE user_id = %s
                     )"""
                     params.append(user_id)
+
+            # Filter by watchlist group (SKU-based watchlist)
+            if watchlist_group_id:
+                query += """ AND p.sku IN (
+                    SELECT sku FROM watchlist_sku_group_products WHERE group_id = %s
+                )"""
+                params.append(watchlist_group_id)
 
             query += " ORDER BY p.product_id"
 
@@ -2121,6 +1956,45 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
             }
 
 
+@app.get("/api/products/{product_id}/watchlist-groups")
+def get_product_watchlist_groups(product_id: int, user: dict = Depends(get_current_user)):
+    """Get all watchlist groups that contain this product's SKU"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # First get the product's SKU
+            cur.execute("""
+                SELECT sku FROM products WHERE product_id = %s
+            """, (product_id,))
+            product = cur.fetchone()
+
+            if not product:
+                raise HTTPException(status_code=404, detail="Product not found")
+
+            # Get all watchlist groups containing this SKU
+            cur.execute("""
+                SELECT
+                    wsg.group_id,
+                    wsg.name,
+                    wsgp.added_at
+                FROM watchlist_sku_groups wsg
+                JOIN watchlist_sku_group_products wsgp ON wsg.group_id = wsgp.group_id
+                WHERE wsgp.sku = %s
+                ORDER BY wsg.name ASC
+            """, (product["sku"],))
+            groups = cur.fetchall()
+
+            return {
+                "groups": [
+                    {
+                        "group_id": g["group_id"],
+                        "name": g["name"],
+                        "added_at": g["added_at"].isoformat() if g["added_at"] else None
+                    }
+                    for g in groups
+                ]
+            }
+
+
 @app.post("/api/products/{product_id}/rescrape")
 def rescrape_product(product_id: int, user: dict = Depends(get_current_user)):
     """
@@ -2336,10 +2210,11 @@ def get_retailers_with_stats(user: dict = Depends(get_current_user)):
 
 @app.get("/api/matches/grouped")
 def get_matches_grouped(user: dict = Depends(get_current_user)):
-    """Get product matches grouped by base product and retailer"""
+    """Get product matches grouped by base product and retailer - excludes products where all retailers are verified"""
     with get_db() as conn:
         with conn.cursor() as cur:
             # Get all matches grouped by base product
+            # Exclude base products where ALL retailers have at least one verified "Same" match
             cur.execute("""
                 SELECT
                     pm.match_id,
@@ -2367,6 +2242,26 @@ def get_matches_grouped(user: dict = Depends(get_current_user)):
                 JOIN retailers r1 ON p1.retailer_id = r1.retailer_id
                 JOIN products p2 ON pm.candidate_product_id = p2.product_id
                 JOIN retailers r2 ON p2.retailer_id = r2.retailer_id
+                WHERE p1.product_id NOT IN (
+                    -- Exclude base products where all retailers have verified matches
+                    SELECT base_product_id
+                    FROM (
+                        -- Get all retailers that have matches for each base product
+                        SELECT DISTINCT pm_all.base_product_id, p_all.retailer_id
+                        FROM product_matches pm_all
+                        JOIN products p_all ON pm_all.candidate_product_id = p_all.product_id
+                    ) all_retailers
+                    GROUP BY base_product_id
+                    HAVING COUNT(*) = (
+                        -- Count how many of those retailers have a verified "Same" match
+                        SELECT COUNT(DISTINCT p_verified.retailer_id)
+                        FROM product_matches pm_verified
+                        JOIN products p_verified ON pm_verified.candidate_product_id = p_verified.product_id
+                        WHERE pm_verified.base_product_id = all_retailers.base_product_id
+                          AND pm_verified.verified_by_user = TRUE
+                          AND pm_verified.is_same = TRUE
+                    )
+                )
                 ORDER BY p1.name, r2.name, pm.confidence_score DESC NULLS LAST
             """)
             rows = cur.fetchall()
@@ -2375,7 +2270,7 @@ def get_matches_grouped(user: dict = Depends(get_current_user)):
             products_map = {}
             for row in rows:
                 base_id = row["base_product_id"]
-                
+
                 if base_id not in products_map:
                     products_map[base_id] = {
                         "base_product": {
@@ -2389,17 +2284,17 @@ def get_matches_grouped(user: dict = Depends(get_current_user)):
                         },
                         "matches_by_retailer": {}
                     }
-                
+
                 retailer_id = row["candidate_retailer_id"]
                 retailer_name = row["candidate_retailer"]
-                
+
                 if retailer_id not in products_map[base_id]["matches_by_retailer"]:
                     products_map[base_id]["matches_by_retailer"][retailer_id] = {
                         "retailer_name": retailer_name,
                         "retailer_id": retailer_id,
                         "matches": []
                     }
-                
+
                 products_map[base_id]["matches_by_retailer"][retailer_id]["matches"].append({
                     "match_id": row["match_id"],
                     "is_same": row["is_same"],
@@ -2416,7 +2311,7 @@ def get_matches_grouped(user: dict = Depends(get_current_user)):
                         "image": row["candidate_image"],
                     }
                 })
-            
+
             # Convert to list and transform matches_by_retailer to list
             products = []
             for product in products_map.values():

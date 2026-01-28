@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle, Eye } from 'lucide-react';
+import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 // Custom ListChecks icon component
@@ -46,20 +46,15 @@ const menuItems = [
     icon: PlusCircle,
   },
   {
-    href: '/watchlist-category',
-    label: 'Watchlist Category',
-    icon: Eye,
-  },
-  {
     href: '/watchlist-sku',
-    label: 'Watchlist SKU',
+    label: 'Watchlist',
     icon: ListChecks,
   },
-    {
-    href: '/comparison',
-    label: 'Comparison',
-    icon: GitCompare,
-  },
+  // {
+  //   href: '/comparison',
+  //   label: 'Comparison',
+  //   icon: GitCompare,
+  // },
 ];
 
 export const Sidebar: React.FC = () => {

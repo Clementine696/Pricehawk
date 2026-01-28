@@ -195,6 +195,7 @@ export default function WatchlistSkuGroupsPage() {
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<SkuGroup | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [groupSearchTerm, setGroupSearchTerm] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
   const [importing, setImporting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -560,9 +561,9 @@ export default function WatchlistSkuGroupsPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Watchlist SKU</h1>
+            <h1 className="text-3xl font-bold text-gray-900">Watchlist</h1>
             <p className="text-gray-500 mt-1">
-              Track individual products by SKU
+              Track products by sub-department
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -737,7 +738,7 @@ export default function WatchlistSkuGroupsPage() {
                         onClick={toggleAllDetails}
                         className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
                       >
-                        <span className="font-medium">Expand All</span>
+                        <span className="font-medium">{allExpanded ? 'Collapse All' : 'Expand All'}</span>
                         <ChevronDown className={`w-4 h-4 text-gray-600 transition-transform ${allExpanded ? 'rotate-180' : ''}`} />
                       </button>
                     </div>
@@ -778,6 +779,22 @@ export default function WatchlistSkuGroupsPage() {
           </div>
         )}
 
+        {/* Search Filter for Groups */}
+        {!loading && groups.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <input
+                type="text"
+                placeholder="Search watchlist groups..."
+                value={groupSearchTerm}
+                onChange={(e) => setGroupSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+        )}
+
         {/* Groups Grid */}
         {loading ? (
           <div className="text-center py-12">
@@ -801,12 +818,38 @@ export default function WatchlistSkuGroupsPage() {
             </button>
           </div>
         ) : (
-          <div className="space-y-4">
-            {groups.map((group) => (
-              <div
-                key={group.group_id}
-                className="bg-white rounded-lg shadow hover:shadow-md transition-shadow"
-              >
+          (() => {
+            const filteredGroups = groups.filter((group) =>
+              group.name.toLowerCase().includes(groupSearchTerm.toLowerCase())
+            );
+
+            if (filteredGroups.length === 0) {
+              return (
+                <div className="text-center py-12 bg-white rounded-lg shadow">
+                  <Search className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    No groups found
+                  </h3>
+                  <p className="text-gray-500 mb-4">
+                    No watchlist groups match "{groupSearchTerm}"
+                  </p>
+                  <button
+                    onClick={() => setGroupSearchTerm("")}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700"
+                  >
+                    Clear Search
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-4">
+                {filteredGroups.map((group) => (
+                  <div
+                    key={group.group_id}
+                    className="bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+                  >
                 <div className="p-6 flex items-center justify-between gap-6">
                   <div className="flex-1">
                     <div className="flex items-start justify-between mb-2">
@@ -863,6 +906,8 @@ export default function WatchlistSkuGroupsPage() {
               </div>
             ))}
           </div>
+            );
+          })()
         )}
 
         {/* Create Group Modal */}

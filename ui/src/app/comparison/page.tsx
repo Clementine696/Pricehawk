@@ -126,6 +126,33 @@ export default function ComparisonPage() {
     }
   };
 
+  const handleUndo = async (matchId: number) => {
+    try {
+      const response = await apiFetch(`/api/matches/${matchId}/undo`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) throw new Error('Failed to undo verification');
+
+      // Update local state - reset to unverified
+      setProducts((prev) =>
+        prev.map((product) => ({
+          ...product,
+          matches_by_retailer: product.matches_by_retailer.map((retailer) => ({
+            ...retailer,
+            matches: retailer.matches.map((m) =>
+              m.match_id === matchId
+                ? { ...m, verified_by_user: false, is_same: null }
+                : m
+            ),
+          })),
+        }))
+      );
+    } catch (error) {
+      console.error('Error undoing verification:', error);
+    }
+  };
+
   const loadMore = () => {
     setIsLoadingMore(true);
     // Simulate loading delay
@@ -142,20 +169,6 @@ export default function ComparisonPage() {
         product.base_product.name?.toLowerCase().includes(lowerSearch) ||
         product.base_product.sku?.toLowerCase().includes(lowerSearch)
       );
-    })
-    .map((product) => {
-      // Filter to only show retailers with unverified matches
-      const unverifiedRetailers = product.matches_by_retailer
-        .map((retailer) => ({
-          ...retailer,
-          matches: retailer.matches.filter((m) => !m.verified_by_user),
-        }))
-        .filter((retailer) => retailer.matches.length > 0);
-
-      return {
-        ...product,
-        matches_by_retailer: unverifiedRetailers,
-      };
     })
     .filter((product) => product.matches_by_retailer.length > 0);
 
@@ -299,7 +312,10 @@ export default function ComparisonPage() {
                         {/* Retailer Columns */}
                         {allRetailers.map((retailer) => {
                           const matches = retailerMatchesMap.get(retailer) || [];
-                          
+
+                          // Check if any match in THIS RETAILER is verified as "Same"
+                          const hasVerifiedSameMatch = matches.some((m) => m.verified_by_user && m.is_same === true);
+
                           return (
                             <td key={retailer} className="px-4 py-4 align-top">
                               {matches.length === 0 ? (
@@ -346,20 +362,45 @@ export default function ComparisonPage() {
                                         </div>
                                       </div>
                                       <div className="flex gap-2 mt-3">
-                                        <button
-                                          onClick={() => handleVerify(match.match_id, true)}
-                                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-green-500 text-white rounded text-xs hover:bg-green-600 transition-colors"
-                                        >
-                                          <Check className="w-3 h-3" />
-                                          Same
-                                        </button>
-                                        <button
-                                          onClick={() => handleVerify(match.match_id, false)}
-                                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors"
-                                        >
-                                          <X className="w-3 h-3" />
-                                          Diff
-                                        </button>
+                                        {match.verified_by_user ? (
+                                          <>
+                                            <button
+                                              onClick={() => handleUndo(match.match_id)}
+                                              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-gray-500 text-white rounded text-xs hover:bg-gray-600 transition-colors"
+                                            >
+                                              <X className="w-3 h-3" />
+                                              Undo
+                                            </button>
+                                            {match.is_same && (
+                                              <div className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-green-100 text-green-700 rounded text-xs font-medium">
+                                                <Check className="w-3 h-3" />
+                                                Correct match
+                                              </div>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <>
+                                            <button
+                                              onClick={() => handleVerify(match.match_id, true)}
+                                              disabled={hasVerifiedSameMatch}
+                                              className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs transition-colors ${
+                                                hasVerifiedSameMatch
+                                                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                                  : 'bg-green-500 text-white hover:bg-green-600'
+                                              }`}
+                                            >
+                                              <Check className="w-3 h-3" />
+                                              Correct
+                                            </button>
+                                            <button
+                                              onClick={() => handleVerify(match.match_id, false)}
+                                              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors"
+                                            >
+                                              <X className="w-3 h-3" />
+                                              Incorrect
+                                            </button>
+                                          </>
+                                        )}
                                       </div>
                                     </div>
                                   ))}

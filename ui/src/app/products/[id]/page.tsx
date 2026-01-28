@@ -67,6 +67,12 @@ interface PriceHistoryData {
   matched_products: PriceHistoryProduct[];
 }
 
+interface WatchlistGroup {
+  group_id: number;
+  name: string;
+  added_at: string | null;
+}
+
 // Product image component with loading state and timeout retry
 function ProductImage({ src, alt, className }: { src: string | null; alt: string; className?: string }) {
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
@@ -190,10 +196,16 @@ export default function ProductDetailPage() {
   const [priceHistory, setPriceHistory] = useState<PriceHistoryData | null>(null);
   const [historyDays, setHistoryDays] = useState<number>(30);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [watchlistGroups, setWatchlistGroups] = useState<WatchlistGroup[]>([]);
+  const [showAddWatchlistModal, setShowAddWatchlistModal] = useState(false);
+  const [allWatchlistGroups, setAllWatchlistGroups] = useState<{group_id: number; name: string}[]>([]);
+  const [selectedWatchlistId, setSelectedWatchlistId] = useState<string>('');
+  const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
 
   useEffect(() => {
     if (productId) {
       fetchProductDetail();
+      fetchWatchlistGroups();
     }
   }, [productId]);
 
@@ -215,6 +227,87 @@ export default function ProductDetailPage() {
       console.error('Error fetching price history:', err);
     } finally {
       setIsLoadingHistory(false);
+    }
+  };
+
+  const fetchWatchlistGroups = async () => {
+    try {
+      const response = await apiFetch(`/api/products/${productId}/watchlist-groups`);
+      if (response.ok) {
+        const result = await response.json();
+        setWatchlistGroups(result.groups || []);
+      }
+    } catch (err) {
+      console.error('Error fetching watchlist groups:', err);
+    }
+  };
+
+  const fetchAllWatchlistGroups = async () => {
+    try {
+      const response = await apiFetch('/api/watchlist/sku-groups');
+      if (response.ok) {
+        const result = await response.json();
+        setAllWatchlistGroups(result.groups || []);
+      }
+    } catch (err) {
+      console.error('Error fetching all watchlist groups:', err);
+    }
+  };
+
+  const handleAddToWatchlist = async () => {
+    if (!selectedWatchlistId || !data?.product) return;
+
+    setIsAddingToWatchlist(true);
+    try {
+      const response = await apiFetch(`/api/watchlist/sku-groups/${selectedWatchlistId}/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sku: data.product.sku })
+      });
+
+      if (response.ok) {
+        // Refresh the product's watchlist groups
+        await fetchWatchlistGroups();
+        setShowAddWatchlistModal(false);
+        setSelectedWatchlistId('');
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to add to watchlist');
+      }
+    } catch (err) {
+      console.error('Error adding to watchlist:', err);
+      alert('Failed to add to watchlist');
+    } finally {
+      setIsAddingToWatchlist(false);
+    }
+  };
+
+  const handleOpenAddWatchlistModal = () => {
+    fetchAllWatchlistGroups();
+    setShowAddWatchlistModal(true);
+  };
+
+  const handleRemoveFromWatchlist = async (groupId: number, groupName: string) => {
+    if (!data?.product) return;
+
+    const confirmed = window.confirm(`Remove ${data.product.sku} from "${groupName}"?`);
+    if (!confirmed) return;
+
+    try {
+      const response = await apiFetch(`/api/watchlist/sku-groups/${groupId}/products/${data.product.sku}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        // Refresh the product's watchlist groups
+        await fetchWatchlistGroups();
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to remove from watchlist');
+      }
+    } catch (err) {
+      console.error('Error removing from watchlist:', err);
+      alert('Failed to remove from watchlist');
     }
   };
 
@@ -505,6 +598,46 @@ export default function ProductDetailPage() {
                     <span className="text-gray-900">{product.category}</span>
                   </div>
                 )}
+                <div className="pt-2 border-t border-gray-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-gray-500">Watchlist Groups:</span>
+                    <button
+                      onClick={handleOpenAddWatchlistModal}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-cyan-600 hover:text-cyan-700 hover:bg-cyan-50 rounded transition-colors"
+                      title="Add to watchlist"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add
+                    </button>
+                  </div>
+                  {watchlistGroups.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {watchlistGroups.map((group) => (
+                        <div
+                          key={group.group_id}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-cyan-50 text-cyan-700 rounded-md text-xs font-medium group"
+                        >
+                          <Link
+                            href={`/products?watchlist=${group.group_id}`}
+                            className="hover:underline"
+                            title={`View products in ${group.name}`}
+                          >
+                            {group.name}
+                          </Link>
+                          <button
+                            onClick={() => handleRemoveFromWatchlist(group.group_id, group.name)}
+                            className="ml-1 p-0.5 hover:bg-cyan-200 rounded transition-colors"
+                            title={`Remove from ${group.name}`}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-gray-400 text-sm">None</span>
+                  )}
+                </div>
               </div>
 
               <div className="mt-4 pt-4 border-t border-gray-200">
@@ -866,6 +999,53 @@ export default function ProductDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Add to Watchlist Modal */}
+      {showAddWatchlistModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Add to Watchlist</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Select a watchlist group to add <span className="font-medium">{product.sku}</span>
+            </p>
+
+            <select
+              value={selectedWatchlistId}
+              onChange={(e) => setSelectedWatchlistId(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent mb-4"
+            >
+              <option value="">Select a watchlist group...</option>
+              {allWatchlistGroups
+                .filter(g => !watchlistGroups.some(wg => wg.group_id === g.group_id))
+                .map((group) => (
+                  <option key={group.group_id} value={group.group_id}>
+                    {group.name}
+                  </option>
+                ))}
+            </select>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowAddWatchlistModal(false);
+                  setSelectedWatchlistId('');
+                }}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                disabled={isAddingToWatchlist}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddToWatchlist}
+                disabled={!selectedWatchlistId || isAddingToWatchlist}
+                className="px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isAddingToWatchlist ? 'Adding...' : 'Add to Watchlist'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </MainLayout>
   );
 }

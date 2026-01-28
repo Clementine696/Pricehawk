@@ -3,7 +3,7 @@
 import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check } from 'lucide-react';
+import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check, TrendingUp, TrendingDown } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { trackExport, trackSearch, trackFilter } from '@/lib/analytics';
 
@@ -182,6 +182,7 @@ function SingleSelect({
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
+        title={selectedOption?.label || placeholder}
       >
         <span className={`truncate ${!value ? 'text-gray-500' : 'text-gray-900'}`}>
           {selectedOption?.label || placeholder}
@@ -220,10 +221,18 @@ function SingleSelect({
   );
 }
 
+interface PriceChange {
+  old_price: number;
+  change: number;
+  change_pct: number;
+  direction: 'up' | 'down';
+}
+
 interface RetailerPrice {
   price: number | null;
   link: string | null;
   verified?: boolean;
+  price_change?: PriceChange | null;
 }
 
 interface Product {
@@ -234,6 +243,7 @@ interface Product {
   category: string | null;
   base_price: number | null;
   base_link: string | null;
+  base_price_change?: PriceChange | null;
   status: 'cheapest' | 'same' | 'higher' | null;
   retailer_prices: Record<string, RetailerPrice>;
   is_verified: boolean;
@@ -277,6 +287,7 @@ function ProductsContent() {
   const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [brands, setBrands] = useState<string[]>([]);
+  const [watchlistGroups, setWatchlistGroups] = useState<{ group_id: number; name: string }[]>([]);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -291,6 +302,7 @@ function ProductsContent() {
   );
   const [verificationFilter, setVerificationFilter] = useState(searchParams.get('verified') || '');
   const [retailerFilter, setRetailerFilter] = useState(searchParams.get('retailer') || '');
+  const [watchlistFilter, setWatchlistFilter] = useState(searchParams.get('watchlist') || '');
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [isExporting, setIsExporting] = useState(false);
   const pageSize = 10;
@@ -313,6 +325,7 @@ function ProductsContent() {
       brand: selectedBrands.join(','),
       verified: verificationFilter,
       retailer: retailerFilter,
+      watchlist: watchlistFilter,
       page,
       ...newParams
     };
@@ -328,9 +341,29 @@ function ProductsContent() {
     router.push(queryString ? `?${queryString}` : '/products', { scroll: false });
   };
 
+  // Fetch watchlist groups on mount
+  useEffect(() => {
+    fetchWatchlistGroups();
+  }, []);
+
   useEffect(() => {
     fetchProducts();
-  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter]); //watchedOnly --
+  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter, watchlistFilter]);
+
+  const fetchWatchlistGroups = async () => {
+    try {
+      const response = await apiFetch('/api/watchlist/sku-groups');
+      if (!response.ok) throw new Error('Failed to fetch watchlist groups');
+      const data = await response.json();
+      // Sort groups alphabetically by name
+      const sortedGroups = (data.groups || []).sort((a: { name: string }, b: { name: string }) =>
+        a.name.localeCompare(b.name)
+      );
+      setWatchlistGroups(sortedGroups);
+    } catch (error) {
+      console.error('Error fetching watchlist groups:', error);
+    }
+  };
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -344,6 +377,8 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
+      if (watchlistFilter) params.append('watchlist_group_id', watchlistFilter);
+
 
       const response = await apiFetch(`/api/products?${params}`);
       if (!response.ok) throw new Error('Failed to fetch products');
@@ -377,7 +412,7 @@ function ProductsContent() {
     setSelectedBrands([]);
     setVerificationFilter('');
     setRetailerFilter('');
-    // setWatchedOnly(false);
+    setWatchlistFilter('');
     setPage(1);
     router.push('/products', { scroll: false });
     // Don't call fetchProducts() here - the useEffect will trigger it when state changes
@@ -403,6 +438,7 @@ function ProductsContent() {
     const setters: Record<string, (v: string) => void> = {
       verified: setVerificationFilter,
       retailer: setRetailerFilter,
+      watchlist: setWatchlistFilter,
     };
     setters[filterName]?.(value);
     setPage(1);
@@ -427,6 +463,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
+      if (watchlistFilter) params.append('watchlist_group_id', watchlistFilter);
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {
@@ -488,6 +525,23 @@ function ProductsContent() {
     }
   };
 
+  const PriceChangeIndicator = ({ change }: { change: PriceChange | null | undefined }) => {
+    if (!change) return null;
+    const isDown = change.direction === 'down';
+    return (
+      <span
+        className={`inline-flex items-center text-xs ml-1 ${isDown ? 'text-green-600' : 'text-red-500'}`}
+        title={`Was ฿${change.old_price.toLocaleString()} (${change.change_pct > 0 ? '+' : ''}${change.change_pct}%)`}
+      >
+        {isDown ? (
+          <TrendingDown className="w-3 h-3" />
+        ) : (
+          <TrendingUp className="w-3 h-3" />
+        )}
+      </span>
+    );
+  };
+
   const getStatusBadge = (status: string | null) => {
     if (!status) {
       return (
@@ -537,7 +591,7 @@ function ProductsContent() {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
               <input
                 type="text"
-                placeholder="Search by name, SKU or brand..."
+                placeholder="Search by name, SKU, brand, or paste multiple SKUs..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -574,6 +628,13 @@ function ProductsContent() {
               onChange={(value) => handleFilterChange('retailer', value)}
               placeholder="All Retailers"
               className="w-[150px]"
+            />
+            <SingleSelect
+              options={watchlistGroups.map(g => ({ value: g.group_id.toString(), label: g.name }))}
+              value={watchlistFilter}
+              onChange={(value) => handleFilterChange('watchlist', value)}
+              placeholder="Watchlist"
+              className="w-[180px]"
             />
             <button
               onClick={handleReset}
@@ -683,16 +744,19 @@ function ProductsContent() {
                           </td>
                           <td className="px-4 py-2 text-sm whitespace-nowrap">
                             {product.base_price ? (
-                              <a
-                                href={product.base_link || '#'}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className={`inline-flex items-center gap-1 hover:underline ${getPriceColorClass(getPriceCategory(product.base_price, allPrices))}`}
-                              >
-                                {formatPrice(product.base_price)}
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
+                              <span className="inline-flex items-center">
+                                <a
+                                  href={product.base_link || '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className={`inline-flex items-center gap-1 hover:underline ${getPriceColorClass(getPriceCategory(product.base_price, allPrices))}`}
+                                >
+                                  {formatPrice(product.base_price)}
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                                <PriceChangeIndicator change={product.base_price_change} />
+                              </span>
                             ) : <span className="text-gray-400">-</span>}
                           </td>
                           {otherRetailers.map((retailer) => {
@@ -702,18 +766,21 @@ function ProductsContent() {
                             return (
                               <td key={retailer} className="px-4 py-2 text-sm whitespace-nowrap">
                                 {priceData?.price ? (
-                                  <a
-                                    href={priceData.link || '#'}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className={`inline-flex items-center gap-1 hover:underline ${isUnverified ? 'italic opacity-70' : ''} ${getPriceColorClass(priceCategory)}`}
-                                    title={isUnverified ? 'Unverified match - click to review' : undefined}
-                                  >
-                                    {formatPrice(priceData.price)}
-                                    {isUnverified && <span className="text-yellow-500">?</span>}
-                                    <ExternalLink className="w-3 h-3" />
-                                  </a>
+                                  <span className="inline-flex items-center">
+                                    <a
+                                      href={priceData.link || '#'}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className={`inline-flex items-center gap-1 hover:underline ${isUnverified ? 'italic opacity-70' : ''} ${getPriceColorClass(priceCategory)}`}
+                                      title={isUnverified ? 'Unverified match - click to review' : undefined}
+                                    >
+                                      {formatPrice(priceData.price)}
+                                      {isUnverified && <span className="text-yellow-500">?</span>}
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                    <PriceChangeIndicator change={priceData.price_change} />
+                                  </span>
                                 ) : <span className="text-gray-400">-</span>}
                               </td>
                             );

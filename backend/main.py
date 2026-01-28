@@ -429,11 +429,20 @@ async def import_excel_to_sku_groups(
 ):
     """Import Excel file to create SKU watchlist groups based on S-dept column"""
 
-    print(f"============================================================")
-    print(f"=== EXCEL IMPORT STARTED ===")
-    print(f"============================================================")
-    print(f"Filename: {file.filename}")
-    print(f"User: {user.get('username', 'Unknown')}")
+    print(f"\n{'='*60}")
+    print(f"ENDPOINT HIT: /api/watchlist/sku-groups/import-excel")
+    print(f"Timestamp: {datetime.now().isoformat()}")
+    print(f"User: {user.get('username', 'Unknown')} (ID: {user.get('user_id', 'N/A')})")
+    print(f"{'='*60}")
+
+    # Check if file was received
+    if not file:
+        print(f"ERROR: No file received in request")
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    print(f"File object received successfully")
+    print(f"File content_type: {file.content_type}")
+    print(f"File filename: {file.filename}")
 
     if not file.filename.endswith(('.xlsx', '.xls')):
         print(f"ERROR: Invalid file type - {file.filename}")

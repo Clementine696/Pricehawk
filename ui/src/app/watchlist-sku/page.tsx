@@ -442,7 +442,17 @@ export default function WatchlistSkuGroupsPage() {
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      console.log("No file selected");
+      return;
+    }
+
+    console.log("=".repeat(60));
+    console.log("EXCEL UPLOAD STARTED (Frontend)");
+    console.log("=".repeat(60));
+    console.log("File name:", file.name);
+    console.log("File size:", file.size, "bytes", `(${(file.size / 1024).toFixed(2)} KB)`);
+    console.log("File type:", file.type);
 
     setImporting(true);
     setImportResult(null);
@@ -450,8 +460,12 @@ export default function WatchlistSkuGroupsPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      console.log("FormData created with file");
 
       const token = localStorage.getItem("auth_token");
+      console.log("Auth token:", token ? "Present" : "Missing");
+
+      console.log("Sending POST request to /api/watchlist/sku-groups/import-excel...");
       const response = await fetch("/api/watchlist/sku-groups/import-excel", {
         method: "POST",
         headers: {
@@ -460,17 +474,40 @@ export default function WatchlistSkuGroupsPage() {
         body: formData,
       });
 
+      console.log("Response received:");
+      console.log("- Status:", response.status);
+      console.log("- Status Text:", response.statusText);
+      console.log("- OK:", response.ok);
+
       if (response.ok) {
+        console.log("Response OK, parsing JSON...");
         const result = await response.json();
+        console.log("Import result:", result);
         setImportResult(result);
         setShowImportModal(true);
         fetchGroups();
+        console.log("=".repeat(60));
+        console.log("EXCEL UPLOAD COMPLETED SUCCESSFULLY (Frontend)");
+        console.log("=".repeat(60));
       } else {
+        console.log("Response NOT OK, parsing error...");
         const error = await response.json();
+        console.error("Error response:", error);
         alert(error.detail || "Failed to import Excel file");
+        console.log("=".repeat(60));
+        console.log("EXCEL UPLOAD FAILED (Frontend) - Server Error");
+        console.log("=".repeat(60));
       }
     } catch (error) {
+      console.log("=".repeat(60));
+      console.log("EXCEL UPLOAD FAILED (Frontend) - Exception Caught");
+      console.log("=".repeat(60));
       console.error("Error uploading file:", error);
+      console.error("Error type:", error instanceof Error ? error.constructor.name : typeof error);
+      console.error("Error message:", error instanceof Error ? error.message : String(error));
+      if (error instanceof Error && error.stack) {
+        console.error("Error stack:", error.stack);
+      }
       alert("Failed to upload file");
     } finally {
       setImporting(false);

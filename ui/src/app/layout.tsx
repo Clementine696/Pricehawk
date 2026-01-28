@@ -3,6 +3,7 @@ import Script from 'next/script';
 import { AuthProvider } from '@/context/AuthContext';
 import PageViewTracker from '@/components/PageViewTracker';
 import PageUnloadTracker from '@/components/PageUnloadTracker';
+import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -46,6 +47,7 @@ export default function RootLayout({
           <PageViewTracker />
           <PageUnloadTracker />
           {children}
+          <Analytics />
         </AuthProvider>
       </body>
     </html>

@@ -122,38 +122,125 @@ class UpdateStats:
 
 def cleanup_orphan_browsers():
     """
-    Kill any orphaned chromium/chrome browser processes.
+    Kill only SCRAPER-RELATED browser processes using psutil.
     This helps prevent memory accumulation on Railway.
-    """
-    import platform
 
+    IMPORTANT: Only kills browsers launched by Playwright/crawl4ai, NOT user's Chrome.
+    Identifies scraper browsers by checking for:
+    - 'playwright' or 'crawl4ai' in command line
+    - '--headless' flag (scrapers run headless)
+    - '--disable-dev-shm-usage' (our scraper-specific flag)
+    """
     try:
-        if platform.system() == 'Linux':
-            # Kill chromium processes that might be orphaned
-            subprocess.run(
-                ['pkill', '-9', '-f', 'chromium'],
-                capture_output=True,
-                timeout=10
-            )
-            subprocess.run(
-                ['pkill', '-9', '-f', 'chrome'],
-                capture_output=True,
-                timeout=10
-            )
-        elif platform.system() == 'Windows':
-            # Windows: use taskkill
-            subprocess.run(
-                ['taskkill', '/F', '/IM', 'chromium.exe'],
-                capture_output=True,
-                timeout=10
-            )
-            subprocess.run(
-                ['taskkill', '/F', '/IM', 'chrome.exe'],
-                capture_output=True,
-                timeout=10
-            )
-    except Exception:
-        pass  # Ignore errors - this is best-effort cleanup
+        import psutil
+        PSUTIL_AVAILABLE = True
+    except ImportError:
+        PSUTIL_AVAILABLE = False
+        logger.warning("psutil not available - skipping browser cleanup")
+        return 0
+
+    killed_count = 0
+
+    if PSUTIL_AVAILABLE:
+        # Use psutil for precise process control (works on all platforms)
+        try:
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
+                try:
+                    pinfo = proc.info
+                    name = pinfo['name'].lower() if pinfo['name'] else ''
+                    cmdline = pinfo['cmdline'] if pinfo['cmdline'] else []
+                    cmdline_str = ' '.join(cmdline).lower()
+
+                    # Only kill if it's a Chrome/Chromium process
+                    if not any(browser in name for browser in ['chrome', 'chromium']):
+                        continue
+
+                    # SAFETY CHECK: Only kill if it matches scraper-specific patterns
+                    is_scraper_browser = False
+
+                    # Check 1: Playwright or crawl4ai in command line
+                    if 'playwright' in cmdline_str or 'crawl4ai' in cmdline_str:
+                        is_scraper_browser = True
+
+                    # Check 2: Has scraper-specific flags
+                    elif any(flag in cmdline for flag in [
+                        '--disable-dev-shm-usage',  # Our specific flag
+                        '--no-sandbox'  # Common in automated browsers
+                    ]) and '--headless' in cmdline:  # Must be headless
+                        # Additional check: user Chrome will have profile flags
+                        # Scraper Chrome won't have user profile directory
+                        has_user_profile = any(
+                            '--profile-directory' in str(arg) or
+                            ('--user-data-dir' in str(arg) and os.path.expanduser('~') in str(arg))
+                            for arg in cmdline
+                        )
+                        if not has_user_profile:
+                            is_scraper_browser = True
+
+                    if is_scraper_browser:
+                        try:
+                            proc_obj = psutil.Process(pinfo['pid'])
+                            # Kill process and all its children
+                            children = proc_obj.children(recursive=True)
+                            for child in children:
+                                try:
+                                    child.kill()
+                                    killed_count += 1
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                    pass
+                            proc_obj.kill()
+                            killed_count += 1
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+
+                except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
+                    pass
+
+            if killed_count > 0:
+                logger.info(f"  Killed {killed_count} scraper browser processes")
+        except Exception as e:
+            logger.warning(f"Error during browser cleanup: {e}")
+
+    return killed_count
+
+
+def get_memory_usage() -> tuple:
+    """
+    Get current memory usage in MB.
+
+    Returns:
+        tuple: (used_mb, percent, available_mb)
+    """
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        used_mb = mem.used / (1024 * 1024)
+        percent = mem.percent
+        available_mb = mem.available / (1024 * 1024)
+        return (used_mb, percent, available_mb)
+    except ImportError:
+        return (0, 0, 0)
+
+
+def check_memory_limit(threshold_percent: float = 85.0) -> bool:
+    """
+    Check if memory usage exceeds threshold.
+
+    Args:
+        threshold_percent: Memory usage threshold (default: 85%)
+
+    Returns:
+        True if memory is above threshold (pause needed)
+    """
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        if mem.percent > threshold_percent:
+            logger.warning(f"⚠️  Memory usage HIGH: {mem.percent:.1f}% ({mem.used / (1024**3):.2f}GB used)")
+            return True
+        return False
+    except ImportError:
+        return False
 
 
 def cleanup_chrome_temp_dirs():
@@ -365,8 +452,11 @@ class PriceUpdater:
         """
         import time
 
+        # Log initial memory state
+        used_mb, percent, available_mb = get_memory_usage()
         logger.info(f"\n{'='*40}")
         logger.info(f"Worker {worker_id}: Processing {len(products)} products")
+        logger.info(f"Worker {worker_id}: Memory at start: {percent:.1f}% ({used_mb/1024:.2f}GB used)")
         logger.info(f"{'='*40}")
 
         total_updated = 0
@@ -381,22 +471,42 @@ class PriceUpdater:
 
             total_updated += self.process_batch(batch)
 
+            # Clear batch list to free memory
+            batch = None
+
             # Delay between batches
             if batch_end < len(products):
                 logger.info(f"[Worker {worker_id}] Waiting {self.delay_between_batches}s before next batch...")
                 time.sleep(self.delay_between_batches)
 
                 # Periodic cleanup: kill any orphaned browser processes
-                # This prevents memory accumulation over long runs
+                # Reduced from every 3 batches to every 2 batches for more aggressive cleanup
                 batch_num = batch_start // self.batch_size + 1
-                if batch_num % 3 == 0:  # Every 3 batches (was 5)
-                    logger.info(f"[Worker {worker_id}] Running periodic browser + temp cleanup...")
-                    cleanup_orphan_browsers()
-                    cleanup_chrome_temp_dirs()  # Clean up /tmp/chrome-* directories
-                    gc.collect()
-                    time.sleep(5)  # Extra pause after major cleanup
+                if batch_num % 2 == 0:
+                    used_mb, percent, available_mb = get_memory_usage()
+                    logger.info(f"[Worker {worker_id}] Periodic cleanup (batch {batch_num})")
+                    logger.info(f"[Worker {worker_id}] Memory before cleanup: {percent:.1f}%")
 
+                    cleanup_orphan_browsers()
+                    cleanup_chrome_temp_dirs()
+                    gc.collect()
+                    time.sleep(5)
+
+                    used_mb, percent, available_mb = get_memory_usage()
+                    logger.info(f"[Worker {worker_id}] Memory after cleanup: {percent:.1f}%")
+
+                    # Extra pause if memory is high
+                    if check_memory_limit(threshold_percent=75.0):
+                        logger.warning(f"[Worker {worker_id}] Memory HIGH - extended pause...")
+                        time.sleep(15)
+
+        # Final cleanup for this worker
+        cleanup_orphan_browsers()
+        gc.collect()
+
+        used_mb, percent, available_mb = get_memory_usage()
         logger.info(f"\n[Worker {worker_id}] Completed: {total_updated}/{len(products)} updated")
+        logger.info(f"[Worker {worker_id}] Memory at end: {percent:.1f}% ({used_mb/1024:.2f}GB used)")
         return total_updated
 
     def scrape_product(self, url: str) -> Optional[Dict]:
@@ -516,35 +626,47 @@ class PriceUpdater:
                 try:
                     pid = process.pid
                     if process.poll() is None:  # Process still running
-                        # Try to kill entire process group (including child browsers)
+                        # Use psutil to kill process tree (more reliable than os.killpg)
                         try:
+                            import psutil
+                            parent = psutil.Process(pid)
+                            children = parent.children(recursive=True)
+
+                            # Kill children first
+                            for child in children:
+                                try:
+                                    child.kill()
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                    pass
+
+                            # Kill parent
+                            parent.kill()
+
+                            # Wait for termination
+                            try:
+                                process.wait(timeout=3)
+                            except subprocess.TimeoutExpired:
+                                pass
+                        except ImportError:
+                            # Fallback to signal-based killing if psutil not available
                             import signal
-                            # On Linux with start_new_session=True, kill the entire process group
                             if hasattr(os, 'killpg'):
                                 try:
-                                    # When start_new_session=True, the process is its own group leader
-                                    # so we can kill by pid directly as the pgid
                                     os.killpg(pid, signal.SIGTERM)
-                                except (ProcessLookupError, PermissionError, OSError):
-                                    pass
-                                # Give it a moment to terminate gracefully
-                                try:
                                     process.wait(timeout=2)
-                                except subprocess.TimeoutExpired:
-                                    # Force kill if still running
+                                except (subprocess.TimeoutExpired, ProcessLookupError, PermissionError, OSError):
                                     try:
                                         os.killpg(pid, signal.SIGKILL)
                                     except (ProcessLookupError, PermissionError, OSError):
                                         pass
-                        except Exception:
-                            pass
-
-                        # Fallback: standard kill
-                        try:
-                            process.kill()
-                            process.wait(timeout=5)
-                        except Exception:
-                            pass
+                            else:
+                                process.kill()
+                                try:
+                                    process.wait(timeout=5)
+                                except Exception:
+                                    pass
+                        except Exception as e:
+                            logger.debug(f"Error killing process tree: {e}")
                     else:
                         # Process already finished, just wait for cleanup
                         try:
@@ -552,7 +674,7 @@ class PriceUpdater:
                         except Exception:
                             pass
 
-                    # Close file handles
+                    # Close file handles to prevent file descriptor leaks
                     if process.stdout:
                         try:
                             process.stdout.close()
@@ -566,12 +688,25 @@ class PriceUpdater:
                 except Exception:
                     pass
 
-            # Clean up temp output file
+            # Clean up temp output files immediately to free memory
             try:
                 if os.path.exists(output_file):
                     os.remove(output_file)
+                # Also clean up retailer files
+                output_dir = os.path.dirname(output_file)
+                for retailer_id, filenames in self.RETAILER_FILES.items():
+                    for filename in filenames:
+                        filepath = os.path.join(output_dir, filename)
+                        if os.path.exists(filepath):
+                            try:
+                                os.remove(filepath)
+                            except Exception:
+                                pass
             except Exception:
                 pass
+
+            # Clear result_data to free memory immediately
+            result_data = None
 
             # AGGRESSIVE cleanup: Kill any leftover browser processes after EVERY scrape
             # This is critical for Railway where memory is limited
@@ -767,14 +902,25 @@ class PriceUpdater:
             if i < len(products) - 1:
                 time.sleep(self.delay_between_products)
 
-            # Memory cooldown: pause every 15 products to let Railway reclaim memory
-            # Reduced from 25 to 15 to prevent browser accumulation issues
-            if (i + 1) % 15 == 0:
-                logger.info(f"  Memory cooldown: pausing 10s after {i + 1} products...")
+            # Memory cooldown: pause every 10 products (reduced from 15 for better cleanup)
+            if (i + 1) % 10 == 0:
+                used_mb, percent, available_mb = get_memory_usage()
+                logger.info(f"  [Memory] After {i + 1} products: {percent:.1f}% ({used_mb/1024:.2f}GB used, {available_mb/1024:.2f}GB available)")
+
+                # Aggressive cleanup every 10 products
+                logger.info(f"  Memory cooldown: cleaning up after {i + 1} products...")
                 cleanup_orphan_browsers()
-                cleanup_chrome_temp_dirs()  # Clean up /tmp/chrome-* directories
+                cleanup_chrome_temp_dirs()
                 gc.collect()
-                time.sleep(10)  # Increased from 5s to 10s for better cleanup
+                time.sleep(8)  # Pause to let OS reclaim memory
+
+                # Check if memory is critically high
+                if check_memory_limit(threshold_percent=80.0):
+                    logger.warning(f"  ⚠️  MEMORY CRITICAL - Extended cleanup pause (30s)...")
+                    cleanup_orphan_browsers()
+                    cleanup_chrome_temp_dirs()
+                    gc.collect()
+                    time.sleep(30)  # Extended pause for memory recovery
 
         return updated
 
@@ -827,12 +973,21 @@ class PriceUpdater:
             Update statistics
         """
         start_time = datetime.now()
+        used_mb, percent, available_mb = get_memory_usage()
+
         logger.info("=" * 60)
         logger.info(f"Price Update Started: {start_time}")
         logger.info(f"Configuration: batch_size={self.batch_size}, parallel_workers={self.parallel_workers}, dry_run={self.dry_run}")
+        logger.info(f"Memory at start: {percent:.1f}% ({used_mb/1024:.2f}GB used, {available_mb/1024:.2f}GB available)")
         if limit:
             logger.info(f"Limit: {limit} oldest products")
         logger.info("=" * 60)
+
+        # Initial cleanup to start with clean slate
+        logger.info("Running initial browser cleanup...")
+        cleanup_orphan_browsers()
+        cleanup_chrome_temp_dirs()
+        gc.collect()
 
         # Get products as flat list (oldest first if limit is set)
         all_products = self.get_all_products(retailer_id, limit)
@@ -883,9 +1038,16 @@ class PriceUpdater:
                     except Exception as e:
                         logger.error(f"Worker {worker_id} failed with error: {e}")
 
+        # Final cleanup
+        logger.info("\nRunning final cleanup...")
+        cleanup_orphan_browsers()
+        cleanup_chrome_temp_dirs()
+        gc.collect()
+
         # Summary
         end_time = datetime.now()
         duration = end_time - start_time
+        used_mb, percent, available_mb = get_memory_usage()
 
         logger.info("\n" + "=" * 60)
         logger.info("PRICE UPDATE COMPLETE")
@@ -900,6 +1062,7 @@ class PriceUpdater:
         logger.info(f"Price Decreased: {self.stats.price_decreased}")
         logger.info(f"New Lowest: {self.stats.new_lowest}")
         logger.info(f"New Highest: {self.stats.new_highest}")
+        logger.info(f"Memory at end: {percent:.1f}% ({used_mb/1024:.2f}GB used, {available_mb/1024:.2f}GB available)")
         logger.info("=" * 60)
 
         return self.stats

@@ -2688,8 +2688,14 @@ def normalize_url(url: str) -> str:
 
 def cleanup_zombie_browser_processes():
     """
-    Clean up zombie Chrome/Playwright processes to prevent thread exhaustion.
+    Clean up SCRAPER-RELATED zombie Chrome/Playwright processes to prevent thread exhaustion.
     This prevents accumulation of browser processes from previous scrapes.
+
+    IMPORTANT: Only kills browsers launched by Playwright/crawl4ai, NOT user's Chrome.
+    Identifies scraper browsers by checking for:
+    - 'playwright' or 'crawl4ai' in command line
+    - '--headless' flag (scrapers run headless)
+    - '--disable-dev-shm-usage' (our scraper-specific flag)
     """
     if not PSUTIL_AVAILABLE:
         print("  [CLEANUP] psutil not available - skipping zombie process cleanup")
@@ -2701,27 +2707,52 @@ def cleanup_zombie_browser_processes():
             try:
                 pinfo = proc.info
                 name = pinfo['name'].lower() if pinfo['name'] else ''
-                cmdline = ' '.join(pinfo['cmdline']) if pinfo['cmdline'] else ''
+                cmdline = pinfo['cmdline'] if pinfo['cmdline'] else []
+                cmdline_str = ' '.join(cmdline).lower()
 
-                # Look for Chrome/Chromium/Playwright processes
-                if any(browser in name for browser in ['chrome', 'chromium', 'playwright']) or \
-                   any(browser in cmdline for browser in ['chrome', 'chromium', 'playwright']):
-                    # Check if it's a zombie or has been running too long
+                # Only process Chrome/Chromium
+                if not any(browser in name for browser in ['chrome', 'chromium']):
+                    continue
+
+                # SAFETY CHECK: Only kill if it matches scraper-specific patterns
+                is_scraper_browser = False
+
+                # Check 1: Playwright or crawl4ai in command line
+                if 'playwright' in cmdline_str or 'crawl4ai' in cmdline_str:
+                    is_scraper_browser = True
+
+                # Check 2: Has scraper-specific flags AND is headless
+                elif any(flag in cmdline for flag in [
+                    '--disable-dev-shm-usage',  # Our specific flag
+                    '--no-sandbox'  # Common in automated browsers
+                ]) and '--headless' in cmdline:
+                    # Additional check: user Chrome will have profile flags
+                    has_user_profile = any(
+                        '--profile-directory' in str(arg) or
+                        ('--user-data-dir' in str(arg) and os.path.expanduser('~') in str(arg))
+                        for arg in cmdline
+                    )
+                    if not has_user_profile:
+                        is_scraper_browser = True
+
+                if is_scraper_browser:
+                    # Check if it's a zombie or stuck
                     try:
                         proc_obj = psutil.Process(pinfo['pid'])
                         # Kill if zombie or consuming no CPU (likely stuck)
                         if proc_obj.status() == psutil.STATUS_ZOMBIE or \
                            (proc_obj.cpu_percent(interval=0.1) == 0 and proc_obj.create_time() < (psutil.boot_time() + 300)):
-                            print(f"  [CLEANUP] Killing zombie browser process: PID={pinfo['pid']} {name}")
+                            print(f"  [CLEANUP] Killing zombie scraper browser: PID={pinfo['pid']} {name}")
                             proc_obj.kill()
                             killed_count += 1
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
+
             except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
                 pass
 
         if killed_count > 0:
-            print(f"  [CLEANUP] Killed {killed_count} zombie browser processes")
+            print(f"  [CLEANUP] Killed {killed_count} zombie scraper browser processes")
         return killed_count
     except Exception as e:
         print(f"  [CLEANUP] Error during zombie process cleanup: {e}")

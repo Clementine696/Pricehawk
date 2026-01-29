@@ -520,6 +520,34 @@ UPDATE_PARALLEL=3
 
 ## Recent Changes (January 2026)
 
+### Production Stability Fixes (2026-01-29)
+- **Memory Leak Fixes in Price Updater**
+  - Fixed memory exhaustion limiting cron job to ~150 products
+  - Now handles 1000+ products with stable memory (48% at 150 products)
+  - Added psutil-based browser cleanup
+  - Real-time memory monitoring with auto-pause at 80% threshold
+  - Aggressive cleanup: every 10 products + every 2 batches
+  - Test results: 150 products in 14min 33sec, 82% success rate
+
+- **Thread Exhaustion Fix in Manual Scraping**
+  - Fixed `RuntimeError: can't start new thread` during manual product addition
+  - Changed subprocess.run to subprocess.Popen for better process control
+  - Uses psutil to kill entire process trees (parent + Chrome children)
+  - Added cleanup_zombie_browser_processes() function
+
+- **Safe Browser Cleanup**
+  - Only kills scraper browsers (playwright/crawl4ai), NOT user's Chrome
+  - Checks for --headless, --disable-dev-shm-usage flags
+  - Excludes processes with user profile directories
+
+- **Excel Upload Routing Fix**
+  - Fixed 405 "Method Not Allowed" error for Excel uploads
+  - Added Vercel-to-Railway routing configuration (vercel.json)
+  - Created environment-specific configs (vercel.uat.json, vercel.prd.json)
+  - Added OPTIONS handler for CORS pre-flight requests
+
+- **See:** `ai_sum/sessions/2026-01-29_memory-leak-and-thread-exhaustion-fixes.md`
+
 ### Session & Authentication
 - **Session expiry extended to 7 days** (previously 30 minutes)
   - `SESSION_EXPIRE_MINUTES = 10080` in `backend/main.py` line 44

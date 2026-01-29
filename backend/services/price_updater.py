@@ -402,7 +402,14 @@ class PriceUpdater:
     def get_all_products(self, retailer_id: Optional[str] = None, limit: Optional[int] = None) -> List[Dict]:
         """
         Get products from database as a flat list, ordered by oldest update first.
-        Skips products that have failed too many times (scrape_fail_count >= MAX_SCRAPE_FAILURES).
+
+        Only includes:
+        1. Thai Watsadu products (retailer_id = 'twd') - base products
+        2. Verified matched products - products that are verified matches in product_matches table
+
+        Skips:
+        - Unmatched/unverified retailer products (~50%+ of database)
+        - Products that have failed too many times (scrape_fail_count >= MAX_SCRAPE_FAILURES)
 
         Args:
             retailer_id: Optional filter for specific retailer
@@ -422,6 +429,17 @@ class PriceUpdater:
                     FROM products p
                     WHERE p.link IS NOT NULL AND p.link != ''
                       AND (p.scrape_fail_count IS NULL OR p.scrape_fail_count < %s)
+                      AND (
+                          -- Include all Thai Watsadu products (base products)
+                          p.retailer_id = 'twd'
+                          OR
+                          -- Include verified matched retailer products
+                          EXISTS (
+                              SELECT 1 FROM product_matches pm
+                              WHERE pm.candidate_product_id = p.product_id
+                              AND pm.verified_result = TRUE
+                          )
+                      )
                 """
                 params = [self.MAX_SCRAPE_FAILURES]
 

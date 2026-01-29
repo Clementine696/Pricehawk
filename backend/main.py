@@ -13,6 +13,13 @@ import uuid
 import tempfile
 import io
 import logging
+import signal
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    print("Warning: psutil not available - zombie process cleanup disabled")
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 import pandas as pd
@@ -2679,11 +2686,54 @@ def normalize_url(url: str) -> str:
     return base_url.rstrip('/')
 
 
+def cleanup_zombie_browser_processes():
+    """
+    Clean up zombie Chrome/Playwright processes to prevent thread exhaustion.
+    This prevents accumulation of browser processes from previous scrapes.
+    """
+    if not PSUTIL_AVAILABLE:
+        print("  [CLEANUP] psutil not available - skipping zombie process cleanup")
+        return 0
+
+    try:
+        killed_count = 0
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                pinfo = proc.info
+                name = pinfo['name'].lower() if pinfo['name'] else ''
+                cmdline = ' '.join(pinfo['cmdline']) if pinfo['cmdline'] else ''
+
+                # Look for Chrome/Chromium/Playwright processes
+                if any(browser in name for browser in ['chrome', 'chromium', 'playwright']) or \
+                   any(browser in cmdline for browser in ['chrome', 'chromium', 'playwright']):
+                    # Check if it's a zombie or has been running too long
+                    try:
+                        proc_obj = psutil.Process(pinfo['pid'])
+                        # Kill if zombie or consuming no CPU (likely stuck)
+                        if proc_obj.status() == psutil.STATUS_ZOMBIE or \
+                           (proc_obj.cpu_percent(interval=0.1) == 0 and proc_obj.create_time() < (psutil.boot_time() + 300)):
+                            print(f"  [CLEANUP] Killing zombie browser process: PID={pinfo['pid']} {name}")
+                            proc_obj.kill()
+                            killed_count += 1
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+            except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
+                pass
+
+        if killed_count > 0:
+            print(f"  [CLEANUP] Killed {killed_count} zombie browser processes")
+        return killed_count
+    except Exception as e:
+        print(f"  [CLEANUP] Error during zombie process cleanup: {e}")
+        return 0
+
+
 def scrape_single_url(url: str) -> dict:
     """
     Scrape a single URL and return result dict.
     Returns {"success": True, "data": {...}} or {"success": False, "error": "..."}
     """
+    process = None
     try:
         # Generate unique output file for this scrape
         output_file = os.path.join(RESULTS_DIR, f"scrape_{uuid.uuid4().hex}.json")
@@ -2702,19 +2752,74 @@ def scrape_single_url(url: str) -> dict:
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
 
-        process = subprocess.run(
+        # Use Popen for better process control and cleanup
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=120,  # 120 second timeout per URL
             cwd=BACKEND_DIR,
             env=env,
             encoding="utf-8",
             errors="replace"
         )
 
-        if process.returncode != 0:
-            error_msg = process.stderr or process.stdout or 'Unknown error'
+        # Wait for process with timeout
+        try:
+            stdout, stderr = process.communicate(timeout=120)
+            returncode = process.returncode
+        except subprocess.TimeoutExpired:
+            # Kill the process and all its children on timeout
+            print(f"  [PARALLEL] TIMEOUT: {url} - killing process tree")
+            try:
+                # Try to kill process group (includes child processes like Chrome)
+                if PSUTIL_AVAILABLE:
+                    # Use psutil to kill process tree (works on Windows and Linux)
+                    parent = psutil.Process(process.pid)
+                    children = parent.children(recursive=True)
+                    for child in children:
+                        try:
+                            child.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+                    parent.kill()
+                    process.wait(timeout=5)
+                elif hasattr(os, 'killpg'):
+                    # Unix: kill process group
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    process.wait(timeout=5)
+                else:
+                    # Fallback: just kill the main process
+                    process.kill()
+                    process.wait(timeout=5)
+            except Exception as kill_err:
+                print(f"  [PARALLEL] Error killing process: {kill_err}")
+            return {"success": False, "url": url, "error": "Scraper timed out (120s)"}
+        finally:
+            # Ensure process is cleaned up
+            if process and process.poll() is None:
+                try:
+                    if PSUTIL_AVAILABLE:
+                        # Kill process tree
+                        try:
+                            parent = psutil.Process(process.pid)
+                            children = parent.children(recursive=True)
+                            for child in children:
+                                try:
+                                    child.kill()
+                                except psutil.NoSuchProcess:
+                                    pass
+                            parent.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+                    else:
+                        process.kill()
+                    process.wait(timeout=5)
+                except Exception:
+                    pass
+
+        if returncode != 0:
+            error_msg = stderr or stdout or 'Unknown error'
             print(f"  [PARALLEL] FAILED: {url} - {error_msg[:200]}")
             return {"success": False, "url": url, "error": f"Scraper failed: {error_msg[:500]}"}
 
@@ -2776,9 +2881,14 @@ def scrape_single_url(url: str) -> dict:
 
         return {"success": False, "url": url, "error": "Scraper output file not found or URL not matched"}
 
-    except subprocess.TimeoutExpired:
-        return {"success": False, "url": url, "error": "Scraper timed out (120s)"}
     except Exception as e:
+        # Ensure process cleanup on any exception
+        if process and process.poll() is None:
+            try:
+                process.kill()
+                process.wait(timeout=5)
+            except Exception:
+                pass
         return {"success": False, "url": url, "error": str(e)}
 
 
@@ -2804,6 +2914,10 @@ def scrape_urls(
     print(f"  SCRAPER_SCRIPT: {SCRAPER_SCRIPT}")
     print(f"  Script exists: {os.path.exists(SCRAPER_SCRIPT)}")
     print(f"  Python executable: {shutil.which('python')}")
+
+    # Clean up zombie browser processes before starting new scrape
+    print(f"\n  [CLEANUP] Checking for zombie browser processes...")
+    cleanup_zombie_browser_processes()
 
     results = []
     errors = []

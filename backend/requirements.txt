@@ -6,6 +6,7 @@ bcrypt>=4.0.0
 psycopg2-binary>=2.9.9
 python-dotenv>=1.0.0
 pandas>=2.0.0
+psutil>=5.9.0
 
 # Scraper dependencies
 click>=8.0.0

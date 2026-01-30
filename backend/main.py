@@ -753,9 +753,11 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
             
             # Get products in this group from Thai Watsadu
             cur.execute("""
-                SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link
+                SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link,
+                       wg.name as watchlist_name
                 FROM watchlist_sku_group_products wsg
                 JOIN products p ON wsg.sku = p.sku AND p.retailer_id = %s
+                LEFT JOIN watchlist_sku_groups wg ON wsg.group_id = wg.group_id
                 WHERE wsg.group_id = %s
                 ORDER BY p.sku
             """, (base_retailer_id, group_id))
@@ -772,9 +774,9 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
             for char in ['/', '\\', '?', '*', '[', ']']:
                 sheet_name = sheet_name.replace(char, '-')
             ws.title = sheet_name
-            
+
             # Write header row
-            headers = ['Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
+            headers = ['Product Name', 'SKU', 'Brand', 'Category', 'S-dept', 'Thai Watsadu Price',
                       'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status']
             ws.append(headers)
             
@@ -871,16 +873,17 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
                             status = 'Most Expensive (Shared)'
                         else:
                             status = 'Most Expensive'
-                
+
                 # Write row data
                 ws.cell(row=row_num, column=1, value=bp["name"] or '')
                 ws.cell(row=row_num, column=2, value=bp["sku"] or '')
                 ws.cell(row=row_num, column=3, value=bp["brand"] or '')
                 ws.cell(row=row_num, column=4, value=bp["category"] or '')
-                
+                ws.cell(row=row_num, column=5, value=bp.get("watchlist_name") or '')
+
                 # Thai Watsadu price with hyperlink and color
                 if base_price:
-                    cell = ws.cell(row=row_num, column=5, value=base_price)
+                    cell = ws.cell(row=row_num, column=6, value=base_price)
                     if base_link:
                         cell.hyperlink = base_link
                     
@@ -913,7 +916,7 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
                 
                 # Retailer prices with hyperlinks and colors
                 for col_offset, retailer_name in enumerate(retailer_order):
-                    col_num = 6 + col_offset
+                    col_num = 7 + col_offset
                     data = get_retailer_data(retailer_data, retailer_name)
                     if data and data["price"]:
                         cell = ws.cell(row=row_num, column=col_num, value=data["price"])
@@ -954,21 +957,21 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
                         # Set hyperlink if not already set by color logic
                         if data["link"] and not cell.hyperlink:
                             cell.hyperlink = data["link"]
-                
+
                 # Status
-                ws.cell(row=row_num, column=11, value=status)
-                
+                ws.cell(row=row_num, column=12, value=status)
+
                 row_num += 1
-            
+
             # Auto-adjust column widths
             for col_num, header in enumerate(headers, 1):
                 ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max(len(header) + 2, 12)
-            
+
             # Save to BytesIO
             output = io.BytesIO()
             wb.save(output)
             output.seek(0)
-            
+
             return Response(
                 content=output.getvalue(),
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1559,8 +1562,11 @@ def export_products(
 
             # Build query for Thai Watsadu products (same logic as /api/products but without pagination)
             query = """
-                SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link
+                SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link,
+                       wg.name as watchlist_name
                 FROM products p
+                LEFT JOIN watchlist_sku_group_products wsgp ON p.sku = wsgp.sku AND p.retailer_id = 'twd'
+                LEFT JOIN watchlist_sku_groups wg ON wsgp.group_id = wg.group_id
                 WHERE p.retailer_id = %s
             """
             params = [base_retailer_id]
@@ -1673,7 +1679,7 @@ def export_products(
             ws.title = "Products"
 
             # Write header row
-            headers = ['Product Name', 'SKU', 'Brand', 'Category', 'Thai Watsadu Price',
+            headers = ['Product Name', 'SKU', 'Brand', 'Category', 'S-dept', 'Thai Watsadu Price',
                       'HomePro Price', 'MegaHome Price', 'Do Home Price', 'Boonthavorn Price', 'Global House Price', 'Status']
             ws.append(headers)
 
@@ -1778,10 +1784,11 @@ def export_products(
                 ws.cell(row=row_num, column=2, value=bp["sku"] or '')
                 ws.cell(row=row_num, column=3, value=bp["brand"] or '')
                 ws.cell(row=row_num, column=4, value=bp["category"] or '')
+                ws.cell(row=row_num, column=5, value=bp.get("watchlist_name") or '')
 
-                # Thai Watsadu price with hyperlink (column 5) and color
+                # Thai Watsadu price with hyperlink (column 6) and color
                 if base_price:
-                    cell = ws.cell(row=row_num, column=5, value=base_price)
+                    cell = ws.cell(row=row_num, column=6, value=base_price)
                     if base_link:
                         cell.hyperlink = base_link
                     
@@ -1812,9 +1819,9 @@ def export_products(
                     elif base_link:
                         cell.font = link_font
 
-                # Retailer prices with hyperlinks (columns 6-10) and colors
+                # Retailer prices with hyperlinks (columns 7-11) and colors
                 for col_offset, retailer_name in enumerate(retailer_order):
-                    col_num = 6 + col_offset
+                    col_num = 7 + col_offset
                     data = get_retailer_data(retailer_data, retailer_name)
                     if data and data["price"]:
                         cell = ws.cell(row=row_num, column=col_num, value=data["price"])
@@ -1856,8 +1863,8 @@ def export_products(
                         if data["link"] and not cell.hyperlink:
                             cell.hyperlink = data["link"]
 
-                # Status (column 11)
-                ws.cell(row=row_num, column=11, value=status)
+                # Status (column 12)
+                ws.cell(row=row_num, column=12, value=status)
 
                 row_num += 1
 

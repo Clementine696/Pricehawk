@@ -6,7 +6,7 @@ Designed to handle ~10,000 products efficiently.
 
 Features:
 - Limit mode: Update only N oldest products (ideal for hourly cron jobs)
-- Failure tracking: Skip products after 3 consecutive failures (scrape_fail_count)
+- Failure tracking: Tracks consecutive failures (scrape_fail_count)
 - Parallel processing across retailers
 - Batch processing within each retailer
 - Rate limiting to avoid being blocked
@@ -16,8 +16,8 @@ Features:
 Failure Handling:
 - On success: scrape_fail_count reset to 0
 - On failure: scrape_fail_count incremented, last_updated_at updated
-- Products with scrape_fail_count >= 3 are skipped
-- To retry failed products: UPDATE products SET scrape_fail_count = 0 WHERE scrape_fail_count >= 3
+- Products are continuously retried even after multiple failures
+- Failed products may come back online, so we keep trying
 
 Usage:
     python price_updater.py                    # Update all products
@@ -409,7 +409,8 @@ class PriceUpdater:
 
         Skips:
         - Unmatched/unverified retailer products (~50%+ of database)
-        - Products that have failed too many times (scrape_fail_count >= MAX_SCRAPE_FAILURES)
+
+        Note: Products are attempted even if they have high scrape_fail_count, as URLs may come back online.
 
         Args:
             retailer_id: Optional filter for specific retailer
@@ -428,7 +429,6 @@ class PriceUpdater:
                         p.scrape_fail_count
                     FROM products p
                     WHERE p.link IS NOT NULL AND p.link != ''
-                      AND (p.scrape_fail_count IS NULL OR p.scrape_fail_count < %s)
                       AND (
                           -- Include all Thai Watsadu products (base products)
                           p.retailer_id = 'twd'
@@ -441,7 +441,7 @@ class PriceUpdater:
                           )
                       )
                 """
-                params = [self.MAX_SCRAPE_FAILURES]
+                params = []
 
                 if retailer_id:
                     query += " AND p.retailer_id = %s"

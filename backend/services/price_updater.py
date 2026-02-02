@@ -867,9 +867,9 @@ class PriceUpdater:
 
             current_fails = (product.get('scrape_fail_count') or 0) + 1
             if current_fails >= self.MAX_SCRAPE_FAILURES:
-                logger.warning(f"  Product {product['sku']} reached max failures ({current_fails}), will be skipped in future runs")
+                logger.warning(f"  Product {product['sku']} has {current_fails} consecutive failures (marked as inactive)")
             else:
-                logger.info(f"  Recorded failure {current_fails}/{self.MAX_SCRAPE_FAILURES} for {product['sku']}")
+                logger.info(f"  Recorded failure {current_fails} for {product['sku']}")
 
         except Exception as e:
             logger.error(f"Failed to record scrape failure for {product['sku']}: {e}")

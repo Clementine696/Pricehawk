@@ -25,3 +25,6 @@ upload_matches.py > upload product pair
 
 # or up to 20 workers
 python services/price_updater.py --parallel 20
+
+python ./backend/scraper-url/adws/adw_ecommerce_product_scraper.py --urls-file test_urls.txt
+python adws/adw_ecommerce_product_scraper.py --urls-file test_urls.txt --output-file ./results/products.json

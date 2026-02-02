@@ -1905,13 +1905,16 @@ def get_price_history(
                 raise HTTPException(status_code=404, detail="Product not found")
 
             # Get price history for base product
+            # Use date-based query with extended range to ensure we get multiple data points
+            # This keeps all products on the same timeline
+            fetch_days = days + 2 if days <= 7 else days
             cur.execute("""
                 SELECT price, scraped_at
                 FROM price_history
                 WHERE product_id = %s
                   AND scraped_at >= NOW() - INTERVAL '%s days'
                 ORDER BY scraped_at ASC
-            """, (product_id, days))
+            """, (product_id, fetch_days))
             base_history = cur.fetchall()
 
             result = {
@@ -1951,7 +1954,7 @@ def get_price_history(
                     WHERE product_id = %s
                       AND scraped_at >= NOW() - INTERVAL '%s days'
                     ORDER BY scraped_at ASC
-                """, (match["product_id"], days))
+                """, (match["product_id"], fetch_days))
                 match_history = cur.fetchall()
 
                 result["matched_products"].append({
@@ -1968,6 +1971,145 @@ def get_price_history(
                 })
 
             return result
+
+
+@app.get("/api/products/{product_id}/price-history/export")
+def export_price_history(
+    product_id: int,
+    days: int = 30,
+    user: dict = Depends(get_current_user)
+):
+    """Export price history to Excel"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get base product info with watchlist
+            cur.execute("""
+                SELECT p.product_id, p.name, p.sku, p.brand, p.category, r.name as retailer_name,
+                       wg.name as watchlist_name
+                FROM products p
+                JOIN retailers r ON p.retailer_id = r.retailer_id
+                LEFT JOIN watchlist_sku_group_products wsgp ON p.sku = wsgp.sku AND p.retailer_id = 'twd'
+                LEFT JOIN watchlist_sku_groups wg ON wsgp.group_id = wg.group_id
+                WHERE p.product_id = %s
+            """, (product_id,))
+            base_product = cur.fetchone()
+            if not base_product:
+                raise HTTPException(status_code=404, detail="Product not found")
+
+            # Get price history for base product
+            # Use date-based query with extended range to ensure we get multiple data points
+            fetch_days = days + 2 if days <= 7 else days
+            cur.execute("""
+                SELECT price, scraped_at
+                FROM price_history
+                WHERE product_id = %s
+                  AND scraped_at >= NOW() - INTERVAL '%s days'
+                ORDER BY scraped_at ASC
+            """, (product_id, fetch_days))
+            base_history = cur.fetchall()
+
+            # Define fixed retailer order (excluding Thai Watsadu which is base)
+            all_retailers = ['HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House']
+
+            # Get verified correct matches
+            cur.execute("""
+                SELECT DISTINCT ON (pm.candidate_product_id)
+                    p.product_id, p.name, r.name as retailer_name
+                FROM product_matches pm
+                JOIN products p ON pm.candidate_product_id = p.product_id
+                JOIN retailers r ON p.retailer_id = r.retailer_id
+                WHERE pm.base_product_id = %s
+                  AND pm.verified_by_user = TRUE
+                  AND pm.is_same = TRUE
+                ORDER BY pm.candidate_product_id, pm.confidence_score DESC NULLS LAST
+            """, (product_id,))
+            matches = cur.fetchall()
+
+            # Get price history for each match
+            matched_histories = {}
+            for match in matches:
+                cur.execute("""
+                    SELECT price, scraped_at
+                    FROM price_history
+                    WHERE product_id = %s
+                      AND scraped_at >= NOW() - INTERVAL '%s days'
+                    ORDER BY scraped_at ASC
+                """, (match["product_id"], fetch_days))
+                matched_histories[match["retailer_name"]] = cur.fetchall()
+
+            # Create Excel workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Price History"
+
+            # Write headers with fixed retailer columns
+            headers = ['Timestamp', 'SKU', 'Product Name', 'Brand', 'Sub-Dept', base_product["retailer_name"]]
+            for retailer in all_retailers:
+                headers.append(retailer)
+            ws.append(headers)
+
+            # Style header row
+            header_font = Font(bold=True)
+            for col_num, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.font = header_font
+
+            # Collect all unique dates with timestamps
+            all_timestamps = {}
+            for row in base_history:
+                date_key = row["scraped_at"].date()
+                if date_key not in all_timestamps:
+                    all_timestamps[date_key] = row["scraped_at"]
+            for history in matched_histories.values():
+                for row in history:
+                    date_key = row["scraped_at"].date()
+                    if date_key not in all_timestamps:
+                        all_timestamps[date_key] = row["scraped_at"]
+
+            # Sort dates
+            sorted_dates = sorted(all_timestamps.keys())
+
+            # Write data rows
+            for date in sorted_dates:
+                timestamp = all_timestamps[date]
+                row_data = [
+                    timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+                    base_product["sku"] or '',
+                    base_product["name"] or '',
+                    base_product["brand"] or '',
+                    base_product["watchlist_name"] or ''
+                ]
+
+                # Base product price for this date
+                base_price = next((float(h["price"]) for h in base_history
+                                  if h["scraped_at"].date() == date), None)
+                row_data.append(base_price if base_price else '')
+
+                # All retailers prices in fixed order
+                for retailer in all_retailers:
+                    if retailer in matched_histories:
+                        match_price = next((float(h["price"]) for h in matched_histories[retailer]
+                                          if h["scraped_at"].date() == date), None)
+                        row_data.append(match_price if match_price else '')
+                    else:
+                        row_data.append('')
+
+                ws.append(row_data)
+
+            # Auto-adjust column widths
+            for col_num, header in enumerate(headers, 1):
+                ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max(len(str(header)) + 2, 12)
+
+            # Save to BytesIO
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+
+            return Response(
+                content=output.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename=price_history_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
+            )
 
 
 @app.get("/api/products/{product_id}")

@@ -988,43 +988,75 @@ class ThaiWatsaduExtractor(ProductExtractor):
                 elif isinstance(image, str):
                     product.images = [image]
 
-        # 2b. Extract price from __NEXT_DATA__ (Thai Watsadu uses Next.js)
-        # This is more reliable than JSON-LD and handles bulk vs individual pricing correctly
-        # The individual price is in: "price":"169" (with prUname:"EACH")
-        # The bulk price is in: "proPrice":160 (promotional bulk price - we want to AVOID this)
+        # 2b. Extract price from rendered HTML (Thai Watsadu)
+        # Extract from the actual displayed price elements in the DOM
+        # IMPORTANT: Always try HTML extraction for Thai Watsadu as it's more reliable than JSON-LD
+        # We'll override JSON-LD price if HTML price is found
+        html_current_price = None
+        html_original_price = None
+
+        # CASE 1: Pack/Multiple pricing - Find "1 ชิ้น" (1 piece) price
+        # Look for the container with "1 ชิ้น" text and extract adjacent price
+        pack_price_pattern = r'<div[^>]*class="[^"]*whitespace-nowrap[^"]*font-semibold[^"]*"[^>]*>1\s*(?:<!--|&nbsp;|<!--\s*-->)\s*ชิ้น</div>(?:(?!</div>).)*?<div[^>]*class="[^"]*text-center[^"]*text-primary[^"]*text-\[24px\][^"]*font-price[^"]*"[^>]*>([\d,]+)</div>'
+        pack_match = re.search(pack_price_pattern, html_content, re.DOTALL | re.IGNORECASE)
+        if pack_match:
+            try:
+                price_str = pack_match.group(1).replace(',', '')
+                html_current_price = float(price_str)
+            except (ValueError, TypeError):
+                pass
+
+        # CASE 2 & 3: Normal and Coupon case - Red price with text-redPrice class
+        # This covers both discount and coupon scenarios
+        if not html_current_price:
+            # Look for: <span class="ms-1 font-price text-redPrice text-2xl">1,830</span>
+            red_price_pattern = r'<span[^>]*class="[^"]*ms-1[^"]*font-price[^"]*text-redPrice[^"]*text-2xl[^"]*"[^>]*>([\d,]+)</span>'
+            red_match = re.search(red_price_pattern, html_content, re.IGNORECASE)
+            if red_match:
+                try:
+                    price_str = red_match.group(1).replace(',', '')
+                    html_current_price = float(price_str)
+                except (ValueError, TypeError):
+                    pass
+
+        # Extract original price (ราคาเดิม with line-through)
+        # Look for: <div class="text-grayDark line-through text-lg">ราคาเดิม<!-- --> <!-- -->2,180.00</div>
+        original_price_pattern = r'<div[^>]*class="[^"]*text-grayDark[^"]*line-through[^"]*"[^>]*>ราคาเดิม(?:<!--|&nbsp;|<!--\s*-->|\s)*(?:<!--|&nbsp;|<!--\s*-->|\s)*([\d,]+(?:\.\d{2})?)</div>'
+        original_match = re.search(original_price_pattern, html_content, re.IGNORECASE)
+        if original_match:
+            try:
+                price_str = original_match.group(1).replace(',', '')
+                html_original_price = float(price_str)
+            except (ValueError, TypeError):
+                pass
+
+        # Override with HTML prices if found (HTML is more reliable than JSON-LD)
+        if html_current_price:
+            product.current_price = html_current_price
+        if html_original_price:
+            product.original_price = html_original_price
+
+        # Fallback: Try __NEXT_DATA__ JSON if HTML extraction completely failed
         if not product.current_price:
-            # Look for __NEXT_DATA__ JSON
             next_data_pattern = r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>'
             next_data_match = re.search(next_data_pattern, html_content, re.DOTALL)
             if next_data_match:
                 try:
                     next_data_str = next_data_match.group(1)
-                    # Look for the individual price pattern: "price":"169" with EACH unit
-                    # This pattern appears in the product data, NOT the bulk promo section
                     individual_price_pattern = r'"price"\s*:\s*"(\d+)"[^}]*"prUname"\s*:\s*"EACH'
                     individual_match = re.search(individual_price_pattern, next_data_str)
                     if individual_match:
                         product.current_price = float(individual_match.group(1))
-                    else:
-                        # Fallback: look for "price":"XXX" where XXX is a number (not proPrice)
-                        # But avoid proPrice pattern
-                        price_pattern = r'"price"\s*:\s*"(\d+)"'
-                        price_matches = re.findall(price_pattern, next_data_str)
-                        if price_matches:
-                            # Get the first numeric price that's not in proPrice context
-                            for price_str in price_matches:
-                                price = float(price_str)
-                                if price > 0:
-                                    product.current_price = price
-                                    break
                 except Exception:
                     pass
 
-            # Also extract original price (disc field = original/discount price)
-            if not product.original_price and next_data_match:
+        # Fallback: Try __NEXT_DATA__ JSON for original price
+        if not product.original_price:
+            next_data_pattern = r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>'
+            next_data_match = re.search(next_data_pattern, html_content, re.DOTALL)
+            if next_data_match:
                 try:
                     next_data_str = next_data_match.group(1)
-                    # Look for disc (original price before discount): "disc":"180.00"
                     disc_pattern = r'"disc"\s*:\s*"([\d.]+)"'
                     disc_match = re.search(disc_pattern, next_data_str)
                     if disc_match:

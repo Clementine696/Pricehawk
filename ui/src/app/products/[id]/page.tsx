@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw, TrendingUp, TrendingDown, Download, Calendar } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw, TrendingUp, TrendingDown, Download, Calendar, CheckCircle, AlertCircle } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import {
   LineChart,
@@ -32,6 +32,7 @@ interface Product {
   retailer_name: string;
   retailer_id: string;
   last_updated_at: string | null;
+  scrape_fail_count: number;
 }
 
 interface Match {
@@ -685,21 +686,41 @@ export default function ProductDetailPage() {
                 )}
               </div>
 
-              {product.link && (
-                <a
-                  href={product.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-4 flex items-center gap-2 text-cyan-500 hover:text-cyan-600"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  View on {product.retailer_name}
-                </a>
-              )}
+              {/* View link and Updated timestamp on same row */}
+              <div className="mt-4 flex items-center justify-between">
+                {product.link && (
+                  <a
+                    href={product.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-cyan-500 hover:text-cyan-600"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    View on {product.retailer_name}
+                  </a>
+                )}
+                <div className="text-sm text-gray-500">
+                  Updated: {formatLastUpdated(product.last_updated_at)}
+                </div>
+              </div>
 
-              {/* Updated timestamp */}
-              <div className="mt-2 text-sm text-gray-500">
-                Updated: {formatLastUpdated(product.last_updated_at)}
+              {/* Product Status Indicator */}
+              <div className="mt-4">
+                {product.scrape_fail_count >= 3 ? (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                    <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-800">Inactive Product</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+                    <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-green-800">Active Product</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Spacer to push content to bottom */}
@@ -852,7 +873,26 @@ export default function ProductDetailPage() {
                                 </div>
 
                                 {/* Verification Actions */}
-                                <div className="mt-4 pt-3 border-t border-gray-100 flex justify-end gap-3">
+                                <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center gap-3">
+                                  {/* Left: Active/Inactive Status */}
+                                  <div>
+                                    {match.verified_by_user && match.is_same && (
+                                      match.product.scrape_fail_count >= 3 ? (
+                                        <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
+                                          <AlertCircle className="w-4 h-4" />
+                                          Inactive Product
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-1.5 text-xs text-green-600 font-medium">
+                                          <CheckCircle className="w-4 h-4" />
+                                          Active Product
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+
+                                  {/* Right: Verification Buttons */}
+                                  <div className="flex gap-3">
                                   {match.verified_by_user ? (
                                     <>
                                       <button
@@ -899,6 +939,7 @@ export default function ProductDetailPage() {
                                       </button>
                                     </>
                                   )}
+                                  </div>
                                 </div>
                               </div>
                             ))}

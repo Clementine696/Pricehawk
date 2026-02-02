@@ -3,7 +3,10 @@
     "allow": [
       "Bash(move AI_AGENT_INSTRUCTIONS.md ai_sum )",
       "Bash(move:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(git diff:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

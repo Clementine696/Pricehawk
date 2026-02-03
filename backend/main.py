@@ -3560,29 +3560,30 @@ def manual_comparison(
 # ==================== PRICE ALERTS API ====================
 
 @app.get("/api/price-alerts/settings")
-async def get_alert_settings(user: dict = Depends(get_current_user)):
+def get_alert_settings(user: dict = Depends(get_current_user)):
     """Get current alert configuration"""
-    async with db_pool.acquire() as conn:
-        result = await conn.fetchrow(
-            "SELECT * FROM price_alert_settings LIMIT 1"
-        )
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM price_alert_settings LIMIT 1")
+        result = cur.fetchone()
 
         if not result:
             # Create default settings if none exist
-            result = await conn.fetchrow("""
+            cur.execute("""
                 INSERT INTO price_alert_settings
-                (schedule_frequency, schedule_time, enabled, setting_id)
-                VALUES ('daily', '09:00:00', true, 1)
-                ON CONFLICT (setting_id) DO UPDATE
-                SET schedule_frequency = EXCLUDED.schedule_frequency
+                (schedule_frequency, schedule_time, enabled)
+                VALUES ('daily', '09:00:00', true)
                 RETURNING *
             """)
+            result = cur.fetchone()
+            conn.commit()
 
-    return dict(result)
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, result))
 
 
 @app.put("/api/price-alerts/settings")
-async def update_alert_settings(
+def update_alert_settings(
     data: dict,
     user: dict = Depends(get_current_user)
 ):
@@ -3593,48 +3594,71 @@ async def update_alert_settings(
         raise HTTPException(status_code=400, detail="Invalid schedule_frequency")
 
     # Validate schedule_time format if provided
-    schedule_time = data.get('schedule_time')
+    schedule_time = data.get('schedule_time', None)
     if schedule_time and not isinstance(schedule_time, str):
         raise HTTPException(status_code=400, detail="schedule_time must be a string")
 
+    # Default to '09:00:00' if not provided
+    if not schedule_time:
+        schedule_time = '09:00:00'
+
     # Validate schedule_day if weekly
-    schedule_day = data.get('schedule_day')
+    schedule_day = data.get('schedule_day', None)
     if frequency == 'weekly':
         if schedule_day is None or not (0 <= schedule_day <= 6):
             raise HTTPException(status_code=400, detail="schedule_day must be 0-6 for weekly frequency")
 
     enabled = data.get('enabled', True)
 
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE price_alert_settings SET
-                schedule_frequency = $1,
-                schedule_time = $2,
-                schedule_day = $3,
-                enabled = $4,
-                updated_at = CURRENT_TIMESTAMP
-        """, frequency, schedule_time, schedule_day, enabled)
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        # Check if settings row exists
+        cur.execute("SELECT COUNT(*) FROM price_alert_settings")
+        count = cur.fetchone()[0]
+
+        if count == 0:
+            # Insert new settings
+            cur.execute("""
+                INSERT INTO price_alert_settings
+                (schedule_frequency, schedule_time, schedule_day, enabled)
+                VALUES (%s, %s, %s, %s)
+            """, (frequency, schedule_time, schedule_day, enabled))
+        else:
+            # Update existing settings
+            cur.execute("""
+                UPDATE price_alert_settings SET
+                    schedule_frequency = %s,
+                    schedule_time = %s,
+                    schedule_day = %s,
+                    enabled = %s,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (frequency, schedule_time, schedule_day, enabled))
+
+        conn.commit()
 
     return {"success": True}
 
 
 @app.get("/api/price-alerts/emails")
-async def get_alert_emails(user: dict = Depends(get_current_user)):
+def get_alert_emails(user: dict = Depends(get_current_user)):
     """List all email recipients"""
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM price_alert_emails ORDER BY created_at"
-        )
-    return [dict(row) for row in rows]
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT email_id, email, verified, created_at::text as created_at FROM price_alert_emails ORDER BY created_at")
+        rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in rows]
 
 
 @app.post("/api/price-alerts/emails")
-async def add_alert_email(
+def add_alert_email(
     data: dict,
     user: dict = Depends(get_current_user)
 ):
     """Add email to recipient list"""
     import re
+    import psycopg2
 
     email = data.get('email', '').strip().lower()
 
@@ -3642,51 +3666,61 @@ async def add_alert_email(
     if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
         raise HTTPException(status_code=400, detail="Invalid email format")
 
-    async with db_pool.acquire() as conn:
+    with get_db() as conn:
+        cur = conn.cursor()
         try:
-            result = await conn.fetchrow("""
+            cur.execute("""
                 INSERT INTO price_alert_emails (email, verified)
-                VALUES ($1, false)
-                RETURNING *
-            """, email)
-            return dict(result)
-        except asyncpg.UniqueViolationError:
+                VALUES (%s, false)
+                RETURNING email_id, email, verified, created_at::text as created_at
+            """, (email,))
+            result = cur.fetchone()
+            conn.commit()
+            columns = [desc[0] for desc in cur.description]
+            return dict(zip(columns, result))
+        except psycopg2.IntegrityError:
+            conn.rollback()
             raise HTTPException(status_code=400, detail="Email already exists")
 
 
 @app.delete("/api/price-alerts/emails/{email_id}")
-async def remove_alert_email(
+def remove_alert_email(
     email_id: int,
     user: dict = Depends(get_current_user)
 ):
     """Remove email from recipient list"""
-    async with db_pool.acquire() as conn:
-        result = await conn.execute(
-            "DELETE FROM price_alert_emails WHERE email_id = $1",
-            email_id
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM price_alert_emails WHERE email_id = %s",
+            (email_id,)
         )
-        if result == "DELETE 0":
+        if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Email not found")
+        conn.commit()
     return {"success": True}
 
 
 @app.get("/api/price-alerts/history")
-async def get_alert_history(
+def get_alert_history(
     limit: int = 50,
     user: dict = Depends(get_current_user)
 ):
     """Get recent alert send history"""
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch("""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
             SELECT * FROM price_alert_history
             ORDER BY sent_at DESC
-            LIMIT $1
-        """, limit)
-    return [dict(row) for row in rows]
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in rows]
 
 
 @app.post("/api/price-alerts/test")
-async def send_test_alert(
+def send_test_alert(
     data: dict,
     user: dict = Depends(get_current_user)
 ):

@@ -6,7 +6,8 @@
       "Bash(wc:*)",
       "Bash(git diff:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(psql:*)"
     ]
   }
 }

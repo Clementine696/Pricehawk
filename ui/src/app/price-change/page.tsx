@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import MainLayout from '@/components/layout/MainLayout';
+import { MainLayout } from '@/components/layout/MainLayout';
 import { apiFetch } from '@/lib/api';
-import { TrashIcon, PlusIcon, BellIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import { Trash2, Plus, Bell, CheckCircle2 } from 'lucide-react';
 
 interface AlertSettings {
   setting_id: number;
@@ -249,7 +249,7 @@ export default function PriceChangePage() {
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
-            <BellIcon className="w-8 h-8 text-cyan-500" />
+            <Bell className="w-8 h-8 text-cyan-500" />
             <h1 className="text-3xl font-bold text-gray-900">Price Change Alerts</h1>
           </div>
           <p className="text-gray-600">
@@ -266,7 +266,7 @@ export default function PriceChangePage() {
 
         {success && (
           <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 flex items-center gap-2">
-            <CheckCircleIcon className="w-5 h-5" />
+            <CheckCircle2 className="w-5 h-5" />
             {success}
           </div>
         )}
@@ -379,7 +379,7 @@ export default function PriceChangePage() {
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center">
-                        <BellIcon className="w-5 h-5 text-cyan-600" />
+                        <Bell className="w-5 h-5 text-cyan-600" />
                       </div>
                       <div>
                         <p className="font-medium text-gray-900">{email.email}</p>
@@ -393,7 +393,7 @@ export default function PriceChangePage() {
                       className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                       title="Remove email"
                     >
-                      <TrashIcon className="w-5 h-5" />
+                      <Trash2 className="w-5 h-5" />
                     </button>
                   </div>
                 ))
@@ -414,7 +414,7 @@ export default function PriceChangePage() {
                     setNewEmail(e.target.value);
                     setEmailError('');
                   }}
-                  onKeyPress={(e) => {
+                  onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       handleAddEmail();
                     }
@@ -427,7 +427,7 @@ export default function PriceChangePage() {
                   onClick={handleAddEmail}
                   className="px-6 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 font-medium flex items-center gap-2"
                 >
-                  <PlusIcon className="w-5 h-5" />
+                  <Plus className="w-5 h-5" />
                   Add
                 </button>
               </div>

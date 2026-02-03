@@ -43,10 +43,10 @@ CREATE TABLE IF NOT EXISTS price_alert_history (
 -- Create index for history queries
 CREATE INDEX IF NOT EXISTS idx_alert_history_sent_at ON price_alert_history(sent_at DESC);
 
--- Insert default settings
-INSERT INTO price_alert_settings (schedule_frequency, schedule_time, enabled, setting_id)
-VALUES ('daily', '09:00:00', TRUE, 1)
-ON CONFLICT DO NOTHING;
+-- Insert default settings (only if table is empty)
+INSERT INTO price_alert_settings (schedule_frequency, schedule_time, enabled)
+SELECT 'daily', '09:00:00', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM price_alert_settings LIMIT 1);
 
 -- Comments for documentation
 COMMENT ON TABLE price_alert_settings IS 'Global settings for price change alerts (single row)';

@@ -1023,7 +1023,7 @@ export default function ProductDetailPage() {
               <span className="text-sm text-gray-600">From:</span>
               <button
                 className="inline-flex items-center gap-2 px-3 h-9 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md text-gray-600"
-                onClick={() => document.getElementById('custom-start-date')?.showPicker?.()}
+                onClick={() => (document.getElementById('custom-start-date') as HTMLInputElement)?.showPicker?.()}
               >
                 <Calendar className="h-4 w-4" />
                 {customStartDate || 'Start date'}
@@ -1039,7 +1039,7 @@ export default function ProductDetailPage() {
               <span className="text-sm text-gray-600">To:</span>
               <button
                 className="inline-flex items-center gap-2 px-3 h-9 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md text-gray-600"
-                onClick={() => document.getElementById('custom-end-date')?.showPicker?.()}
+                onClick={() => (document.getElementById('custom-end-date') as HTMLInputElement)?.showPicker?.()}
               >
                 <Calendar className="h-4 w-4" />
                 {customEndDate || 'End date'}

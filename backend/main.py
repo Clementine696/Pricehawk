@@ -3561,6 +3561,155 @@ def manual_comparison(
             }
 
 
+# ==================== PRICE ALERTS API ====================
+
+@app.get("/api/price-alerts/settings")
+async def get_alert_settings(user: dict = Depends(get_current_user)):
+    """Get current alert configuration"""
+    async with db_pool.acquire() as conn:
+        result = await conn.fetchrow(
+            "SELECT * FROM price_alert_settings LIMIT 1"
+        )
+
+        if not result:
+            # Create default settings if none exist
+            result = await conn.fetchrow("""
+                INSERT INTO price_alert_settings
+                (schedule_frequency, schedule_time, enabled, setting_id)
+                VALUES ('daily', '09:00:00', true, 1)
+                ON CONFLICT (setting_id) DO UPDATE
+                SET schedule_frequency = EXCLUDED.schedule_frequency
+                RETURNING *
+            """)
+
+    return dict(result)
+
+
+@app.put("/api/price-alerts/settings")
+async def update_alert_settings(
+    data: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Update schedule configuration"""
+    # Validate frequency
+    frequency = data.get('schedule_frequency')
+    if frequency not in ['immediate', 'hourly', 'daily', 'weekly']:
+        raise HTTPException(status_code=400, detail="Invalid schedule_frequency")
+
+    # Validate schedule_time format if provided
+    schedule_time = data.get('schedule_time')
+    if schedule_time and not isinstance(schedule_time, str):
+        raise HTTPException(status_code=400, detail="schedule_time must be a string")
+
+    # Validate schedule_day if weekly
+    schedule_day = data.get('schedule_day')
+    if frequency == 'weekly':
+        if schedule_day is None or not (0 <= schedule_day <= 6):
+            raise HTTPException(status_code=400, detail="schedule_day must be 0-6 for weekly frequency")
+
+    enabled = data.get('enabled', True)
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE price_alert_settings SET
+                schedule_frequency = $1,
+                schedule_time = $2,
+                schedule_day = $3,
+                enabled = $4,
+                updated_at = CURRENT_TIMESTAMP
+        """, frequency, schedule_time, schedule_day, enabled)
+
+    return {"success": True}
+
+
+@app.get("/api/price-alerts/emails")
+async def get_alert_emails(user: dict = Depends(get_current_user)):
+    """List all email recipients"""
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM price_alert_emails ORDER BY created_at"
+        )
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/price-alerts/emails")
+async def add_alert_email(
+    data: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Add email to recipient list"""
+    import re
+
+    email = data.get('email', '').strip().lower()
+
+    # Validate email format
+    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+
+    async with db_pool.acquire() as conn:
+        try:
+            result = await conn.fetchrow("""
+                INSERT INTO price_alert_emails (email, verified)
+                VALUES ($1, false)
+                RETURNING *
+            """, email)
+            return dict(result)
+        except asyncpg.UniqueViolationError:
+            raise HTTPException(status_code=400, detail="Email already exists")
+
+
+@app.delete("/api/price-alerts/emails/{email_id}")
+async def remove_alert_email(
+    email_id: int,
+    user: dict = Depends(get_current_user)
+):
+    """Remove email from recipient list"""
+    async with db_pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM price_alert_emails WHERE email_id = $1",
+            email_id
+        )
+        if result == "DELETE 0":
+            raise HTTPException(status_code=404, detail="Email not found")
+    return {"success": True}
+
+
+@app.get("/api/price-alerts/history")
+async def get_alert_history(
+    limit: int = 50,
+    user: dict = Depends(get_current_user)
+):
+    """Get recent alert send history"""
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT * FROM price_alert_history
+            ORDER BY sent_at DESC
+            LIMIT $1
+        """, limit)
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/price-alerts/test")
+async def send_test_alert(
+    data: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Send test email to verify configuration"""
+    email = data.get('email', '').strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email required")
+
+    from services.email_service import EmailService
+
+    email_service = EmailService()
+    success = email_service.send_test_email(email)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to send test email. Check SMTP configuration.")
+
+    return {"success": True, "message": f"Test email sent to {email}"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

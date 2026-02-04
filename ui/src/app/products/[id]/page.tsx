@@ -1022,13 +1022,13 @@ export default function ProductDetailPage() {
             <div className="flex flex-wrap items-center gap-4 mb-6">
               <div className="flex items-center gap-2">
                 <label htmlFor="custom-start-date" className="text-sm text-gray-700">From:</label>
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-white pointer-events-none z-10" />
+                <div className="relative group">
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 group-hover:text-white pointer-events-none z-10 transition-colors" />
                   <input
                     id="custom-start-date"
                     type="date"
                     placeholder="Start date"
-                    className="pl-10 pr-3 py-2 text-sm border-0 bg-cyan-400 hover:bg-cyan-500 rounded-md text-white placeholder-white focus:outline-none focus:ring-2 focus:ring-cyan-600 cursor-pointer"
+                    className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white hover:bg-cyan-400 hover:border-cyan-400 rounded-md text-gray-700 hover:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors"
                     value={customStartDate}
                     onChange={(e) => setCustomStartDate(e.target.value)}
                   />
@@ -1037,13 +1037,13 @@ export default function ProductDetailPage() {
 
               <div className="flex items-center gap-2">
                 <label htmlFor="custom-end-date" className="text-sm text-gray-700">To:</label>
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-white pointer-events-none z-10" />
+                <div className="relative group">
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 group-hover:text-white pointer-events-none z-10 transition-colors" />
                   <input
                     id="custom-end-date"
                     type="date"
                     placeholder="End date"
-                    className="pl-10 pr-3 py-2 text-sm border-0 bg-cyan-400 hover:bg-cyan-500 rounded-md text-white placeholder-white focus:outline-none focus:ring-2 focus:ring-cyan-600 cursor-pointer"
+                    className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white hover:bg-cyan-400 hover:border-cyan-400 rounded-md text-gray-700 hover:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors"
                     value={customEndDate}
                     onChange={(e) => setCustomEndDate(e.target.value)}
                   />

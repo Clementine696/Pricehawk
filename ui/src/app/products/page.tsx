@@ -145,7 +145,7 @@ function MultiSelect({
 
       {isOpen && (
         <div
-          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col relative"
+          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col"
           style={{
             width: dropdownWidth ? `${dropdownWidth}px` : '100%',
             minWidth: '100%'

@@ -227,10 +227,16 @@ export default function ProductDetailPage() {
     try {
       let url = `/api/products/${productId}/price-history`;
       
-      if (showCustomRange && customStartDate && customEndDate) {
-        // Use custom date range
-        const startStr = format(customStartDate, 'yyyy-MM-dd');
-        const endStr = format(customEndDate, 'yyyy-MM-dd');
+      if (showCustomRange && (customStartDate || customEndDate)) {
+        // Use custom date range with defaults:
+        // - If only start date: use today as end date
+        // - If only end date: use 30 days before as start date
+        const startStr = customStartDate 
+          ? format(customStartDate, 'yyyy-MM-dd')
+          : format(new Date(customEndDate!.getTime() - 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd');
+        const endStr = customEndDate 
+          ? format(customEndDate, 'yyyy-MM-dd') 
+          : format(new Date(), 'yyyy-MM-dd');
         url += `?start_date=${startStr}&end_date=${endStr}`;
       } else {
         // Use days parameter
@@ -1104,12 +1110,12 @@ export default function ProductDetailPage() {
 
               <button
                 onClick={() => {
-                  if (customStartDate && customEndDate) {
+                  if (customStartDate || customEndDate) {
                     // Trigger refetch with custom dates
                     fetchPriceHistory();
                   }
                 }}
-                disabled={!customStartDate || !customEndDate}
+                disabled={!customStartDate && !customEndDate}
                 className="ml-auto px-3 h-9 text-sm rounded-md font-medium bg-cyan-500 text-white hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Apply
@@ -1236,11 +1242,7 @@ export default function ProductDetailPage() {
                       className="text-gray-600"
                       tickFormatter={(value: string) => {
                         const date = new Date(value);
-                        // Show year if the date range includes different years or is a custom range
-                        const showYear = showCustomRange || historyDays > 180;
-                        if (showYear) {
-                          return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
-                        }
+                        // Always show same format for consistency
                         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                       }}
                     />

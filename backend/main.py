@@ -1171,7 +1171,7 @@ def get_products(
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
     watched_only: Optional[bool] = False,
-    watchlist_group_id: Optional[int] = None,
+    watchlist_group_id: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """Get Thai Watsadu products with price comparison across retailers"""
@@ -1193,6 +1193,7 @@ def get_products(
             # Parse comma-separated category and brand values for multi-select
             category_list = [c.strip() for c in category.split(',')] if category else []
             brand_list = [b.strip() for b in brand.split(',')] if brand else []
+            watchlist_list = [w.strip() for w in watchlist_group_id.split(',')] if watchlist_group_id else []
 
             # Get user's watched categories if watched_only is enabled
             watched_categories = []
@@ -1340,11 +1341,12 @@ def get_products(
                     params.append(user_id)
 
             # Filter by watchlist group (SKU-based watchlist)
-            if watchlist_group_id:
-                query += """ AND p.sku IN (
-                    SELECT sku FROM watchlist_sku_group_products WHERE group_id = %s
+            if watchlist_list:
+                placeholders = ','.join(['%s'] * len(watchlist_list))
+                query += f""" AND p.sku IN (
+                    SELECT sku FROM watchlist_sku_group_products WHERE group_id IN ({placeholders})
                 )"""
-                params.append(watchlist_group_id)
+                params.extend(watchlist_list)
 
             # Get total count
             count_query = query.replace("SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link", "SELECT COUNT(*)")
@@ -1531,7 +1533,7 @@ def export_products(
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
     watched_only: Optional[bool] = False,
-    watchlist_group_id: Optional[int] = None,
+    watchlist_group_id: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """Export products to Excel with price comparison across retailers (prices are hyperlinked to product pages)"""
@@ -1559,6 +1561,7 @@ def export_products(
             # Parse comma-separated category and brand values for multi-select
             category_list = [c.strip() for c in category.split(',')] if category else []
             brand_list = [b.strip() for b in brand.split(',')] if brand else []
+            watchlist_list = [w.strip() for w in watchlist_group_id.split(',')] if watchlist_group_id else []
 
             # Build query for Thai Watsadu products (same logic as /api/products but without pagination)
             query = """
@@ -1662,11 +1665,12 @@ def export_products(
                     params.append(user_id)
 
             # Filter by watchlist group (SKU-based watchlist)
-            if watchlist_group_id:
-                query += """ AND p.sku IN (
-                    SELECT sku FROM watchlist_sku_group_products WHERE group_id = %s
+            if watchlist_list:
+                placeholders = ','.join(['%s'] * len(watchlist_list))
+                query += f""" AND p.sku IN (
+                    SELECT sku FROM watchlist_sku_group_products WHERE group_id IN ({placeholders})
                 )"""
-                params.append(watchlist_group_id)
+                params.extend(watchlist_list)
 
             query += " ORDER BY p.product_id"
 

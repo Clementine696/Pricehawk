@@ -24,9 +24,11 @@ function MultiSelect({
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dropdownWidth, setDropdownWidth] = useState<number | null>(null); // null = auto width
+  const [dropdownHeight, setDropdownHeight] = useState(192); // Default 192px
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const resizeHandleRef = useRef<HTMLDivElement>(null);
+  const resizeHandleRightRef = useRef<HTMLDivElement>(null);
+  const resizeHandleBottomRef = useRef<HTMLDivElement>(null);
 
   // Normalize options to always be { value, label }
   const normalizedOptions = options.map(opt =>
@@ -52,29 +54,38 @@ function MultiSelect({
     }
   }, [isOpen]);
 
-  // Handle resize drag
+  // Handle resize drag (both horizontal and vertical)
   useEffect(() => {
     if (!isOpen) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!resizeHandleRef.current) return;
-      const handle = resizeHandleRef.current;
-      if (handle.dataset.dragging === 'true') {
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      if (!containerRect) return;
+
+      // Handle right resize (width)
+      if (resizeHandleRightRef.current?.dataset.dragging === 'true') {
         e.preventDefault();
-        const containerRect = containerRef.current?.getBoundingClientRect();
-        if (containerRect) {
-          const newWidth = e.clientX - containerRect.left;
-          setDropdownWidth(Math.max(200, Math.min(800, newWidth))); // Min 200px, max 800px
-        }
+        const newWidth = e.clientX - containerRect.left;
+        setDropdownWidth(Math.max(200, Math.min(800, newWidth)));
+      }
+
+      // Handle bottom resize (height)
+      if (resizeHandleBottomRef.current?.dataset.dragging === 'true') {
+        e.preventDefault();
+        const newHeight = e.clientY - containerRect.top - 70; // 70px for search input
+        setDropdownHeight(Math.max(100, Math.min(600, newHeight)));
       }
     };
 
     const handleMouseUp = () => {
-      if (resizeHandleRef.current) {
-        resizeHandleRef.current.dataset.dragging = 'false';
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
+      if (resizeHandleRightRef.current) {
+        resizeHandleRightRef.current.dataset.dragging = 'false';
       }
+      if (resizeHandleBottomRef.current) {
+        resizeHandleBottomRef.current.dataset.dragging = 'false';
+      }
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -143,67 +154,88 @@ function MultiSelect({
 
       {isOpen && (
         <div
-          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex"
+          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col"
           style={{
             width: dropdownWidth ? `${dropdownWidth}px` : '100%',
             minWidth: '100%'
           }}
         >
-          <div className="flex-1 flex flex-col min-w-0">
-            {/* Search input */}
-            <div className="p-2 border-b border-gray-200">
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search..."
-                  className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                />
+          <div className="flex flex-1 min-h-0">
+            <div className="flex-1 flex flex-col min-w-0">
+              {/* Search input */}
+              <div className="p-2 border-b border-gray-200">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search..."
+                    className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  />
+                </div>
+              </div>
+              {/* Options list */}
+              <div
+                className="overflow-auto"
+                style={{ height: `${dropdownHeight}px` }}
+              >
+                {filteredOptions.length === 0 ? (
+                  <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
+                ) : (
+                  filteredOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleOption(option.value)}
+                      className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
+                        selected.includes(option.value)
+                          ? 'bg-cyan-500 border-cyan-500'
+                          : 'border-gray-300'
+                      }`}>
+                        {selected.includes(option.value) && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      <span className="text-sm text-gray-900 break-words">{option.label}</span>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
-            {/* Options list */}
-            <div className="overflow-auto max-h-48">
-              {filteredOptions.length === 0 ? (
-                <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
-              ) : (
-                filteredOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => toggleOption(option.value)}
-                    className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
-                  >
-                    <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
-                      selected.includes(option.value)
-                        ? 'bg-cyan-500 border-cyan-500'
-                        : 'border-gray-300'
-                    }`}>
-                      {selected.includes(option.value) && <Check className="w-3 h-3 text-white" />}
-                    </div>
-                    <span className="text-sm text-gray-900 break-words">{option.label}</span>
-                  </button>
-                ))
-              )}
+            {/* Right resize handle */}
+            <div
+              ref={resizeHandleRightRef}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                if (resizeHandleRightRef.current) {
+                  resizeHandleRightRef.current.dataset.dragging = 'true';
+                  document.body.style.cursor = 'ew-resize';
+                  document.body.style.userSelect = 'none';
+                }
+              }}
+              className="w-3 cursor-ew-resize border-l border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center"
+              title="Drag to resize width"
+            >
+              <div className="w-1 h-8 bg-gray-400 rounded-full"></div>
             </div>
           </div>
-          {/* Resize handle */}
+          {/* Bottom resize handle */}
           <div
-            ref={resizeHandleRef}
+            ref={resizeHandleBottomRef}
             onMouseDown={(e) => {
               e.preventDefault();
-              if (resizeHandleRef.current) {
-                resizeHandleRef.current.dataset.dragging = 'true';
-                document.body.style.cursor = 'ew-resize';
+              if (resizeHandleBottomRef.current) {
+                resizeHandleBottomRef.current.dataset.dragging = 'true';
+                document.body.style.cursor = 'ns-resize';
                 document.body.style.userSelect = 'none';
               }
             }}
-            className="w-3 cursor-ew-resize border-l border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center rounded-r-lg"
-            title="Drag to resize"
+            className="h-3 cursor-ns-resize border-t border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center rounded-b-lg"
+            title="Drag to resize height"
           >
-            <div className="w-1 h-8 bg-gray-400 rounded-full"></div>
+            <div className="w-8 h-1 bg-gray-400 rounded-full"></div>
           </div>
         </div>
       )}

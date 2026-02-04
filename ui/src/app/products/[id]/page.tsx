@@ -7,6 +7,9 @@ import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw, TrendingUp, TrendingDown, Download, Calendar, CheckCircle, AlertCircle } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
+import './datepicker.css';
 import {
   LineChart,
   Line,
@@ -198,8 +201,8 @@ export default function ProductDetailPage() {
   const [historyDays, setHistoryDays] = useState<number>(30);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [showCustomRange, setShowCustomRange] = useState(false);
-  const [customStartDate, setCustomStartDate] = useState<string>('');
-  const [customEndDate, setCustomEndDate] = useState<string>('');
+  const [customStartDate, setCustomStartDate] = useState<Date | null>(null);
+  const [customEndDate, setCustomEndDate] = useState<Date | null>(null);
   const [watchlistGroups, setWatchlistGroups] = useState<WatchlistGroup[]>([]);
   const [showAddWatchlistModal, setShowAddWatchlistModal] = useState(false);
   const [allWatchlistGroups, setAllWatchlistGroups] = useState<{group_id: number; name: string}[]>([]);
@@ -1021,32 +1024,47 @@ export default function ProductDetailPage() {
           {showCustomRange && (
             <div className="flex flex-wrap items-center gap-4 mb-6">
               <div className="flex items-center gap-2">
-                <label htmlFor="custom-start-date" className="text-sm text-gray-700">From:</label>
-                <div className="relative group">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 group-hover:text-white pointer-events-none z-10 transition-colors" />
-                  <input
-                    id="custom-start-date"
-                    type="date"
-                    placeholder="Start date"
-                    className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white hover:bg-cyan-400 hover:border-cyan-400 rounded-md text-gray-700 hover:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors"
-                    value={customStartDate}
-                    onChange={(e) => setCustomStartDate(e.target.value)}
+                <label className="text-sm text-gray-700">From:</label>
+                <div className="relative">
+                  <DatePicker
+                    selected={customStartDate}
+                    onChange={(date: Date | null) => {
+                      setCustomStartDate(date);
+                      // If start date is after end date, clear end date
+                      if (date && customEndDate && date > customEndDate) {
+                        setCustomEndDate(null);
+                      }
+                    }}
+                    selectsStart
+                    startDate={customStartDate}
+                    endDate={customEndDate}
+                    maxDate={new Date()}
+                    placeholderText="Start date"
+                    dateFormat="MMM d, yyyy"
+                    className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40"
+                    wrapperClassName="w-full"
                   />
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                <label htmlFor="custom-end-date" className="text-sm text-gray-700">To:</label>
-                <div className="relative group">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 group-hover:text-white pointer-events-none z-10 transition-colors" />
-                  <input
-                    id="custom-end-date"
-                    type="date"
-                    placeholder="End date"
-                    className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white hover:bg-cyan-400 hover:border-cyan-400 rounded-md text-gray-700 hover:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors"
-                    value={customEndDate}
-                    onChange={(e) => setCustomEndDate(e.target.value)}
+                <label className="text-sm text-gray-700">To:</label>
+                <div className="relative">
+                  <DatePicker
+                    selected={customEndDate}
+                    onChange={(date: Date | null) => setCustomEndDate(date)}
+                    selectsEnd
+                    startDate={customStartDate}
+                    endDate={customEndDate}
+                    minDate={customStartDate || undefined}
+                    maxDate={new Date()}
+                    placeholderText="End date"
+                    dateFormat="MMM d, yyyy"
+                    className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40"
+                    wrapperClassName="w-full"
                   />
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
                 </div>
               </div>
 
@@ -1054,9 +1072,7 @@ export default function ProductDetailPage() {
                 onClick={() => {
                   if (customStartDate && customEndDate) {
                     // Calculate days difference
-                    const start = new Date(customStartDate);
-                    const end = new Date(customEndDate);
-                    const diffTime = Math.abs(end.getTime() - start.getTime());
+                    const diffTime = Math.abs(customEndDate.getTime() - customStartDate.getTime());
                     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                     setHistoryDays(diffDays);
                   }

@@ -1892,6 +1892,8 @@ def export_products(
 def get_price_history(
     product_id: int,
     days: int = 30,
+    start_date: str = None,
+    end_date: str = None,
     user: dict = Depends(get_current_user)
 ):
     """Get price history for a product and its verified matches"""
@@ -1908,17 +1910,26 @@ def get_price_history(
             if not base_product:
                 raise HTTPException(status_code=404, detail="Product not found")
 
+            # Determine date range query
+            if start_date and end_date:
+                # Use custom date range
+                date_condition = "AND scraped_at::date BETWEEN %s AND %s"
+                date_params = (start_date, end_date)
+            else:
+                # Use days parameter
+                fetch_days = days + 2 if days <= 7 else days
+                date_condition = "AND scraped_at >= NOW() - INTERVAL '%s days'"
+                date_params = (fetch_days,)
+
             # Get price history for base product
-            # Use date-based query with extended range to ensure we get multiple data points
-            # This keeps all products on the same timeline
-            fetch_days = days + 2 if days <= 7 else days
-            cur.execute("""
+            query = f"""
                 SELECT price, scraped_at
                 FROM price_history
                 WHERE product_id = %s
-                  AND scraped_at >= NOW() - INTERVAL '%s days'
+                  {date_condition}
                 ORDER BY scraped_at ASC
-            """, (product_id, fetch_days))
+            """
+            cur.execute(query, (product_id,) + date_params)
             base_history = cur.fetchall()
 
             result = {
@@ -1952,13 +1963,14 @@ def get_price_history(
             matches = cur.fetchall()
 
             for match in matches:
-                cur.execute("""
+                match_query = f"""
                     SELECT price, scraped_at
                     FROM price_history
                     WHERE product_id = %s
-                      AND scraped_at >= NOW() - INTERVAL '%s days'
+                      {date_condition}
                     ORDER BY scraped_at ASC
-                """, (match["product_id"], fetch_days))
+                """
+                cur.execute(match_query, (match["product_id"],) + date_params)
                 match_history = cur.fetchall()
 
                 result["matched_products"].append({

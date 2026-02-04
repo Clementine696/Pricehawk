@@ -220,12 +220,24 @@ export default function ProductDetailPage() {
     if (productId) {
       fetchPriceHistory();
     }
-  }, [productId, historyDays]);
+  }, [productId, historyDays, showCustomRange, customStartDate, customEndDate]);
 
   const fetchPriceHistory = async () => {
     setIsLoadingHistory(true);
     try {
-      const response = await apiFetch(`/api/products/${productId}/price-history?days=${historyDays}`);
+      let url = `/api/products/${productId}/price-history`;
+      
+      if (showCustomRange && customStartDate && customEndDate) {
+        // Use custom date range
+        const startStr = format(customStartDate, 'yyyy-MM-dd');
+        const endStr = format(customEndDate, 'yyyy-MM-dd');
+        url += `?start_date=${startStr}&end_date=${endStr}`;
+      } else {
+        // Use days parameter
+        url += `?days=${historyDays}`;
+      }
+      
+      const response = await apiFetch(url);
       if (response.ok) {
         const result = await response.json();
         setPriceHistory(result);
@@ -1093,10 +1105,8 @@ export default function ProductDetailPage() {
               <button
                 onClick={() => {
                   if (customStartDate && customEndDate) {
-                    // Calculate days difference
-                    const diffTime = Math.abs(customEndDate.getTime() - customStartDate.getTime());
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    setHistoryDays(diffDays);
+                    // Trigger refetch with custom dates
+                    fetchPriceHistory();
                   }
                 }}
                 disabled={!customStartDate || !customEndDate}
@@ -1109,8 +1119,15 @@ export default function ProductDetailPage() {
           </div>
 
           {isLoadingHistory ? (
-            <div className="h-[350px] flex items-center justify-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
+            <div className="space-y-6">
+              {/* Placeholder for stats cards */}
+              <div className="h-[100px]"></div>
+              {/* Loading spinner */}
+              <div className="h-[350px] flex items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
+              </div>
+              {/* Placeholder for data point counter */}
+              <div className="h-[24px]"></div>
             </div>
           ) : priceHistory && (priceHistory.base_product.history.length > 0 || priceHistory.matched_products.some(p => p.history.length > 0)) ? (
             <div className="space-y-6">
@@ -1219,6 +1236,11 @@ export default function ProductDetailPage() {
                       className="text-gray-600"
                       tickFormatter={(value: string) => {
                         const date = new Date(value);
+                        // Show year if the date range includes different years or is a custom range
+                        const showYear = showCustomRange || historyDays > 180;
+                        if (showYear) {
+                          return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+                        }
                         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                       }}
                     />
@@ -1308,8 +1330,15 @@ export default function ProductDetailPage() {
               </div>
             </div>
           ) : (
-            <div className="h-[350px] flex items-center justify-center text-gray-500">
-              No price history data available for the selected period
+            <div className="space-y-6">
+              {/* Placeholder for stats cards */}
+              <div className="h-[100px]"></div>
+              {/* No data message */}
+              <div className="h-[350px] flex items-center justify-center text-gray-500">
+                No price history data available for the selected period
+              </div>
+              {/* Placeholder for data point counter */}
+              <div className="h-[24px]"></div>
             </div>
           )}
         </div>

@@ -23,7 +23,7 @@ function MultiSelect({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dropdownHeight, setDropdownHeight] = useState(192); // Default 192px (max-h-48)
+  const [dropdownWidth, setDropdownWidth] = useState<number | null>(null); // null = auto width
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
@@ -63,8 +63,8 @@ function MultiSelect({
         e.preventDefault();
         const containerRect = containerRef.current?.getBoundingClientRect();
         if (containerRect) {
-          const newHeight = e.clientY - containerRect.top - 70; // 70px for search input
-          setDropdownHeight(Math.max(100, Math.min(600, newHeight))); // Min 100px, max 600px
+          const newWidth = e.clientX - containerRect.left;
+          setDropdownWidth(Math.max(200, Math.min(800, newWidth))); // Min 200px, max 800px
         }
       }
     };
@@ -142,47 +142,52 @@ function MultiSelect({
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg">
-          {/* Search input */}
-          <div className="p-2 border-b border-gray-200">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search..."
-                className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
-              />
+        <div
+          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex"
+          style={{
+            width: dropdownWidth ? `${dropdownWidth}px` : '100%',
+            minWidth: '100%'
+          }}
+        >
+          <div className="flex-1 flex flex-col min-w-0">
+            {/* Search input */}
+            <div className="p-2 border-b border-gray-200">
+              <div className="relative">
+                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search..."
+                  className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                />
+              </div>
             </div>
-          </div>
-          {/* Options list */}
-          <div
-            className="overflow-auto"
-            style={{ height: `${dropdownHeight}px` }}
-          >
-            {filteredOptions.length === 0 ? (
-              <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
-            ) : (
-              filteredOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => toggleOption(option.value)}
-                  className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
-                    selected.includes(option.value)
-                      ? 'bg-cyan-500 border-cyan-500'
-                      : 'border-gray-300'
-                  }`}>
-                    {selected.includes(option.value) && <Check className="w-3 h-3 text-white" />}
-                  </div>
-                  <span className="text-sm text-gray-900 truncate">{option.label}</span>
-                </button>
-              ))
-            )}
+            {/* Options list */}
+            <div className="overflow-auto max-h-48">
+              {filteredOptions.length === 0 ? (
+                <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
+              ) : (
+                filteredOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => toggleOption(option.value)}
+                    className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
+                      selected.includes(option.value)
+                        ? 'bg-cyan-500 border-cyan-500'
+                        : 'border-gray-300'
+                    }`}>
+                      {selected.includes(option.value) && <Check className="w-3 h-3 text-white" />}
+                    </div>
+                    <span className="text-sm text-gray-900 break-words">{option.label}</span>
+                  </button>
+                ))
+              )}
+            </div>
           </div>
           {/* Resize handle */}
           <div
@@ -191,14 +196,14 @@ function MultiSelect({
               e.preventDefault();
               if (resizeHandleRef.current) {
                 resizeHandleRef.current.dataset.dragging = 'true';
-                document.body.style.cursor = 'ns-resize';
+                document.body.style.cursor = 'ew-resize';
                 document.body.style.userSelect = 'none';
               }
             }}
-            className="h-3 cursor-ns-resize border-t border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center rounded-b-lg"
+            className="w-3 cursor-ew-resize border-l border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center rounded-r-lg"
             title="Drag to resize"
           >
-            <div className="w-8 h-1 bg-gray-400 rounded-full"></div>
+            <div className="w-1 h-8 bg-gray-400 rounded-full"></div>
           </div>
         </div>
       )}

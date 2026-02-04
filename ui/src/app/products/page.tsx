@@ -27,8 +27,7 @@ function MultiSelect({
   const [dropdownHeight, setDropdownHeight] = useState(192); // Default 192px
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const resizeHandleRightRef = useRef<HTMLDivElement>(null);
-  const resizeHandleBottomRef = useRef<HTMLDivElement>(null);
+  const resizeHandleCornerRef = useRef<HTMLDivElement>(null);
 
   // Normalize options to always be { value, label }
   const normalizedOptions = options.map(opt =>
@@ -54,7 +53,7 @@ function MultiSelect({
     }
   }, [isOpen]);
 
-  // Handle resize drag (both horizontal and vertical)
+  // Handle corner resize drag (both horizontal and vertical)
   useEffect(() => {
     if (!isOpen) return;
 
@@ -62,27 +61,19 @@ function MultiSelect({
       const containerRect = containerRef.current?.getBoundingClientRect();
       if (!containerRect) return;
 
-      // Handle right resize (width)
-      if (resizeHandleRightRef.current?.dataset.dragging === 'true') {
+      // Handle corner resize (both width and height simultaneously)
+      if (resizeHandleCornerRef.current?.dataset.dragging === 'true') {
         e.preventDefault();
         const newWidth = e.clientX - containerRect.left;
-        setDropdownWidth(Math.max(200, Math.min(800, newWidth)));
-      }
-
-      // Handle bottom resize (height)
-      if (resizeHandleBottomRef.current?.dataset.dragging === 'true') {
-        e.preventDefault();
         const newHeight = e.clientY - containerRect.top - 70; // 70px for search input
+        setDropdownWidth(Math.max(200, Math.min(800, newWidth)));
         setDropdownHeight(Math.max(100, Math.min(600, newHeight)));
       }
     };
 
     const handleMouseUp = () => {
-      if (resizeHandleRightRef.current) {
-        resizeHandleRightRef.current.dataset.dragging = 'false';
-      }
-      if (resizeHandleBottomRef.current) {
-        resizeHandleBottomRef.current.dataset.dragging = 'false';
+      if (resizeHandleCornerRef.current) {
+        resizeHandleCornerRef.current.dataset.dragging = 'false';
       }
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
@@ -154,7 +145,7 @@ function MultiSelect({
 
       {isOpen && (
         <div
-          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col"
+          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col relative"
           style={{
             width: dropdownWidth ? `${dropdownWidth}px` : '100%',
             minWidth: '100%'
@@ -204,38 +195,22 @@ function MultiSelect({
                 )}
               </div>
             </div>
-            {/* Right resize handle */}
-            <div
-              ref={resizeHandleRightRef}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                if (resizeHandleRightRef.current) {
-                  resizeHandleRightRef.current.dataset.dragging = 'true';
-                  document.body.style.cursor = 'ew-resize';
-                  document.body.style.userSelect = 'none';
-                }
-              }}
-              className="w-3 cursor-ew-resize border-l border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center"
-              title="Drag to resize width"
-            >
-              <div className="w-1 h-8 bg-gray-400 rounded-full"></div>
-            </div>
           </div>
-          {/* Bottom resize handle */}
+          {/* Corner resize handle (bottom-right) */}
           <div
-            ref={resizeHandleBottomRef}
+            ref={resizeHandleCornerRef}
             onMouseDown={(e) => {
               e.preventDefault();
-              if (resizeHandleBottomRef.current) {
-                resizeHandleBottomRef.current.dataset.dragging = 'true';
-                document.body.style.cursor = 'ns-resize';
+              if (resizeHandleCornerRef.current) {
+                resizeHandleCornerRef.current.dataset.dragging = 'true';
+                document.body.style.cursor = 'nwse-resize';
                 document.body.style.userSelect = 'none';
               }
             }}
-            className="h-3 cursor-ns-resize border-t border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center rounded-b-lg"
-            title="Drag to resize height"
+            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-cyan-100 rounded-bl-lg flex items-center justify-center group"
+            title="Drag to resize"
           >
-            <div className="w-8 h-1 bg-gray-400 rounded-full"></div>
+            <div className="w-3 h-3 border-r-2 border-b-2 border-gray-400 group-hover:border-cyan-500"></div>
           </div>
         </div>
       )}

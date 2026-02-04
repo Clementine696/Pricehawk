@@ -7,9 +7,9 @@ import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw, TrendingUp, TrendingDown, Download, Calendar, CheckCircle, AlertCircle } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import DatePicker from 'react-datepicker';
-import 'react-datepicker/dist/react-datepicker.css';
-import './datepicker.css';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { format } from 'date-fns';
 import {
   LineChart,
   Line,
@@ -973,9 +973,10 @@ export default function ProductDetailPage() {
 
         {/* Price History Chart */}
         <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900">Price History</h2>
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-4 mb-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <h2 className="text-lg font-semibold text-gray-900">Price History</h2>
+              <div className="flex flex-wrap items-center gap-2">
               {[
                 { days: 1, label: '1 Day' },
                 { days: 7, label: '1 Week' },
@@ -1017,55 +1018,60 @@ export default function ProductDetailPage() {
                 <Download className="h-4 w-4" />
                 Export
               </button>
+              </div>
             </div>
-          </div>
 
-          {/* Custom Date Range Picker */}
-          {showCustomRange && (
-            <div className="flex flex-wrap items-center gap-4 mb-6">
+              {/* Custom Date Range Picker */}
+              {showCustomRange && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
               <div className="flex items-center gap-2">
                 <label className="text-sm text-gray-700">From:</label>
-                <div className="relative">
-                  <DatePicker
-                    selected={customStartDate}
-                    onChange={(date: Date | null) => {
-                      setCustomStartDate(date);
-                      // If start date is after end date, clear end date
-                      if (date && customEndDate && date > customEndDate) {
-                        setCustomEndDate(null);
-                      }
-                    }}
-                    selectsStart
-                    startDate={customStartDate}
-                    endDate={customEndDate}
-                    maxDate={new Date()}
-                    placeholderText="Start date"
-                    dateFormat="MMM d, yyyy"
-                    className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40"
-                    wrapperClassName="w-full"
-                  />
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
-                </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 hover:bg-cyan-500 hover:border-cyan-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40 text-left relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
+                      {customStartDate ? format(customStartDate, "MMM d, yyyy") : "Start date"}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start">
+                    <CalendarComponent
+                      mode="single"
+                      selected={customStartDate || undefined}
+                      onSelect={(date: Date | undefined) => {
+                        setCustomStartDate(date || null);
+                        // If start date is after end date, clear end date
+                        if (date && customEndDate && date > customEndDate) {
+                          setCustomEndDate(null);
+                        }
+                      }}
+                      disabled={(date) => date > new Date()}
+                      defaultMonth={customStartDate || new Date()}
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <div className="flex items-center gap-2">
                 <label className="text-sm text-gray-700">To:</label>
-                <div className="relative">
-                  <DatePicker
-                    selected={customEndDate}
-                    onChange={(date: Date | null) => setCustomEndDate(date)}
-                    selectsEnd
-                    startDate={customStartDate}
-                    endDate={customEndDate}
-                    minDate={customStartDate || undefined}
-                    maxDate={new Date()}
-                    placeholderText="End date"
-                    dateFormat="MMM d, yyyy"
-                    className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40"
-                    wrapperClassName="w-full"
-                  />
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
-                </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 hover:bg-cyan-500 hover:border-cyan-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40 text-left relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
+                      {customEndDate ? format(customEndDate, "MMM d, yyyy") : "End date"}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start">
+                    <CalendarComponent
+                      mode="single"
+                      selected={customEndDate || undefined}
+                      onSelect={(date: Date | undefined) => setCustomEndDate(date || null)}
+                      disabled={(date) =>
+                        date > new Date() || (customStartDate ? date < customStartDate : false)
+                      }
+                      defaultMonth={customEndDate || customStartDate || new Date()}
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <button
@@ -1082,8 +1088,9 @@ export default function ProductDetailPage() {
               >
                 Apply
               </button>
-            </div>
-          )}
+                </div>
+              )}
+          </div>
 
           {isLoadingHistory ? (
             <div className="h-[350px] flex items-center justify-center">

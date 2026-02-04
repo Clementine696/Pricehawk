@@ -172,13 +172,13 @@
   color: rgba(255, 255, 255, 0.7);
 }
 
-/* Change icon color on input hover */
-.react-datepicker-wrapper:hover .lucide-calendar {
-  color: white;
-}
-
 /* Keep calendar icon gray by default */
-.react-datepicker-wrapper .lucide-calendar {
+.lucide-calendar {
   color: #9ca3af;
   transition: color 0.2s;
+}
+
+/* Change icon color when parent container is hovered */
+.relative:hover .lucide-calendar {
+  color: white;
 }

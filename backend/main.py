@@ -2046,10 +2046,11 @@ def export_price_history(
             ws = wb.active
             ws.title = "Price History"
 
-            # Write headers with fixed retailer columns
+            # Write headers with fixed retailer columns and Status
             headers = ['Timestamp', 'SKU', 'Product Name', 'Brand', 'Sub-Dept', base_product["retailer_name"]]
             for retailer in all_retailers:
                 headers.append(retailer)
+            headers.append('Status')  # Add status column
             ws.append(headers)
 
             # Style header row
@@ -2057,6 +2058,14 @@ def export_price_history(
             for col_num, header in enumerate(headers, 1):
                 cell = ws.cell(row=1, column=col_num)
                 cell.font = header_font
+
+            # Define color fills
+            dark_green_fill = PatternFill(start_color="00C057", end_color="00C057", fill_type="solid")
+            light_green_fill = PatternFill(start_color="ABDB77", end_color="ABDB77", fill_type="solid")
+            dark_red_fill = PatternFill(start_color="D16969", end_color="D16969", fill_type="solid")
+            light_red_fill = PatternFill(start_color="DB9D9D", end_color="DB9D9D", fill_type="solid")
+            grey_fill = PatternFill(start_color="E8E8E8", end_color="E8E8E8", fill_type="solid")
+            white_font = Font(color="FFFFFF")
 
             # Collect all unique dates with timestamps
             all_timestamps = {}
@@ -2073,32 +2082,105 @@ def export_price_history(
             # Sort dates
             sorted_dates = sorted(all_timestamps.keys())
 
-            # Write data rows
+            # Write data rows with colors
+            row_num = 2
             for date in sorted_dates:
                 timestamp = all_timestamps[date]
-                row_data = [
-                    timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-                    base_product["sku"] or '',
-                    base_product["name"] or '',
-                    base_product["brand"] or '',
-                    base_product["watchlist_name"] or ''
-                ]
 
                 # Base product price for this date
                 base_price = next((float(h["price"]) for h in base_history
                                   if h["scraped_at"].date() == date), None)
-                row_data.append(base_price if base_price else '')
 
-                # All retailers prices in fixed order
+                # Collect all prices for this date
+                all_prices = []
+                if base_price:
+                    all_prices.append(base_price)
+
+                retailer_prices = {}
                 for retailer in all_retailers:
                     if retailer in matched_histories:
                         match_price = next((float(h["price"]) for h in matched_histories[retailer]
                                           if h["scraped_at"].date() == date), None)
-                        row_data.append(match_price if match_price else '')
+                        retailer_prices[retailer] = match_price
+                        if match_price:
+                            all_prices.append(match_price)
                     else:
-                        row_data.append('')
+                        retailer_prices[retailer] = None
 
-                ws.append(row_data)
+                # Determine min and max prices
+                min_price = min(all_prices) if all_prices else None
+                max_price = max(all_prices) if all_prices else None
+
+                # Determine status
+                status = ''
+                if base_price:
+                    if len(all_prices) == 1:
+                        status = 'No Competitor Data'
+                    elif base_price == min_price:
+                        if all(p == min_price for p in all_prices):
+                            status = 'Cheapest (Shared)'
+                        else:
+                            status = 'Cheapest'
+                    elif base_price == max_price:
+                        if all(p == max_price for p in all_prices):
+                            status = 'Most Expensive (Shared)'
+                        else:
+                            status = 'Most Expensive'
+
+                # Write basic info columns
+                ws.cell(row=row_num, column=1, value=timestamp.strftime('%Y-%m-%d %H:%M:%S'))
+                ws.cell(row=row_num, column=2, value=base_product["sku"] or '')
+                ws.cell(row=row_num, column=3, value=base_product["name"] or '')
+                ws.cell(row=row_num, column=4, value=base_product["brand"] or '')
+                ws.cell(row=row_num, column=5, value=base_product["watchlist_name"] or '')
+
+                # Write base product price with color (column 6)
+                if base_price:
+                    cell = ws.cell(row=row_num, column=6, value=base_price)
+                    if len(all_prices) > 1:
+                        if base_price == min_price:
+                            if all(p == min_price for p in all_prices):
+                                cell.fill = light_green_fill
+                            else:
+                                cell.fill = dark_green_fill
+                                cell.font = white_font
+                        elif base_price == max_price:
+                            if all(p == max_price for p in all_prices):
+                                cell.fill = light_red_fill
+                            else:
+                                cell.fill = dark_red_fill
+                                cell.font = white_font
+                else:
+                    ws.cell(row=row_num, column=6, value='')
+
+                # Write retailer prices with colors (columns 7-11)
+                for col_offset, retailer in enumerate(all_retailers):
+                    col_num = 7 + col_offset
+                    retailer_price = retailer_prices.get(retailer)
+                    if retailer_price:
+                        cell = ws.cell(row=row_num, column=col_num, value=retailer_price)
+                        if len(all_prices) > 1:
+                            if base_price and retailer_price == base_price:
+                                cell.fill = grey_fill
+                            elif retailer_price == min_price:
+                                if all(p == min_price for p in all_prices):
+                                    cell.fill = light_green_fill
+                                else:
+                                    cell.fill = dark_green_fill
+                                    cell.font = white_font
+                            elif retailer_price == max_price:
+                                if all(p == max_price for p in all_prices):
+                                    cell.fill = light_red_fill
+                                else:
+                                    cell.fill = dark_red_fill
+                                    cell.font = white_font
+                    else:
+                        ws.cell(row=row_num, column=col_num, value='')
+
+                # Write status (last column)
+                ws.cell(row=row_num, column=len(headers), value=status)
+
+                row_num += 1
 
             # Auto-adjust column widths
             for col_num, header in enumerate(headers, 1):

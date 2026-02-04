@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw, TrendingUp, TrendingDown, Download, Calendar, CheckCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw, TrendingUp, TrendingDown, Download, Calendar, CheckCircle, AlertCircle, Link2, Link2Off } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -709,20 +709,36 @@ export default function ProductDetailPage() {
 
               {/* Product Status Indicator */}
               <div className="mt-4">
-                {product.scrape_fail_count >= 3 ? (
-                  <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
-                    <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-red-800">Inactive Product</p>
+                {product.retailer_name?.toLowerCase() === 'thai watsadu' ? (
+                  // Thai Watsadu - no box styling, ensure green color
+                  product.scrape_fail_count >= 3 ? (
+                    <div className="flex items-center gap-2">
+                      <Link2Off className="w-4 h-4 text-red-600 flex-shrink-0" />
+                      <p className="text-sm font-medium text-red-600">Inactive URL</p>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Link2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                      <p className="text-sm font-medium text-green-600">Active URL</p>
+                    </div>
+                  )
                 ) : (
-                  <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
-                    <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-green-800">Active Product</p>
+                  // Other retailers - with box styling
+                  product.scrape_fail_count >= 3 ? (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                      <Link2Off className="w-4 h-4 text-red-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-red-800">Inactive URL</p>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+                      <Link2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-green-800">Active URL</p>
+                      </div>
+                    </div>
+                  )
                 )}
               </div>
 
@@ -882,13 +898,13 @@ export default function ProductDetailPage() {
                                     {match.verified_by_user && match.is_same && (
                                       match.product.scrape_fail_count >= 3 ? (
                                         <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
-                                          <AlertCircle className="w-4 h-4" />
-                                          Inactive Product
+                                          <Link2Off className="w-4 h-4" />
+                                          Inactive URL
                                         </div>
                                       ) : (
                                         <div className="flex items-center gap-1.5 text-xs text-green-600 font-medium">
-                                          <CheckCircle className="w-4 h-4" />
-                                          Active Product
+                                          <Link2 className="w-4 h-4" />
+                                          Active URL
                                         </div>
                                       )
                                     )}

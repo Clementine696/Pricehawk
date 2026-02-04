@@ -2024,8 +2024,22 @@ def export_price_history(
             """, (product_id, fetch_days))
             base_history = cur.fetchall()
 
-            # Define fixed retailer order (excluding Thai Watsadu which is base)
-            all_retailers = ['HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House']
+            # Get all retailers from database (excluding Thai Watsadu which is base)
+            # This ensures we use the exact names from the database
+            cur.execute("""
+                SELECT name
+                FROM retailers
+                WHERE retailer_id != 'twd'
+                ORDER BY 
+                    CASE retailer_id
+                        WHEN 'hp' THEN 1
+                        WHEN 'mgh' THEN 2
+                        WHEN 'dh' THEN 3
+                        WHEN 'btv' THEN 4
+                        WHEN 'gbh' THEN 5
+                    END
+            """)
+            all_retailers = [row["name"] for row in cur.fetchall()]
 
             # Get verified correct matches
             cur.execute("""

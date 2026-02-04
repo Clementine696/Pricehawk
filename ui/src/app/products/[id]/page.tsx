@@ -1020,26 +1020,34 @@ export default function ProductDetailPage() {
           {/* Custom Date Range Picker */}
           {showCustomRange && (
             <div className="flex flex-wrap items-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <span className="text-sm text-gray-600">From:</span>
-              <div className="relative">
-                <input
-                  id="custom-start-date"
-                  type="date"
-                  className="px-3 h-9 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md text-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
-                  value={customStartDate}
-                  onChange={(e) => setCustomStartDate(e.target.value)}
-                />
+              <div className="flex items-center gap-2">
+                <label htmlFor="custom-start-date" className="text-sm font-medium text-gray-700">From:</label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                  <input
+                    id="custom-start-date"
+                    type="date"
+                    placeholder="Start date"
+                    className="pl-10 pr-3 h-10 text-sm border border-gray-300 bg-white rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 cursor-pointer"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                  />
+                </div>
               </div>
 
-              <span className="text-sm text-gray-600">To:</span>
-              <div className="relative">
-                <input
-                  id="custom-end-date"
-                  type="date"
-                  className="px-3 h-9 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md text-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
-                  value={customEndDate}
-                  onChange={(e) => setCustomEndDate(e.target.value)}
-                />
+              <div className="flex items-center gap-2">
+                <label htmlFor="custom-end-date" className="text-sm font-medium text-gray-700">To:</label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                  <input
+                    id="custom-end-date"
+                    type="date"
+                    placeholder="End date"
+                    className="pl-10 pr-3 h-10 text-sm border border-gray-300 bg-white rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 cursor-pointer"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                  />
+                </div>
               </div>
 
               <button

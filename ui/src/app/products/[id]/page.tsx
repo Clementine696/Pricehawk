@@ -1019,16 +1019,16 @@ export default function ProductDetailPage() {
 
           {/* Custom Date Range Picker */}
           {showCustomRange && (
-            <div className="flex flex-wrap items-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <div className="flex flex-wrap items-center gap-4 mb-6">
               <div className="flex items-center gap-2">
-                <label htmlFor="custom-start-date" className="text-sm font-medium text-gray-700">From:</label>
+                <label htmlFor="custom-start-date" className="text-sm text-gray-700">From:</label>
                 <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-white pointer-events-none z-10" />
                   <input
                     id="custom-start-date"
                     type="date"
                     placeholder="Start date"
-                    className="pl-10 pr-3 h-10 text-sm border border-gray-300 bg-white rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 cursor-pointer"
+                    className="pl-10 pr-3 py-2 text-sm border-0 bg-cyan-400 hover:bg-cyan-500 rounded-md text-white placeholder-white focus:outline-none focus:ring-2 focus:ring-cyan-600 cursor-pointer"
                     value={customStartDate}
                     onChange={(e) => setCustomStartDate(e.target.value)}
                   />
@@ -1036,14 +1036,14 @@ export default function ProductDetailPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <label htmlFor="custom-end-date" className="text-sm font-medium text-gray-700">To:</label>
+                <label htmlFor="custom-end-date" className="text-sm text-gray-700">To:</label>
                 <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-white pointer-events-none z-10" />
                   <input
                     id="custom-end-date"
                     type="date"
                     placeholder="End date"
-                    className="pl-10 pr-3 h-10 text-sm border border-gray-300 bg-white rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 cursor-pointer"
+                    className="pl-10 pr-3 py-2 text-sm border-0 bg-cyan-400 hover:bg-cyan-500 rounded-md text-white placeholder-white focus:outline-none focus:ring-2 focus:ring-cyan-600 cursor-pointer"
                     value={customEndDate}
                     onChange={(e) => setCustomEndDate(e.target.value)}
                   />

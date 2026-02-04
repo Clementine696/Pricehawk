@@ -3578,8 +3578,18 @@ def get_alert_settings(user: dict = Depends(get_current_user)):
             result = cur.fetchone()
             conn.commit()
 
-        columns = [desc[0] for desc in cur.description]
-        return dict(zip(columns, result))
+        # RealDictRow to dict, convert datetime to string
+        data = dict(result)
+        if 'schedule_time' in data and data['schedule_time']:
+            data['schedule_time'] = str(data['schedule_time'])
+        if 'created_at' in data and data['created_at']:
+            data['created_at'] = data['created_at'].isoformat()
+        if 'updated_at' in data and data['updated_at']:
+            data['updated_at'] = data['updated_at'].isoformat()
+        if 'last_alert_sent_at' in data and data['last_alert_sent_at']:
+            data['last_alert_sent_at'] = data['last_alert_sent_at'].isoformat()
+
+        return data
 
 
 @app.put("/api/price-alerts/settings")
@@ -3614,8 +3624,9 @@ def update_alert_settings(
         cur = conn.cursor()
 
         # Check if settings row exists
-        cur.execute("SELECT COUNT(*) FROM price_alert_settings")
-        count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) as count FROM price_alert_settings")
+        result = cur.fetchone()
+        count = result['count']
 
         if count == 0:
             # Insert new settings
@@ -3645,10 +3656,16 @@ def get_alert_emails(user: dict = Depends(get_current_user)):
     """List all email recipients"""
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT email_id, email, verified, created_at::text as created_at FROM price_alert_emails ORDER BY created_at")
+        cur.execute("SELECT email_id, email, verified, created_at FROM price_alert_emails ORDER BY created_at")
         rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        return [dict(zip(columns, row)) for row in rows]
+        # Convert RealDictRow to dict and serialize datetimes
+        result = []
+        for row in rows:
+            data = dict(row)
+            if 'created_at' in data and data['created_at']:
+                data['created_at'] = data['created_at'].isoformat()
+            result.append(data)
+        return result
 
 
 @app.post("/api/price-alerts/emails")
@@ -3672,12 +3689,15 @@ def add_alert_email(
             cur.execute("""
                 INSERT INTO price_alert_emails (email, verified)
                 VALUES (%s, false)
-                RETURNING email_id, email, verified, created_at::text as created_at
+                RETURNING email_id, email, verified, created_at
             """, (email,))
             result = cur.fetchone()
             conn.commit()
-            columns = [desc[0] for desc in cur.description]
-            return dict(zip(columns, result))
+            # Convert RealDictRow to dict and serialize datetime
+            data = dict(result)
+            if 'created_at' in data and data['created_at']:
+                data['created_at'] = data['created_at'].isoformat()
+            return data
         except psycopg2.IntegrityError:
             conn.rollback()
             raise HTTPException(status_code=400, detail="Email already exists")
@@ -3715,8 +3735,15 @@ def get_alert_history(
             LIMIT %s
         """, (limit,))
         rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        return [dict(zip(columns, row)) for row in rows]
+        # Convert RealDictRow to dict and serialize datetimes
+        result = []
+        for row in rows:
+            data = dict(row)
+            for key in ['sent_at', 'period_start', 'period_end']:
+                if key in data and data[key]:
+                    data[key] = data[key].isoformat()
+            result.append(data)
+        return result
 
 
 @app.post("/api/price-alerts/test")

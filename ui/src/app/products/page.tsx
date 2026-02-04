@@ -23,8 +23,10 @@ function MultiSelect({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [dropdownHeight, setDropdownHeight] = useState(192); // Default 192px (max-h-48)
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const resizeHandleRef = useRef<HTMLDivElement>(null);
 
   // Normalize options to always be { value, label }
   const normalizedOptions = options.map(opt =>
@@ -48,6 +50,40 @@ function MultiSelect({
     if (isOpen && searchInputRef.current) {
       searchInputRef.current.focus();
     }
+  }, [isOpen]);
+
+  // Handle resize drag
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizeHandleRef.current) return;
+      const handle = resizeHandleRef.current;
+      if (handle.dataset.dragging === 'true') {
+        e.preventDefault();
+        const containerRect = containerRef.current?.getBoundingClientRect();
+        if (containerRect) {
+          const newHeight = e.clientY - containerRect.top - 70; // 70px for search input
+          setDropdownHeight(Math.max(100, Math.min(600, newHeight))); // Min 100px, max 600px
+        }
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (resizeHandleRef.current) {
+        resizeHandleRef.current.dataset.dragging = 'false';
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
   }, [isOpen]);
 
   const toggleOption = (value: string) => {
@@ -122,7 +158,10 @@ function MultiSelect({
             </div>
           </div>
           {/* Options list */}
-          <div className="max-h-48 overflow-auto">
+          <div
+            className="overflow-auto"
+            style={{ height: `${dropdownHeight}px` }}
+          >
             {filteredOptions.length === 0 ? (
               <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
             ) : (
@@ -144,6 +183,22 @@ function MultiSelect({
                 </button>
               ))
             )}
+          </div>
+          {/* Resize handle */}
+          <div
+            ref={resizeHandleRef}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              if (resizeHandleRef.current) {
+                resizeHandleRef.current.dataset.dragging = 'true';
+                document.body.style.cursor = 'ns-resize';
+                document.body.style.userSelect = 'none';
+              }
+            }}
+            className="h-3 cursor-ns-resize border-t border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center rounded-b-lg"
+            title="Drag to resize"
+          >
+            <div className="w-8 h-1 bg-gray-400 rounded-full"></div>
           </div>
         </div>
       )}

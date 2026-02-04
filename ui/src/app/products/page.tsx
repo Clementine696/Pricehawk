@@ -15,7 +15,7 @@ function MultiSelect({
   placeholder,
   className = '',
 }: {
-  options: string[];
+  options: string[] | { value: string; label: string }[];
   selected: string[];
   onChange: (selected: string[]) => void;
   placeholder: string;
@@ -25,6 +25,11 @@ function MultiSelect({
   const [searchTerm, setSearchTerm] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Normalize options to always be { value, label }
+  const normalizedOptions = options.map(opt =>
+    typeof opt === 'string' ? { value: opt, label: opt } : opt
+  );
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -45,11 +50,11 @@ function MultiSelect({
     }
   }, [isOpen]);
 
-  const toggleOption = (option: string) => {
-    if (selected.includes(option)) {
-      onChange(selected.filter(s => s !== option));
+  const toggleOption = (value: string) => {
+    if (selected.includes(value)) {
+      onChange(selected.filter(s => s !== value));
     } else {
-      onChange([...selected, option]);
+      onChange([...selected, value]);
     }
   };
 
@@ -58,9 +63,19 @@ function MultiSelect({
     onChange([]);
   };
 
+  // Get labels for selected values
+  const getSelectedLabels = () => {
+    return selected.map(val => {
+      const option = normalizedOptions.find(opt => opt.value === val);
+      return option ? option.label : val;
+    });
+  };
+
+  const selectedLabels = getSelectedLabels();
+
   // Filter options based on search term
-  const filteredOptions = options.filter(option =>
-    option.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredOptions = normalizedOptions.filter(option =>
+    option.label.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -74,7 +89,7 @@ function MultiSelect({
           {selected.length === 0
             ? placeholder
             : selected.length === 1
-            ? selected[0]
+            ? selectedLabels[0]
             : `${selected.length} selected`}
         </span>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -113,19 +128,19 @@ function MultiSelect({
             ) : (
               filteredOptions.map((option) => (
                 <button
-                  key={option}
+                  key={option.value}
                   type="button"
-                  onClick={() => toggleOption(option)}
+                  onClick={() => toggleOption(option.value)}
                   className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
                 >
                   <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
-                    selected.includes(option)
+                    selected.includes(option.value)
                       ? 'bg-cyan-500 border-cyan-500'
                       : 'border-gray-300'
                   }`}>
-                    {selected.includes(option) && <Check className="w-3 h-3 text-white" />}
+                    {selected.includes(option.value) && <Check className="w-3 h-3 text-white" />}
                   </div>
-                  <span className="text-sm text-gray-900 truncate">{option}</span>
+                  <span className="text-sm text-gray-900 truncate">{option.label}</span>
                 </button>
               ))
             )}
@@ -639,7 +654,7 @@ function ProductsContent() {
               className="w-[150px]"
             />
             <MultiSelect
-              options={watchlistGroups.map(g => g.name)}
+              options={watchlistGroups.map(g => ({ value: g.group_id.toString(), label: g.name }))}
               selected={selectedWatchlists}
               onChange={handleWatchlistChange}
               placeholder="Watchlist"

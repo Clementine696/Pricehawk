@@ -302,7 +302,9 @@ function ProductsContent() {
   );
   const [verificationFilter, setVerificationFilter] = useState(searchParams.get('verified') || '');
   const [retailerFilter, setRetailerFilter] = useState(searchParams.get('retailer') || '');
-  const [watchlistFilter, setWatchlistFilter] = useState(searchParams.get('watchlist') || '');
+  const [selectedWatchlists, setSelectedWatchlists] = useState<string[]>(
+    searchParams.get('watchlist')?.split(',').filter(Boolean) || []
+  );
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [isExporting, setIsExporting] = useState(false);
   const pageSize = 10;
@@ -325,7 +327,7 @@ function ProductsContent() {
       brand: selectedBrands.join(','),
       verified: verificationFilter,
       retailer: retailerFilter,
-      watchlist: watchlistFilter,
+      watchlist: selectedWatchlists.join(','),
       page,
       ...newParams
     };
@@ -348,7 +350,7 @@ function ProductsContent() {
 
   useEffect(() => {
     fetchProducts();
-  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter, watchlistFilter]);
+  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter, selectedWatchlists]);
 
   const fetchWatchlistGroups = async () => {
     try {
@@ -377,7 +379,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
-      if (watchlistFilter) params.append('watchlist_group_id', watchlistFilter);
+      if (selectedWatchlists.length > 0) params.append('watchlist_group_id', selectedWatchlists.join(','));
 
 
       const response = await apiFetch(`/api/products?${params}`);
@@ -412,7 +414,7 @@ function ProductsContent() {
     setSelectedBrands([]);
     setVerificationFilter('');
     setRetailerFilter('');
-    setWatchlistFilter('');
+    setSelectedWatchlists([]);
     setPage(1);
     router.push('/products', { scroll: false });
     // Don't call fetchProducts() here - the useEffect will trigger it when state changes
@@ -438,7 +440,6 @@ function ProductsContent() {
     const setters: Record<string, (v: string) => void> = {
       verified: setVerificationFilter,
       retailer: setRetailerFilter,
-      watchlist: setWatchlistFilter,
     };
     setters[filterName]?.(value);
     setPage(1);
@@ -447,6 +448,14 @@ function ProductsContent() {
     if (value) {
       trackFilter(filterName, value);
     }
+  };
+
+  const handleWatchlistChange = (newWatchlists: string[]) => {
+    setSelectedWatchlists(newWatchlists);
+    setPage(1);
+    updateURL({ watchlist: newWatchlists.join(','), page: 1 });
+    // Track filter usage
+    trackFilter('watchlist', newWatchlists.join(', '));
   };
 
   const handlePageChange = (newPage: number) => {
@@ -463,7 +472,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
-      if (watchlistFilter) params.append('watchlist_group_id', watchlistFilter);
+      if (selectedWatchlists.length > 0) params.append('watchlist_group_id', selectedWatchlists.join(','));
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {
@@ -629,10 +638,10 @@ function ProductsContent() {
               placeholder="All Retailers"
               className="w-[150px]"
             />
-            <SingleSelect
-              options={watchlistGroups.map(g => ({ value: g.group_id.toString(), label: g.name }))}
-              value={watchlistFilter}
-              onChange={(value) => handleFilterChange('watchlist', value)}
+            <MultiSelect
+              options={watchlistGroups.map(g => g.name)}
+              selected={selectedWatchlists}
+              onChange={handleWatchlistChange}
               placeholder="Watchlist"
               className="w-[180px]"
             />

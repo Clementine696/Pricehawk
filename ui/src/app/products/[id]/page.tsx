@@ -1021,36 +1021,26 @@ export default function ProductDetailPage() {
           {showCustomRange && (
             <div className="flex flex-wrap items-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
               <span className="text-sm text-gray-600">From:</span>
-              <button
-                className="inline-flex items-center gap-2 px-3 h-9 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md text-gray-600"
-                onClick={() => (document.getElementById('custom-start-date') as HTMLInputElement)?.showPicker?.()}
-              >
-                <Calendar className="h-4 w-4" />
-                {customStartDate || 'Start date'}
-              </button>
-              <input
-                id="custom-start-date"
-                type="date"
-                className="hidden"
-                value={customStartDate}
-                onChange={(e) => setCustomStartDate(e.target.value)}
-              />
+              <div className="relative">
+                <input
+                  id="custom-start-date"
+                  type="date"
+                  className="px-3 h-9 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md text-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                />
+              </div>
 
               <span className="text-sm text-gray-600">To:</span>
-              <button
-                className="inline-flex items-center gap-2 px-3 h-9 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md text-gray-600"
-                onClick={() => (document.getElementById('custom-end-date') as HTMLInputElement)?.showPicker?.()}
-              >
-                <Calendar className="h-4 w-4" />
-                {customEndDate || 'End date'}
-              </button>
-              <input
-                id="custom-end-date"
-                type="date"
-                className="hidden"
-                value={customEndDate}
-                onChange={(e) => setCustomEndDate(e.target.value)}
-              />
+              <div className="relative">
+                <input
+                  id="custom-end-date"
+                  type="date"
+                  className="px-3 h-9 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md text-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                />
+              </div>
 
               <button
                 onClick={() => {

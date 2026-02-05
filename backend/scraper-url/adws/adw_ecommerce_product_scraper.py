@@ -238,11 +238,28 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             # HomePro needs to wait for price element to load (React SPA)
             # Also wait for h1 to ensure product name is loaded
             wait_for = "() => document.querySelector('[class*=\"price\"]') !== null && document.body.innerText.includes('฿') && document.querySelector('h1') !== null"
-            print(f"[DEBUG] HomePro detected - using wait_for condition (waiting for price + h1)", flush=True)
+            import sys
+            print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Using extended wait_for condition (waiting for price + h1)", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] HomePro gets 3 extra seconds after page load for JS rendering", flush=True, file=sys.stderr)
 
         # Scrape the URL
+        import sys
+        print(f"[SCRAPER] About to scrape URL: {url}", flush=True, file=sys.stderr)
         result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+        
+        # HomePro: Give extra time for React to fully render (especially in slow networks)
+        if 'homepro.co.th' in url and result.success:
+            import asyncio
+            print(f"[SCRAPER] HomePro: Waiting 3 extra seconds for React rendering...", flush=True, file=sys.stderr)
+            await asyncio.sleep(3)
+            print(f"[SCRAPER] HomePro: Extra wait complete", flush=True, file=sys.stderr)
 
+        print(f"[SCRAPER] Scrape result - Success: {result.success}", flush=True, file=sys.stderr)
+        if result.success:
+            print(f"[SCRAPER] HTML length: {len(result.html) if result.html else 0}", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Content length: {len(result.content) if result.content else 0}", flush=True, file=sys.stderr)
+        
         if not result.success:
             print_status_panel(console, f"Failed to scrape: {result.error_message}", adw_id, "extraction", "error", url)
             return None
@@ -262,18 +279,24 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             print(f"  Has H1 tag: {has_product_name}")
 
         # Get appropriate extractor for the URL
+        import sys
         extractor = get_extractor(url)
+        print(f"[SCRAPER] Using extractor: {type(extractor).__name__}", flush=True, file=sys.stderr)
         
         # Extract product data
+        print(f"[SCRAPER] Starting extraction...", flush=True, file=sys.stderr)
         product = extractor.extract_from_html(result.html or result.content, url)
+        print(f"[SCRAPER] Extraction complete. Product returned: {product is not None}", flush=True, file=sys.stderr)
         
-        print(f"[DEBUG] Extractor returned: {product is not None}", flush=True)
         if product:
-            print(f"[DEBUG] Product details:", flush=True)
-            print(f"  Name: {product.name}", flush=True)
-            print(f"  Retailer: {product.retailer}", flush=True)
-            print(f"  URL: {product.url}", flush=True)
-            print(f"  Price: {product.current_price}", flush=True)
+            print(f"[SCRAPER] ✓ Product extracted successfully:", flush=True, file=sys.stderr)
+            print(f"    Name: {product.name}", flush=True, file=sys.stderr)
+            print(f"    Retailer: {product.retailer}", flush=True, file=sys.stderr)
+            print(f"    SKU: {product.sku}", flush=True, file=sys.stderr)
+            print(f"    Price: {product.current_price}", flush=True, file=sys.stderr)
+            print(f"    Brand: {product.brand}", flush=True, file=sys.stderr)
+        else:
+            print(f"[SCRAPER] ✗ Extraction returned None!", flush=True, file=sys.stderr)
         
         # LLM Fallback Logic - TEMPORARILY DISABLED due to LLMConfig ForwardRef issue in crawl4ai
         # The primary extraction with JSON-LD and Quick Info parsing should be sufficient
@@ -286,9 +309,11 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
 
         if product:
             print_status_panel(console, f"Successfully extracted: {product.name[:50]}...", adw_id, "extraction", "success", url)
+            print(f"[SCRAPER] Returning product object", flush=True, file=sys.stderr)
             return product
         else:
-            print(f"[ERROR] Extraction returned None for {url}", flush=True)
+            import sys
+            print(f"[SCRAPER] ✗✗✗ EXTRACTION FAILED - Returning None for {url}", flush=True, file=sys.stderr)
             print_status_panel(console, "Failed to extract product data", adw_id, "extraction", "error", url)
             return None
 
@@ -718,15 +743,16 @@ def main(
         )
 
         # Exit with appropriate code
-        print(f"\n[DEBUG] Final product count: {len(products)} out of {len(urls)} URLs", flush=True)
+        import sys
+        print(f"\n[DEBUG] Final product count: {len(products)} out of {len(urls)} URLs", flush=True, file=sys.stderr)
         if len(products) == 0:
-            print(f"[DEBUG] Exiting with code 1 (all extractions failed)", flush=True)
+            print(f"[DEBUG] Exiting with code 1 (all extractions failed)", flush=True, file=sys.stderr)
             sys.exit(1)  # All extractions failed
         elif len(products) < len(urls):
-            print(f"[DEBUG] Exiting with code 2 (some extractions failed)", flush=True)
+            print(f"[DEBUG] Exiting with code 2 (some extractions failed)", flush=True, file=sys.stderr)
             sys.exit(2)  # Some extractions failed
         else:
-            print(f"[DEBUG] Exiting with code 0 (all extractions succeeded)", flush=True)
+            print(f"[DEBUG] Exiting with code 0 (all extractions succeeded)", flush=True, file=sys.stderr)
             sys.exit(0)  # All extractions succeeded
 
     except KeyboardInterrupt:

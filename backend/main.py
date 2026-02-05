@@ -3035,14 +3035,19 @@ def scrape_single_url(url: str) -> dict:
         output_file = os.path.join(RESULTS_DIR, f"scrape_{uuid.uuid4().hex}.json")
 
         # Run the scraper script
+        # HomePro gets 60 second timeout (vs 30 default) due to slower page loads in production
+        timeout_seconds = "60" if "homepro.co.th" in url.lower() else "30"
+        
         cmd = [
             "python",
             SCRAPER_SCRIPT,
             "--url", url,
-            "--output-file", output_file
+            "--output-file", output_file,
+            "--timeout", timeout_seconds
         ]
 
-        print(f"\n  [PARALLEL] Scraping: {url}")
+        timeout_indicator = " (60s timeout)" if "homepro.co.th" in url.lower() else ""
+        print(f"\n  [PARALLEL] Scraping: {url}{timeout_indicator}")
 
         # Execute scraper with timeout
         env = os.environ.copy()
@@ -3124,9 +3129,16 @@ def scrape_single_url(url: str) -> dict:
         # Log scraper output for debugging
         print(f"  [DEBUG] Scraper returncode: {returncode}")
         if stdout:
-            print(f"  [DEBUG] Scraper stdout (last 500 chars): {stdout[-500:]}")
+            # For HomePro debugging, show more output (last 2000 chars)
+            if 'homepro' in url.lower():
+                print(f"  [DEBUG] Scraper stdout (last 2000 chars): {stdout[-2000:]}")
+            else:
+                print(f"  [DEBUG] Scraper stdout (last 500 chars): {stdout[-500:]}")
         if stderr:
-            print(f"  [DEBUG] Scraper stderr (last 500 chars): {stderr[-500:]}")
+            if 'homepro' in url.lower():
+                print(f"  [DEBUG] Scraper stderr (last 2000 chars): {stderr[-2000:]}")
+            else:
+                print(f"  [DEBUG] Scraper stderr (last 500 chars): {stderr[-500:]}")
 
         # Look for scraped data in retailer files
         output_dir = os.path.dirname(output_file)

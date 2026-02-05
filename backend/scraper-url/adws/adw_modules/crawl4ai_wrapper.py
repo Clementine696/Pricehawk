@@ -763,6 +763,33 @@ class Crawl4AIWrapper:
 })();
                 """
 
+                if is_ecommerce and "homepro.co.th" in url.lower():
+                    # HomePro-specific in-page polling to ensure product page is ready
+                    js_scroll_code += """
+(async () => {
+    window.__homeproReady = false;
+    const start = Date.now();
+    const maxWaitMs = 120000;
+
+    while (Date.now() - start < maxWaitMs) {
+        const hasJsonLD = document.querySelector('script[type="application/ld+json"]') !== null;
+        const isProductPageBody = document.body.id === 'product-page' || document.body.className.includes('pdp-');
+        const hasProductContainer = document.querySelector('#product-page, .pdp-container, .product-detail') !== null;
+        const mainPrice = document.querySelector('#product-page .item-price .price, .pdp-price-section .price, .product-price');
+        const hasProductPrice = mainPrice && mainPrice.innerText && /\\d/.test(mainPrice.innerText);
+        const productTitle = document.querySelector('h1');
+        const hasProductTitle = productTitle && productTitle.innerText && productTitle.innerText.trim().length > 5;
+
+        if ((hasJsonLD || (isProductPageBody && hasProductContainer)) && hasProductPrice && hasProductTitle) {
+            window.__homeproReady = true;
+            break;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+})();
+                    """
+
                 # Perform the crawl using CrawlerRunConfig if available (v0.7.x+)
                 if CrawlerRunConfig is not None and self.config.use_browser:
                     # Log config for debugging

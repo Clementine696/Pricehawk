@@ -240,34 +240,14 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             wait_for = "() => { const hasPrice = document.body.innerText.includes('฿') || document.body.innerText.includes('บาท'); const noShimmer = !document.querySelector('[class*=\"shimmer\"]') || document.querySelectorAll('[class*=\"shimmer\"]').length < 3; return hasPrice && noShimmer; }"
         elif 'homepro.co.th' in url:
             # HomePro needs to wait for the MAIN product page to load (not recommendation carousel)
-            # CHANGED STRATEGY: Instead of blocking on home-page, positively check for product-page elements
-            # This allows wait_for to keep polling until product page appears (more reliable than negative check)
+            # In-page polling sets window.__homeproReady; wait_for checks the flag.
             wait_for = """() => {
-                // Check for multiple indicators that product page has loaded (not carousel)
-                // 1. JSON-LD product schema exists (most reliable indicator)
-                const hasJsonLD = document.querySelector('script[type="application/ld+json"]') !== null;
-                
-                // 2. Body has product-page ID or PDP class (page state transitioned)
-                const isProductPageBody = document.body.id === 'product-page' || document.body.className.includes('pdp-');
-                
-                // 3. Product container exists (not just carousel items)
-                const hasProductContainer = document.querySelector('#product-page, .pdp-container, .product-detail') !== null;
-                
-                // 4. Has actual product price (not recommendation prices)
-                const mainPrice = document.querySelector('#product-page .item-price .price, .pdp-price-section .price, .product-price');
-                const hasProductPrice = mainPrice && mainPrice.innerText && /\\d/.test(mainPrice.innerText);
-                
-                // 5. Has product title h1
-                const productTitle = document.querySelector('h1');
-                const hasProductTitle = productTitle && productTitle.innerText && productTitle.innerText.trim().length > 5;
-                
-                // Return true if we detect product page (any strong indicator + supporting elements)
-                return (hasJsonLD || (isProductPageBody && hasProductContainer)) && hasProductPrice && hasProductTitle;
+                return window.__homeproReady === true;
             }"""
             import sys
             print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] Strategy: Positive check for product-page elements (JSON-LD, #product-page, price, h1)", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] HomePro gets 20s initial + 120s wait_for polling until product appears", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Strategy: In-page polling sets window.__homeproReady flag", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] HomePro gets 20s initial + 120s in-page polling", flush=True, file=sys.stderr)
         else:
             # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
             # Ensure page has meaningful content before scraping

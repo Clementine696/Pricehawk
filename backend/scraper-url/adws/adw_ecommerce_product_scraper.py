@@ -236,7 +236,9 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             wait_for = "() => { const hasPrice = document.body.innerText.includes('฿') || document.body.innerText.includes('บาท'); const noShimmer = !document.querySelector('[class*=\"shimmer\"]') || document.querySelectorAll('[class*=\"shimmer\"]').length < 3; return hasPrice && noShimmer; }"
         elif 'homepro.co.th' in url:
             # HomePro needs to wait for price element to load (React SPA)
-            wait_for = "() => document.querySelector('[class*=\"price\"]') !== null && document.body.innerText.includes('฿')"
+            # Also wait for h1 to ensure product name is loaded
+            wait_for = "() => document.querySelector('[class*=\"price\"]') !== null && document.body.innerText.includes('฿') && document.querySelector('h1') !== null"
+            print(f"[DEBUG] HomePro detected - using wait_for condition (waiting for price + h1)")
 
         # Scrape the URL
         result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
@@ -245,13 +247,33 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             print_status_panel(console, f"Failed to scrape: {result.error_message}", adw_id, "extraction", "error", url)
             return None
 
-        print_status_panel(console, f"Extracted {len(result.content) if result.content else 0} characters", adw_id, "extraction", "success", url)
+        html_length = len(result.html) if result.html else 0
+        content_length = len(result.content) if result.content else 0
+        print_status_panel(console, f"Extracted HTML: {html_length} chars, Content: {content_length} chars", adw_id, "extraction", "success", url)
+        
+        # DEBUG: For HomePro, check if key elements are present
+        if 'homepro.co.th' in url and result.html:
+            has_json_ld = 'application/ld+json' in result.html
+            has_price_element = 'price' in result.html.lower()
+            has_product_name = '<h1' in result.html
+            print(f"[HomePro DEBUG] HTML analysis:")
+            print(f"  Has JSON-LD: {has_json_ld}")
+            print(f"  Has price element: {has_price_element}")
+            print(f"  Has H1 tag: {has_product_name}")
 
         # Get appropriate extractor for the URL
         extractor = get_extractor(url)
         
         # Extract product data
         product = extractor.extract_from_html(result.html or result.content, url)
+        
+        print(f"[DEBUG] Extractor returned: {product is not None}")
+        if product:
+            print(f"[DEBUG] Product details:")
+            print(f"  Name: {product.name}")
+            print(f"  Retailer: {product.retailer}")
+            print(f"  URL: {product.url}")
+            print(f"  Price: {product.current_price}")
         
         # LLM Fallback Logic - TEMPORARILY DISABLED due to LLMConfig ForwardRef issue in crawl4ai
         # The primary extraction with JSON-LD and Quick Info parsing should be sufficient
@@ -569,6 +591,8 @@ def main(
                                 result = await future
                                 if result:
                                     products.append(result)
+                                    print(f"[DEBUG] Added product to list. Total products: {len(products)}")
+                                    print(f"[DEBUG] Product retailer: {result.retailer}")
                                     
                                     # Incremental save - separate files per retailer
                                     try:
@@ -585,8 +609,10 @@ def main(
                                         
                                         for retailer_name, retailer_products in products_by_retailer.items():
                                             retailer_file = os.path.join(output_dir, f"{retailer_name}.json")
+                                            print(f"[DEBUG] Writing {len(retailer_products)} products to: {retailer_file}")
                                             with open(retailer_file, 'w', encoding='utf-8') as f:
                                                 json.dump(retailer_products, f, ensure_ascii=False, indent=2)
+                                            print(f"[DEBUG] Successfully wrote file: {retailer_file}")
                                     except Exception as e:
                                         console.print(f"[yellow]Warning: Failed to save incremental results: {e}[/yellow]")
                                         

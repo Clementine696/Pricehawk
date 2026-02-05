@@ -113,7 +113,7 @@ class ScrapingConfig:
     """
     max_concurrent: int = 3
     delay_between_requests: float = 1.0
-    timeout: int = 30
+    timeout: int = 30  # Default timeout (increased to 60 for HomePro in scraper)
     user_agent: str = "Mozilla/5.0 (compatible; Crawl4AI/1.0)"
     headless: bool = True
     verbose: bool = None  # None = use env var

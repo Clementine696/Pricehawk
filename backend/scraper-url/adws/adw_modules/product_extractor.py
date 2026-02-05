@@ -1495,6 +1495,19 @@ class HomeProExtractor(ProductExtractor):
 
     def extract_from_html(self, html_content: str, url: str = None) -> Optional[ProductData]:
         """Extract product data specifically from HomePro using JSON-LD as primary source."""
+        import sys
+        print(f"\n{'='*60}", flush=True, file=sys.stderr)
+        print(f"[HomePro EXTRACT] Starting extraction for: {url}", flush=True, file=sys.stderr)
+        print(f"[HomePro EXTRACT] HTML length: {len(html_content) if html_content else 0} chars", flush=True, file=sys.stderr)
+        
+        if not html_content:
+            print(f"[HomePro EXTRACT] ERROR: HTML content is None or empty!", flush=True, file=sys.stderr)
+            return None
+        
+        # Show first 200 chars to verify it's valid HTML
+        preview = html_content[:500].replace('\n', ' ')[:200]
+        print(f"[HomePro EXTRACT] HTML preview: {preview}...", flush=True, file=sys.stderr)
+        
         product = ProductData(url=url)
 
         # 1. Extract SKU from URL first (most reliable for HomePro)
@@ -1503,21 +1516,25 @@ class HomeProExtractor(ProductExtractor):
             sku_match = re.search(r'/p/(\d+)', url)
             if sku_match:
                 product.sku = sku_match.group(1)
+                print(f"[HomePro EXTRACT] Extracted SKU from URL: {product.sku}", flush=True, file=sys.stderr)
+            else:
+                print(f"[HomePro EXTRACT] WARNING: Could not extract SKU from URL", flush=True, file=sys.stderr)
 
         # 2. Try JSON-LD extraction (primary source for HomePro - most accurate)
         json_ld_data = self._extract_json_ld(html_content)
 
-        print(f"[HomePro DEBUG] JSON-LD extraction for {url}", flush=True)
+        import sys
+        print(f"[HomePro DEBUG] JSON-LD extraction for {url}", flush=True, file=sys.stderr)
         if json_ld_data:
-            print(f"  JSON-LD keys: {list(json_ld_data.keys())}", flush=True)
-            print(f"  name: {json_ld_data.get('name')}", flush=True)
-            print(f"  sku: {json_ld_data.get('sku')}", flush=True)
-            print(f"  brand: {json_ld_data.get('brand')}", flush=True)
+            print(f"  JSON-LD keys: {list(json_ld_data.keys())}", flush=True, file=sys.stderr)
+            print(f"  name: {json_ld_data.get('name')}", flush=True, file=sys.stderr)
+            print(f"  sku: {json_ld_data.get('sku')}", flush=True, file=sys.stderr)
+            print(f"  brand: {json_ld_data.get('brand')}", flush=True, file=sys.stderr)
             offers = json_ld_data.get('offers', {})
             if isinstance(offers, dict):
-                print(f"  price: {offers.get('price')}", flush=True)
+                print(f"  price: {offers.get('price')}", flush=True, file=sys.stderr)
         else:
-            print(f"  JSON-LD not found - will use HTML extraction", flush=True)
+            print(f"  JSON-LD not found - will use HTML extraction", flush=True, file=sys.stderr)
 
         if json_ld_data:
             # Name from JSON-LD
@@ -1565,7 +1582,9 @@ class HomeProExtractor(ProductExtractor):
         # 2b. If JSON-LD price not found, try HomePro-specific HTML price patterns
         # NOTE: HomePro renders main product price in 'obcon-price-info' section
         # The DOM structure places this AFTER some related product sections, so we can't cut by marker
+        print(f"[HomePro EXTRACT] After JSON-LD - Price: {product.current_price}, Name: {product.name}", flush=True, file=sys.stderr)
         if not product.current_price:
+            print(f"[HomePro EXTRACT] Attempting HTML price extraction...", flush=True, file=sys.stderr)
             # HomePro specific price patterns - prioritized from most specific to general
             # Focus on patterns that identify MAIN product price, not related products
             homepro_price_patterns = [
@@ -1594,18 +1613,28 @@ class HomeProExtractor(ProductExtractor):
 
             # If SKU-specific GTM didn't work, try other patterns
             if not product.current_price:
+                import sys
+                print(f"[HomePro EXTRACT] GTM price not found, trying {len(homepro_price_patterns)} HTML patterns...", flush=True, file=sys.stderr)
+                pattern_num = 0
                 for pattern in homepro_price_patterns:
+                    pattern_num += 1
                     matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
+                    print(f"[HomePro EXTRACT] Pattern #{pattern_num}: found {len(matches)} matches", flush=True, file=sys.stderr)
                     if matches:
                         # Filter to reasonable price range - HomePro main products are usually > 50 THB
                         for price_str in matches:
                             try:
                                 price = float(price_str.replace(',', ''))
+                                print(f"[HomePro EXTRACT]   Candidate price: {price}", flush=True, file=sys.stderr)
                                 # Use higher minimum (50) to avoid matching small related product prices
                                 if 50 <= price <= 500000:
                                     product.current_price = price
+                                    print(f"[HomePro EXTRACT]   ✓ Price accepted: {price}", flush=True, file=sys.stderr)
                                     break
+                                else:
+                                    print(f"[HomePro EXTRACT]   ✗ Price out of range", flush=True, file=sys.stderr)
                             except ValueError:
+                                print(f"[HomePro EXTRACT]   ✗ Price parse error: {price_str}", flush=True, file=sys.stderr)
                                 continue
                     if product.current_price:
                         break
@@ -1657,6 +1686,8 @@ class HomeProExtractor(ProductExtractor):
 
         # 6. Extract product name from HTML if not found in JSON-LD
         if not product.name:
+            import sys
+            print(f"[HomePro EXTRACT] Name not found in JSON-LD, trying HTML patterns...", flush=True, file=sys.stderr)
             name_patterns = [
                 # Try h1 with product-specific classes first
                 r'<h1[^>]*class="[^"]*product[^"]*name[^"]*"[^>]*>(.*?)</h1>',
@@ -1668,15 +1699,24 @@ class HomeProExtractor(ProductExtractor):
                 # Try page title as last resort
                 r'<title[^>]*>([^<]+)</title>',
             ]
+            pattern_num = 0
             for pattern in name_patterns:
+                pattern_num += 1
                 match = re.search(pattern, html_content, re.DOTALL | re.IGNORECASE)
                 if match:
-                    name = self._clean_text(match.group(1))
+                    raw_name = match.group(1)
+                    print(f"[HomePro EXTRACT] Pattern #{pattern_num} matched! Raw: {raw_name[:100]}", flush=True, file=sys.stderr)
+                    name = self._clean_text(raw_name)
                     name = self._clean_homepro_text(name)
+                    print(f"[HomePro EXTRACT] After cleaning: {name}", flush=True, file=sys.stderr)
                     if name and len(name) > 3:
                         product.name = name
-                        print(f"[HomePro DEBUG] Found name with pattern: {pattern[:50]}")
+                        print(f"[HomePro EXTRACT] ✓ Name accepted: {name}", flush=True, file=sys.stderr)
                         break
+                    else:
+                        print(f"[HomePro EXTRACT] ✗ Name rejected (too short or empty)", flush=True, file=sys.stderr)
+                else:
+                    print(f"[HomePro EXTRACT] Pattern #{pattern_num} no match", flush=True, file=sys.stderr)
             
             # Additional fallback: Try og:title meta tag
             if not product.name:
@@ -1754,16 +1794,17 @@ class HomeProExtractor(ProductExtractor):
         product.retailer = "HomePro"
         
         # DEBUG: Log extraction results
-        print(f"\n[HomePro DEBUG] Extraction completed for: {url}", flush=True)
-        print(f"  Name: {product.name}", flush=True)
-        print(f"  Price: {product.current_price}", flush=True)
-        print(f"  Brand: {product.brand}", flush=True)
-        print(f"  SKU: {product.sku}", flush=True)
-        print(f"  Images: {len(product.images) if product.images else 0}", flush=True)
+        import sys
+        print(f"\n[HomePro DEBUG] Extraction completed for: {url}", flush=True, file=sys.stderr)
+        print(f"  Name: {product.name}", flush=True, file=sys.stderr)
+        print(f"  Price: {product.current_price}", flush=True, file=sys.stderr)
+        print(f"  Brand: {product.brand}", flush=True, file=sys.stderr)
+        print(f"  SKU: {product.sku}", flush=True, file=sys.stderr)
+        print(f"  Images: {len(product.images) if product.images else 0}", flush=True, file=sys.stderr)
         
         # Validation: HomePro products must have at minimum name OR sku
         if not product.name and not product.sku:
-            print(f"[HomePro ERROR] Failed to extract name or SKU - extraction failed!", flush=True)
+            print(f"[HomePro ERROR] Failed to extract name or SKU - extraction failed!", flush=True, file=sys.stderr)
             return None
         
         return product

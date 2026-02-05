@@ -240,34 +240,34 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             wait_for = "() => { const hasPrice = document.body.innerText.includes('฿') || document.body.innerText.includes('บาท'); const noShimmer = !document.querySelector('[class*=\"shimmer\"]') || document.querySelectorAll('[class*=\"shimmer\"]').length < 3; return hasPrice && noShimmer; }"
         elif 'homepro.co.th' in url:
             # HomePro needs to wait for the MAIN product page to load (not recommendation carousel)
-            # Strict multi-condition check to ensure complete page load
+            # CHANGED STRATEGY: Instead of blocking on home-page, positively check for product-page elements
+            # This allows wait_for to keep polling until product page appears (more reliable than negative check)
             wait_for = """() => {
-                // CRITICAL: Block if still in home-page state (carousel/recommendations)
-                if (document.body.className.includes('home-page')) return false;
+                // Check for multiple indicators that product page has loaded (not carousel)
+                // 1. JSON-LD product schema exists (most reliable indicator)
+                const hasJsonLD = document.querySelector('script[type="application/ld+json"]') !== null;
                 
-                // First, ensure we're on the product page (not the intermediate page-load state)
-                const isProductPage = document.body.id === 'product-page' || document.body.className.includes('pdp-');
-                if (!isProductPage) return false;
+                // 2. Body has product-page ID or PDP class (page state transitioned)
+                const isProductPageBody = document.body.id === 'product-page' || document.body.className.includes('pdp-');
                 
-                // Wait for main product section with price (not recommendation carousel)
-                const mainPrice = document.querySelector('#product-page .item-price .price, .pdp-price-section .price');
-                const hasPriceContent = mainPrice && mainPrice.innerText && /\\d/.test(mainPrice.innerText);
-                const loadingHidden = !document.querySelector('.loading-overlay:not(.hidden)');
-                const productLoaded = document.querySelector('#product-page, .pdp-container');
+                // 3. Product container exists (not just carousel items)
+                const hasProductContainer = document.querySelector('#product-page, .pdp-container, .product-detail') !== null;
                 
-                // ADDITIONAL CHECK: Ensure product title exists with content (not empty h1)
+                // 4. Has actual product price (not recommendation prices)
+                const mainPrice = document.querySelector('#product-page .item-price .price, .pdp-price-section .price, .product-price');
+                const hasProductPrice = mainPrice && mainPrice.innerText && /\\d/.test(mainPrice.innerText);
+                
+                // 5. Has product title h1
                 const productTitle = document.querySelector('h1');
-                const hasTitleContent = productTitle && productTitle.innerText && productTitle.innerText.trim().length > 5;
+                const hasProductTitle = productTitle && productTitle.innerText && productTitle.innerText.trim().length > 5;
                 
-                // ADDITIONAL CHECK: Ensure page has substantial content (not skeleton/placeholder)
-                const hasSubstantialContent = document.body.innerText.length > 1000;
-                
-                return isProductPage && hasPriceContent && loadingHidden && productLoaded && hasTitleContent && hasSubstantialContent;
+                // Return true if we detect product page (any strong indicator + supporting elements)
+                return (hasJsonLD || (isProductPageBody && hasProductContainer)) && hasProductPrice && hasProductTitle;
             }"""
             import sys
             print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] Using STRICT wait_for with home-page blocker: MUST exit home-page state", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] HomePro gets 20s initial + 120s wait_for page_timeout + state validation", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Strategy: Positive check for product-page elements (JSON-LD, #product-page, price, h1)", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] HomePro gets 20s initial + 120s wait_for polling until product appears", flush=True, file=sys.stderr)
         else:
             # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
             # Ensure page has meaningful content before scraping

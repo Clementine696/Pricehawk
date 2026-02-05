@@ -1586,10 +1586,10 @@ class HomeProExtractor(ProductExtractor):
             image = json_ld_data.get('image')
             if image:
                 if isinstance(image, list):
-                    # Filter to only product images (cdn.homepro.co.th)
-                    product.images = [img for img in image if 'cdn.homepro.co.th' in img and 'ART_IMAGE' in img]
+                    # Filter to only product images (cdn.homepro.co.th or ecatalog-media.homepro.co.th)
+                    product.images = [img for img in image if ('cdn.homepro.co.th' in img or 'ecatalog-media.homepro.co.th' in img) and 'ART_IMAGE' in img]
                 elif isinstance(image, str):
-                    if 'cdn.homepro.co.th' in image:
+                    if 'cdn.homepro.co.th' in image or 'ecatalog-media.homepro.co.th' in image:
                         product.images = [image]
 
         # 2b. If JSON-LD price not found, try HomePro-specific HTML price patterns
@@ -1743,16 +1743,18 @@ class HomeProExtractor(ProductExtractor):
 
         # 7. Extract images from HTML if not found (fallback)
         if not product.images:
-            # HomePro product images pattern
+            # HomePro product images pattern (cdn.homepro.co.th or ecatalog-media.homepro.co.th)
             img_patterns = [
-                r'<img[^>]*src="(https://cdn\.homepro\.co\.th/ART_IMAGE[^"]+)"',
-                r'"(https://cdn\.homepro\.co\.th/ART_IMAGE[^"]+)"',
+                r'<img[^>]*src="(https://(?:cdn|ecatalog-media)\.homepro\.co\.th/[^"]*ART_IMAGE[^"]+)"',
+                r'"(https://(?:cdn|ecatalog-media)\.homepro\.co\.th/[^"]*ART_IMAGE[^"]+)"',
+                r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']*)"',
             ]
             images = []
             for pattern in img_patterns:
                 matches = re.findall(pattern, html_content)
                 for img in matches:
-                    if img not in images:
+                    # Only include HomePro product images
+                    if 'homepro.co.th' in img and img not in images:
                         images.append(img)
             if images:
                 product.images = images[:10]
@@ -2505,7 +2507,25 @@ class GlobalHouseExtractor(ProductExtractor):
         """Extract product data specifically from Global House."""
         product = ProductData(url=url)
 
-        # 1. Try __NEXT_DATA__ extraction first (Next.js specific)
+        # 1. Extract SKU from URL first (most reliable for GlobalHouse)
+        # Global House URL pattern: /product/MAZUMA-...-i.8852163012022
+        if url:
+            sku_match = re.search(r'-i\.(\d+)(?:\?|$)', url)
+            if sku_match:
+                potential_sku = sku_match.group(1)
+                if self._is_valid_sku(potential_sku):
+                    product.sku = potential_sku
+
+        # 2. Extract SKU from HTML if not found in URL
+        # GlobalHouse displays: <div class="text-xs text-gray-400">รหัสสินค้า : 8852163012022</div>
+        if not product.sku:
+            sku_html_match = re.search(r'รหัสสินค้า\s*:\s*(\d+)', html_content)
+            if sku_html_match:
+                potential_sku = sku_html_match.group(1)
+                if self._is_valid_sku(potential_sku):
+                    product.sku = potential_sku
+
+        # 3. Try __NEXT_DATA__ extraction (Next.js specific)
         next_data = self._extract_next_data(html_content)
         if next_data:
             ast_data = next_data.get('props', {}).get('pageProps', {}).get('ast', {}).get('data', {})
@@ -2645,15 +2665,6 @@ class GlobalHouseExtractor(ProductExtractor):
                     if price and price > 0:
                         product.original_price = price
                         break
-
-        # 5. Extract SKU from URL pattern: /product/BRAND-NAME-i.SKU
-        if url and not product.sku:
-            # Global House URL pattern: /product/MAZUMA-...-i.8852163012022
-            sku_match = re.search(r'-i\.(\d+)(?:\?|$)', url)
-            if sku_match:
-                potential_sku = sku_match.group(1)
-                if self._is_valid_sku(potential_sku):
-                    product.sku = potential_sku
 
         # 6. Extract brand from HTML or product name if not found
         if not product.brand:

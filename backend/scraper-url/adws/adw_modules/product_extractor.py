@@ -1507,6 +1507,18 @@ class HomeProExtractor(ProductExtractor):
         # 2. Try JSON-LD extraction (primary source for HomePro - most accurate)
         json_ld_data = self._extract_json_ld(html_content)
 
+        print(f"[HomePro DEBUG] JSON-LD extraction for {url}")
+        if json_ld_data:
+            print(f"  JSON-LD keys: {list(json_ld_data.keys())}")
+            print(f"  name: {json_ld_data.get('name')}")
+            print(f"  sku: {json_ld_data.get('sku')}")
+            print(f"  brand: {json_ld_data.get('brand')}")
+            offers = json_ld_data.get('offers', {})
+            if isinstance(offers, dict):
+                print(f"  price: {offers.get('price')}")
+        else:
+            print(f"  JSON-LD not found - will use HTML extraction")
+
         if json_ld_data:
             # Name from JSON-LD
             product.name = self._clean_homepro_text(json_ld_data.get('name'))
@@ -1646,9 +1658,15 @@ class HomeProExtractor(ProductExtractor):
         # 6. Extract product name from HTML if not found in JSON-LD
         if not product.name:
             name_patterns = [
+                # Try h1 with product-specific classes first
                 r'<h1[^>]*class="[^"]*product[^"]*name[^"]*"[^>]*>(.*?)</h1>',
                 r'<h1[^>]*class="[^"]*pdp[^"]*"[^>]*>(.*?)</h1>',
+                # Try h1 with data-testid
+                r'<h1[^>]*data-testid="[^"]*product[^"]*name[^"]*"[^>]*>(.*?)</h1>',
+                # Try any h1 that's not in a nav or footer
                 r'<h1[^>]*>(.*?)</h1>',
+                # Try page title as last resort
+                r'<title[^>]*>([^<]+)</title>',
             ]
             for pattern in name_patterns:
                 match = re.search(pattern, html_content, re.DOTALL | re.IGNORECASE)
@@ -1657,7 +1675,18 @@ class HomeProExtractor(ProductExtractor):
                     name = self._clean_homepro_text(name)
                     if name and len(name) > 3:
                         product.name = name
+                        print(f"[HomePro DEBUG] Found name with pattern: {pattern[:50]}")
                         break
+            
+            # Additional fallback: Try og:title meta tag
+            if not product.name:
+                og_title_match = re.search(r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\'](.*?)["\']', html_content, re.IGNORECASE)
+                if og_title_match:
+                    name = self._clean_text(og_title_match.group(1))
+                    name = self._clean_homepro_text(name)
+                    if name and len(name) > 3:
+                        product.name = name
+                        print(f"[HomePro DEBUG] Found name from og:title")
 
         # 7. Extract images from HTML if not found (fallback)
         if not product.images:
@@ -1723,6 +1752,20 @@ class HomeProExtractor(ProductExtractor):
                 # HomePro's HTML structure causes base extraction to pick up related product prices
 
         product.retailer = "HomePro"
+        
+        # DEBUG: Log extraction results
+        print(f"\n[HomePro DEBUG] Extraction completed for: {url}")
+        print(f"  Name: {product.name}")
+        print(f"  Price: {product.current_price}")
+        print(f"  Brand: {product.brand}")
+        print(f"  SKU: {product.sku}")
+        print(f"  Images: {len(product.images) if product.images else 0}")
+        
+        # Validation: HomePro products must have at minimum name OR sku
+        if not product.name and not product.sku:
+            print(f"[HomePro ERROR] Failed to extract name or SKU - extraction failed!")
+            return None
+        
         return product
 
     def _clean_homepro_text(self, text: str, strip_html: bool = False) -> Optional[str]:

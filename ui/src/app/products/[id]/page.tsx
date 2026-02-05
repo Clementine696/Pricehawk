@@ -5,18 +5,21 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw, TrendingUp, TrendingDown, Download, Calendar, CheckCircle, AlertCircle, Link2, Link2Off } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-// import {
-//   LineChart,
-//   Line,
-//   XAxis,
-//   YAxis,
-//   CartesianGrid,
-//   Tooltip,
-//   Legend,
-//   ResponsiveContainer
-// } from 'recharts';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { format } from 'date-fns';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
+} from 'recharts';
 import { trackProductView, trackMatchVerification } from '@/lib/analytics';
 
 interface Product {
@@ -32,6 +35,7 @@ interface Product {
   retailer_name: string;
   retailer_id: string;
   last_updated_at: string | null;
+  scrape_fail_count: number;
 }
 
 interface Match {
@@ -50,22 +54,22 @@ interface ProductDetailData {
   total_matches: number;
 }
 
-// interface PriceHistoryPoint {
-//   price: number;
-//   date: string;
-// }
+interface PriceHistoryPoint {
+  price: number;
+  date: string;
+}
 
-// interface PriceHistoryProduct {
-//   product_id: number;
-//   name: string;
-//   retailer: string;
-//   history: PriceHistoryPoint[];
-// }
+interface PriceHistoryProduct {
+  product_id: number;
+  name: string;
+  retailer: string;
+  history: PriceHistoryPoint[];
+}
 
-// interface PriceHistoryData {
-//   base_product: PriceHistoryProduct;
-//   matched_products: PriceHistoryProduct[];
-// }
+interface PriceHistoryData {
+  base_product: PriceHistoryProduct;
+  matched_products: PriceHistoryProduct[];
+}
 
 interface WatchlistGroup {
   group_id: number;
@@ -193,9 +197,12 @@ export default function ProductDetailPage() {
   const [collapsedRetailers, setCollapsedRetailers] = useState<Set<string>>(new Set());
   const [isRescraping, setIsRescraping] = useState(false);
   const [rescrapeResult, setRescrapeResult] = useState<{success: boolean; message: string} | null>(null);
-  // const [priceHistory, setPriceHistory] = useState<PriceHistoryData | null>(null);
-  // const [historyDays, setHistoryDays] = useState<number>(30);
-  // const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [priceHistory, setPriceHistory] = useState<PriceHistoryData | null>(null);
+  const [historyDays, setHistoryDays] = useState<number>(30);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [showCustomRange, setShowCustomRange] = useState(false);
+  const [customStartDate, setCustomStartDate] = useState<Date | null>(null);
+  const [customEndDate, setCustomEndDate] = useState<Date | null>(null);
   const [watchlistGroups, setWatchlistGroups] = useState<WatchlistGroup[]>([]);
   const [showAddWatchlistModal, setShowAddWatchlistModal] = useState(false);
   const [allWatchlistGroups, setAllWatchlistGroups] = useState<{group_id: number; name: string}[]>([]);
@@ -209,26 +216,44 @@ export default function ProductDetailPage() {
     }
   }, [productId]);
 
-  // useEffect(() => {
-  //   if (productId) {
-  //     fetchPriceHistory();
-  //   }
-  // }, [productId, historyDays]);
+  useEffect(() => {
+    if (productId) {
+      fetchPriceHistory();
+    }
+  }, [productId, historyDays, showCustomRange, customStartDate, customEndDate]);
 
-  // const fetchPriceHistory = async () => {
-  //   setIsLoadingHistory(true);
-  //   try {
-  //     const response = await apiFetch(`/api/products/${productId}/price-history?days=${historyDays}`);
-  //     if (response.ok) {
-  //       const result = await response.json();
-  //       setPriceHistory(result);
-  //     }
-  //   } catch (err) {
-  //     console.error('Error fetching price history:', err);
-  //   } finally {
-  //     setIsLoadingHistory(false);
-  //   }
-  // };
+  const fetchPriceHistory = async () => {
+    setIsLoadingHistory(true);
+    try {
+      let url = `/api/products/${productId}/price-history`;
+      
+      if (showCustomRange && (customStartDate || customEndDate)) {
+        // Use custom date range with defaults:
+        // - If only start date: use today as end date
+        // - If only end date: use 30 days before as start date
+        const startStr = customStartDate 
+          ? format(customStartDate, 'yyyy-MM-dd')
+          : format(new Date(customEndDate!.getTime() - 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd');
+        const endStr = customEndDate 
+          ? format(customEndDate, 'yyyy-MM-dd') 
+          : format(new Date(), 'yyyy-MM-dd');
+        url += `?start_date=${startStr}&end_date=${endStr}`;
+      } else {
+        // Use days parameter
+        url += `?days=${historyDays}`;
+      }
+      
+      const response = await apiFetch(url);
+      if (response.ok) {
+        const result = await response.json();
+        setPriceHistory(result);
+      }
+    } catch (err) {
+      console.error('Error fetching price history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   const fetchWatchlistGroups = async () => {
     try {
@@ -251,6 +276,36 @@ export default function ProductDetailPage() {
       }
     } catch (err) {
       console.error('Error fetching all watchlist groups:', err);
+    }
+  };
+
+  const exportPriceHistory = async () => {
+    if (!productId) return;
+
+    try {
+      const response = await apiFetch(`/api/products/${productId}/price-history/export?days=${historyDays}`);
+      if (!response.ok) {
+        throw new Error('Failed to export price history');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const now = new Date();
+      const timestamp = now.getFullYear().toString() +
+        (now.getMonth() + 1).toString().padStart(2, '0') +
+        now.getDate().toString().padStart(2, '0') + '_' +
+        now.getHours().toString().padStart(2, '0') +
+        now.getMinutes().toString().padStart(2, '0') +
+        now.getSeconds().toString().padStart(2, '0');
+      link.download = `price_history_export_${timestamp}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting price history:', error);
     }
   };
 
@@ -564,15 +619,16 @@ export default function ProductDetailPage() {
         {/* Main Content */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left Side - My Product */}
-          <div className="space-y-4">
-            {/* Header */}
-            <div className="bg-cyan-600 text-white px-4 py-3 rounded-t-lg flex items-center gap-2">
-              <span className="bg-white text-cyan-600 text-xs font-semibold px-2 py-1 rounded">My Product</span>
-              <span className="font-medium">{product.retailer_name}</span>
-            </div>
+          <div className="flex flex-col self-stretch">
+            <div className="bg-white rounded-lg shadow overflow-hidden flex-1 flex flex-col">
+              {/* Header */}
+              <div className="bg-cyan-600 text-white px-4 py-3 flex items-center gap-2 flex-shrink-0">
+                <span className="bg-white text-cyan-600 text-xs font-semibold px-2 py-1 rounded">My Product</span>
+                <span className="font-medium">{product.retailer_name}</span>
+              </div>
 
-            {/* Product Card */}
-            <div className="bg-white rounded-b-lg shadow p-6 -mt-4">
+              {/* Product Card Content */}
+              <div className="p-6 flex-1 flex flex-col">
               <ProductImage
                 src={product.image}
                 alt={product.name}
@@ -651,20 +707,61 @@ export default function ProductDetailPage() {
                 )}
               </div>
 
-              {product.link && (
-                <a
-                  href={product.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-4 flex items-center gap-2 text-cyan-500 hover:text-cyan-600"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  View on {product.retailer_name}
-                </a>
-              )}
+              {/* View link and Updated timestamp on same row */}
+              <div className="mt-4 flex items-center justify-between">
+                {product.link && (
+                  <a
+                    href={product.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-cyan-500 hover:text-cyan-600"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    View on {product.retailer_name}
+                  </a>
+                )}
+                <div className="text-sm text-gray-500">
+                  Updated: {formatLastUpdated(product.last_updated_at)}
+                </div>
+              </div>
 
-              <div className="mt-4 pt-4 border-t border-gray-200 text-sm text-gray-500">
-                Updated: {formatLastUpdated(product.last_updated_at)}
+              {/* Product Status Indicator */}
+              <div className="mt-4">
+                {product.retailer_name?.toLowerCase() === 'thai watsadu' ? (
+                  // Thai Watsadu - no box styling, ensure green color
+                  product.scrape_fail_count >= 3 ? (
+                    <div className="flex items-center gap-2">
+                      <Link2Off className="w-4 h-4 text-red-600 flex-shrink-0" />
+                      <p className="text-sm font-medium text-red-600">Inactive URL</p>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Link2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                      <p className="text-sm font-medium text-green-600">Active URL</p>
+                    </div>
+                  )
+                ) : (
+                  // Other retailers - with box styling
+                  product.scrape_fail_count >= 3 ? (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                      <Link2Off className="w-4 h-4 text-red-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-red-800">Inactive URL</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+                      <Link2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-green-800">Active URL</p>
+                      </div>
+                    </div>
+                  )
+                )}
+              </div>
+
+              {/* Spacer to push content to bottom */}
+              <div className="flex-1"></div>
               </div>
             </div>
           </div>
@@ -813,7 +910,26 @@ export default function ProductDetailPage() {
                                 </div>
 
                                 {/* Verification Actions */}
-                                <div className="mt-4 pt-3 border-t border-gray-100 flex justify-end gap-3">
+                                <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center gap-3">
+                                  {/* Left: Active/Inactive Status */}
+                                  <div>
+                                    {match.verified_by_user && match.is_same && (
+                                      match.product.scrape_fail_count >= 3 ? (
+                                        <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
+                                          <Link2Off className="w-4 h-4" />
+                                          Inactive URL
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-1.5 text-xs text-green-600 font-medium">
+                                          <Link2 className="w-4 h-4" />
+                                          Active URL
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+
+                                  {/* Right: Verification Buttons */}
+                                  <div className="flex gap-3">
                                   {match.verified_by_user ? (
                                     <>
                                       <button
@@ -860,6 +976,7 @@ export default function ProductDetailPage() {
                                       </button>
                                     </>
                                   )}
+                                  </div>
                                 </div>
                               </div>
                             ))}
@@ -888,116 +1005,345 @@ export default function ProductDetailPage() {
           </div>
         </div>
 
-        {/* Price History Chart - Commented out */}
-        {/* <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-cyan-500" />
-              Price History
-            </h2>
-            <div className="flex gap-2">
-              {[7, 30, 90, 180, 365].map((days) => (
+        {/* Price History Chart */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex flex-col gap-4 mb-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <h2 className="text-lg font-semibold text-gray-900">Price History</h2>
+              <div className="flex flex-wrap items-center gap-2">
+              {[
+                { days: 1, label: '1 Day' },
+                { days: 7, label: '1 Week' },
+                { days: 30, label: '1 Month' },
+                { days: 90, label: '3 Months' },
+                { days: 180, label: '6 Months' },
+                { days: 365, label: '1 Year' },
+              ].map(({ days, label }) => (
                 <button
                   key={days}
-                  onClick={() => setHistoryDays(days)}
-                  className={`px-3 py-1 text-sm rounded-lg transition-colors ${
-                    historyDays === days
-                      ? 'bg-cyan-500 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  onClick={() => {
+                    setHistoryDays(days);
+                    setShowCustomRange(false);
+                  }}
+                  className={`px-3 h-8 text-sm rounded-md font-medium transition-colors ${
+                    historyDays === days && !showCustomRange
+                      ? 'bg-cyan-500 text-white hover:bg-cyan-600'
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
                   }`}
                 >
-                  {days === 7 ? '7D' : days === 30 ? '1M' : days === 90 ? '3M' : days === 180 ? '6M' : '1Y'}
+                  {label}
                 </button>
               ))}
+              <button
+                onClick={() => setShowCustomRange(!showCustomRange)}
+                className={`px-3 h-8 text-sm rounded-md font-medium transition-colors ${
+                  showCustomRange
+                    ? 'bg-cyan-500 text-white hover:bg-cyan-600'
+                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
+                }`}
+              >
+                Custom
+              </button>
+              <button
+                onClick={exportPriceHistory}
+                disabled={!priceHistory}
+                className="px-3 h-8 text-sm rounded-md font-medium transition-colors bg-white text-gray-600 hover:bg-gray-100 border border-gray-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download className="h-4 w-4" />
+                Export
+              </button>
+              </div>
             </div>
+
+              {/* Custom Date Range Picker */}
+              {showCustomRange && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-700">From:</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 hover:bg-cyan-500 hover:border-cyan-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40 text-left relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
+                      {customStartDate ? format(customStartDate, "MMM d, yyyy") : "Start date"}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start">
+                    <CalendarComponent
+                      mode="single"
+                      selected={customStartDate || undefined}
+                      onSelect={(date: Date | undefined) => {
+                        setCustomStartDate(date || null);
+                        // If start date is after end date, clear end date
+                        if (date && customEndDate && date > customEndDate) {
+                          setCustomEndDate(null);
+                        }
+                      }}
+                      disabled={(date) => date > new Date()}
+                      defaultMonth={customStartDate || new Date()}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-700">To:</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 hover:bg-cyan-500 hover:border-cyan-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40 text-left relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
+                      {customEndDate ? format(customEndDate, "MMM d, yyyy") : "End date"}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start">
+                    <CalendarComponent
+                      mode="single"
+                      selected={customEndDate || undefined}
+                      onSelect={(date: Date | undefined) => setCustomEndDate(date || null)}
+                      disabled={(date) =>
+                        date > new Date() || (customStartDate ? date < customStartDate : false)
+                      }
+                      defaultMonth={customEndDate || customStartDate || new Date()}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (customStartDate || customEndDate) {
+                    // Trigger refetch with custom dates
+                    fetchPriceHistory();
+                  }
+                }}
+                disabled={!customStartDate && !customEndDate}
+                className="ml-auto px-3 h-9 text-sm rounded-md font-medium bg-cyan-500 text-white hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Apply
+              </button>
+                </div>
+              )}
           </div>
 
           {isLoadingHistory ? (
-            <div className="h-80 flex items-center justify-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
+            <div className="space-y-6">
+              {/* Placeholder for stats cards */}
+              <div className="h-[100px]"></div>
+              {/* Loading spinner */}
+              <div className="h-[350px] flex items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
+              </div>
+              {/* Placeholder for data point counter */}
+              <div className="h-[24px]"></div>
             </div>
           ) : priceHistory && (priceHistory.base_product.history.length > 0 || priceHistory.matched_products.some(p => p.history.length > 0)) ? (
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={(() => {
-                    // Combine all price history into chart data
+            <div className="space-y-6">
+              {/* Price Stats Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {(() => {
+                  // Calculate lowest and highest prices
+                  const allPrices: { price: number; retailer: string; date: string }[] = [];
+
+                  priceHistory.base_product.history.forEach(h => {
+                    allPrices.push({
+                      price: h.price,
+                      retailer: priceHistory.base_product.retailer,
+                      date: h.date
+                    });
+                  });
+
+                  priceHistory.matched_products.forEach(mp => {
+                    mp.history.forEach(h => {
+                      allPrices.push({
+                        price: h.price,
+                        retailer: mp.retailer,
+                        date: h.date
+                      });
+                    });
+                  });
+
+                  const lowestPrice = allPrices.reduce((min, curr) =>
+                    curr.price < min.price ? curr : min
+                  , allPrices[0]);
+
+                  const highestPrice = allPrices.reduce((max, curr) =>
+                    curr.price > max.price ? curr : max
+                  , allPrices[0]);
+
+                  return (
+                    <>
+                      <div className="flex items-center gap-3 p-4 bg-green-50 rounded-lg border border-green-200">
+                        <div className="p-2 bg-green-100 rounded-full">
+                          <TrendingDown className="h-5 w-5 text-green-600" />
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Lowest Price</p>
+                          <p className="text-xl font-bold text-green-600">
+                            ฿{lowestPrice.price.toLocaleString()}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {lowestPrice.retailer} • {new Date(lowestPrice.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 p-4 bg-red-50 rounded-lg border border-red-200">
+                        <div className="p-2 bg-red-100 rounded-full">
+                          <TrendingUp className="h-5 w-5 text-red-600" />
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Highest Price</p>
+                          <p className="text-xl font-bold text-red-600">
+                            ฿{highestPrice.price.toLocaleString()}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {highestPrice.retailer} • {new Date(highestPrice.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* Chart */}
+              <div className="h-[350px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={(() => {
+                      // Combine all price history into chart data
+                      const allDates = new Set<string>();
+                      priceHistory.base_product.history.forEach(h => allDates.add(h.date.split('T')[0]));
+                      priceHistory.matched_products.forEach(p => p.history.forEach(h => allDates.add(h.date.split('T')[0])));
+
+                      const sortedDates = Array.from(allDates).sort();
+
+                      return sortedDates.map(date => {
+                        const point: Record<string, string | number | null> = { date };
+
+                        // Find base product price for this date
+                        const basePrice = priceHistory.base_product.history.find(h => h.date.split('T')[0] === date);
+                        point[priceHistory.base_product.retailer] = basePrice?.price ?? null;
+
+                        // Find matched products prices for this date
+                        priceHistory.matched_products.forEach(mp => {
+                          const mpPrice = mp.history.find(h => h.date.split('T')[0] === date);
+                          point[mp.retailer] = mpPrice?.price ?? null;
+                        });
+
+                        return point;
+                      });
+                    })()}
+                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 12 }}
+                      className="text-gray-600"
+                      tickFormatter={(value: string) => {
+                        const date = new Date(value);
+                        // Always show same format for consistency
+                        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                      }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      className="text-gray-600"
+                      tickFormatter={(value: number) => `฿${value.toLocaleString()}`}
+                    />
+                    <Tooltip
+                      formatter={(value: number) => [`฿${value?.toLocaleString() ?? '-'}`, '']}
+                      labelFormatter={(label: string) => {
+                        const date = new Date(label);
+                        return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+                      }}
+                    />
+                    <Legend
+                      wrapperStyle={{ paddingTop: '20px' }}
+                      content={(props) => {
+                        const { payload } = props;
+                        return (
+                          <ul className="flex justify-center gap-4 flex-wrap">
+                            {payload?.map((entry: any, index: number) => (
+                              <li key={`legend-${index}`} className="flex items-center gap-2">
+                                <div
+                                  className="w-3 h-3 rounded-full"
+                                  style={{ backgroundColor: entry.color }}
+                                />
+                                <span className="text-sm text-gray-600">{entry.value}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        );
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey={priceHistory.base_product.retailer}
+                      stroke="#06b6d4"
+                      strokeWidth={3}
+                      dot={false}
+                      connectNulls
+                    />
+                    {priceHistory.matched_products.map((mp, index) => {
+                      // Map retailer names to their brand colors
+                      const retailerColors: Record<string, string> = {
+                        'HomePro': '#3b82f6',      // Blue
+                        'Home Pro': '#3b82f6',      // Blue
+                        'MegaHome': '#10b981',      // Green
+                        'Mega Home': '#10b981',     // Green
+                        'Boonthavorn': '#9333ea',   // Purple
+                        'Global House': '#f97316',  // Orange
+                        'GlobalHouse': '#f97316',   // Orange
+                        'Do Home': '#ef4444',       // Red
+                        'DoHome': '#ef4444',        // Red
+                      };
+
+                      // Get color by retailer name, fallback to default colors
+                      const defaultColors = ['#3b82f6', '#10b981', '#9333ea', '#f97316', '#ef4444'];
+                      const color = retailerColors[mp.retailer] || defaultColors[index % defaultColors.length];
+
+                      return (
+                        <Line
+                          key={mp.product_id}
+                          type="monotone"
+                          dataKey={mp.retailer}
+                          stroke={color}
+                          strokeWidth={2}
+                          dot={false}
+                          connectNulls
+                        />
+                      );
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Data point counter */}
+              <div className="flex items-center">
+                <h4 className="font-medium text-sm text-gray-500">
+                  Showing {(() => {
                     const allDates = new Set<string>();
                     priceHistory.base_product.history.forEach(h => allDates.add(h.date.split('T')[0]));
                     priceHistory.matched_products.forEach(p => p.history.forEach(h => allDates.add(h.date.split('T')[0])));
-
-                    const sortedDates = Array.from(allDates).sort();
-
-                    return sortedDates.map(date => {
-                      const point: Record<string, string | number | null> = { date };
-
-                      // Find base product price for this date
-                      const basePrice = priceHistory.base_product.history.find(h => h.date.split('T')[0] === date);
-                      point[priceHistory.base_product.retailer] = basePrice?.price ?? null;
-
-                      // Find matched products prices for this date
-                      priceHistory.matched_products.forEach(mp => {
-                        const mpPrice = mp.history.find(h => h.date.split('T')[0] === date);
-                        point[mp.retailer] = mpPrice?.price ?? null;
-                      });
-
-                      return point;
-                    });
-                  })()}
-                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 12 }}
-                    tickFormatter={(value: string) => {
-                      const date = new Date(value);
-                      return `${date.getDate()}/${date.getMonth() + 1}`;
-                    }}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 12 }}
-                    tickFormatter={(value: number) => `฿${value.toLocaleString()}`}
-                  />
-                  <Tooltip
-                    formatter={(value: number) => [`฿${value?.toLocaleString() ?? '-'}`, '']}
-                    labelFormatter={(label: string) => {
-                      const date = new Date(label);
-                      return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
-                    }}
-                  />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey={priceHistory.base_product.retailer}
-                    stroke="#06b6d4"
-                    strokeWidth={2}
-                    dot={false}
-                    connectNulls
-                  />
-                  {priceHistory.matched_products.map((mp, index) => {
-                    const colors = ['#1E88E5', '#43A047', '#7B1FA2', '#F57C00', '#E64A19'];
-                    return (
-                      <Line
-                        key={mp.product_id}
-                        type="monotone"
-                        dataKey={mp.retailer}
-                        stroke={colors[index % colors.length]}
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls
-                      />
-                    );
-                  })}
-                </LineChart>
-              </ResponsiveContainer>
+                    return allDates.size;
+                  })()} data points
+                </h4>
+              </div>
             </div>
           ) : (
-            <div className="h-80 flex items-center justify-center text-gray-500">
-              No price history data available for the selected period
+            <div className="space-y-6">
+              {/* Placeholder for stats cards */}
+              <div className="h-[100px]"></div>
+              {/* No data message */}
+              <div className="h-[350px] flex items-center justify-center text-gray-500">
+                No price history data available for the selected period
+              </div>
+              {/* Placeholder for data point counter */}
+              <div className="h-[24px]"></div>
             </div>
           )}
-        </div> */}
+        </div>
       </div>
 
       {/* Add to Watchlist Modal */}

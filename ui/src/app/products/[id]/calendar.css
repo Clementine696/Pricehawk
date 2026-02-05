@@ -1,0 +1,4 @@
+/* Calendar button hover effect */
+.calendar-button:hover .lucide-calendar {
+  color: white;
+}

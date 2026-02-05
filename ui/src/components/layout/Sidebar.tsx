@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle } from 'lucide-react';
+import { LayoutDashboard, Package, GitCompare, Settings, LogOut, PlusCircle, Bell } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 // Custom ListChecks icon component
@@ -49,6 +49,11 @@ const menuItems = [
     href: '/watchlist-sku',
     label: 'Watchlist',
     icon: ListChecks,
+  },
+  {
+    href: '/price-change',
+    label: 'Price Alerts',
+    icon: Bell,
   },
   // {
   //   href: '/comparison',

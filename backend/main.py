@@ -1171,7 +1171,7 @@ def get_products(
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
     watched_only: Optional[bool] = False,
-    watchlist_group_id: Optional[int] = None,
+    watchlist_group_id: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """Get Thai Watsadu products with price comparison across retailers"""
@@ -1193,6 +1193,7 @@ def get_products(
             # Parse comma-separated category and brand values for multi-select
             category_list = [c.strip() for c in category.split(',')] if category else []
             brand_list = [b.strip() for b in brand.split(',')] if brand else []
+            watchlist_list = [w.strip() for w in watchlist_group_id.split(',')] if watchlist_group_id else []
 
             # Get user's watched categories if watched_only is enabled
             watched_categories = []
@@ -1340,11 +1341,12 @@ def get_products(
                     params.append(user_id)
 
             # Filter by watchlist group (SKU-based watchlist)
-            if watchlist_group_id:
-                query += """ AND p.sku IN (
-                    SELECT sku FROM watchlist_sku_group_products WHERE group_id = %s
+            if watchlist_list:
+                placeholders = ','.join(['%s'] * len(watchlist_list))
+                query += f""" AND p.sku IN (
+                    SELECT sku FROM watchlist_sku_group_products WHERE group_id IN ({placeholders})
                 )"""
-                params.append(watchlist_group_id)
+                params.extend(watchlist_list)
 
             # Get total count
             count_query = query.replace("SELECT p.product_id, p.sku, p.name, p.brand, p.category, p.current_price, p.link", "SELECT COUNT(*)")
@@ -1531,7 +1533,7 @@ def export_products(
     verified: Optional[str] = None,
     retailer: Optional[str] = None,
     watched_only: Optional[bool] = False,
-    watchlist_group_id: Optional[int] = None,
+    watchlist_group_id: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """Export products to Excel with price comparison across retailers (prices are hyperlinked to product pages)"""
@@ -1559,6 +1561,7 @@ def export_products(
             # Parse comma-separated category and brand values for multi-select
             category_list = [c.strip() for c in category.split(',')] if category else []
             brand_list = [b.strip() for b in brand.split(',')] if brand else []
+            watchlist_list = [w.strip() for w in watchlist_group_id.split(',')] if watchlist_group_id else []
 
             # Build query for Thai Watsadu products (same logic as /api/products but without pagination)
             query = """
@@ -1662,11 +1665,12 @@ def export_products(
                     params.append(user_id)
 
             # Filter by watchlist group (SKU-based watchlist)
-            if watchlist_group_id:
-                query += """ AND p.sku IN (
-                    SELECT sku FROM watchlist_sku_group_products WHERE group_id = %s
+            if watchlist_list:
+                placeholders = ','.join(['%s'] * len(watchlist_list))
+                query += f""" AND p.sku IN (
+                    SELECT sku FROM watchlist_sku_group_products WHERE group_id IN ({placeholders})
                 )"""
-                params.append(watchlist_group_id)
+                params.extend(watchlist_list)
 
             query += " ORDER BY p.product_id"
 
@@ -1888,6 +1892,8 @@ def export_products(
 def get_price_history(
     product_id: int,
     days: int = 30,
+    start_date: str = None,
+    end_date: str = None,
     user: dict = Depends(get_current_user)
 ):
     """Get price history for a product and its verified matches"""
@@ -1904,14 +1910,26 @@ def get_price_history(
             if not base_product:
                 raise HTTPException(status_code=404, detail="Product not found")
 
+            # Determine date range query
+            if start_date and end_date:
+                # Use custom date range
+                date_condition = "AND scraped_at::date BETWEEN %s AND %s"
+                date_params = (start_date, end_date)
+            else:
+                # Use days parameter
+                fetch_days = days + 2 if days <= 7 else days
+                date_condition = "AND scraped_at >= NOW() - INTERVAL '%s days'"
+                date_params = (fetch_days,)
+
             # Get price history for base product
-            cur.execute("""
+            query = f"""
                 SELECT price, scraped_at
                 FROM price_history
                 WHERE product_id = %s
-                  AND scraped_at >= NOW() - INTERVAL '%s days'
+                  {date_condition}
                 ORDER BY scraped_at ASC
-            """, (product_id, days))
+            """
+            cur.execute(query, (product_id,) + date_params)
             base_history = cur.fetchall()
 
             result = {
@@ -1945,13 +1963,14 @@ def get_price_history(
             matches = cur.fetchall()
 
             for match in matches:
-                cur.execute("""
+                match_query = f"""
                     SELECT price, scraped_at
                     FROM price_history
                     WHERE product_id = %s
-                      AND scraped_at >= NOW() - INTERVAL '%s days'
+                      {date_condition}
                     ORDER BY scraped_at ASC
-                """, (match["product_id"], days))
+                """
+                cur.execute(match_query, (match["product_id"],) + date_params)
                 match_history = cur.fetchall()
 
                 result["matched_products"].append({
@@ -1970,6 +1989,241 @@ def get_price_history(
             return result
 
 
+@app.get("/api/products/{product_id}/price-history/export")
+def export_price_history(
+    product_id: int,
+    days: int = 30,
+    user: dict = Depends(get_current_user)
+):
+    """Export price history to Excel"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get base product info with watchlist
+            cur.execute("""
+                SELECT p.product_id, p.name, p.sku, p.brand, p.category, r.name as retailer_name,
+                       wg.name as watchlist_name
+                FROM products p
+                JOIN retailers r ON p.retailer_id = r.retailer_id
+                LEFT JOIN watchlist_sku_group_products wsgp ON p.sku = wsgp.sku AND p.retailer_id = 'twd'
+                LEFT JOIN watchlist_sku_groups wg ON wsgp.group_id = wg.group_id
+                WHERE p.product_id = %s
+            """, (product_id,))
+            base_product = cur.fetchone()
+            if not base_product:
+                raise HTTPException(status_code=404, detail="Product not found")
+
+            # Get price history for base product
+            # Use date-based query with extended range to ensure we get multiple data points
+            fetch_days = days + 2 if days <= 7 else days
+            cur.execute("""
+                SELECT price, scraped_at
+                FROM price_history
+                WHERE product_id = %s
+                  AND scraped_at >= NOW() - INTERVAL '%s days'
+                ORDER BY scraped_at ASC
+            """, (product_id, fetch_days))
+            base_history = cur.fetchall()
+
+            # Get all retailers from database (excluding Thai Watsadu which is base)
+            # This ensures we use the exact names from the database
+            cur.execute("""
+                SELECT name
+                FROM retailers
+                WHERE retailer_id != 'twd'
+                ORDER BY 
+                    CASE retailer_id
+                        WHEN 'hp' THEN 1
+                        WHEN 'mgh' THEN 2
+                        WHEN 'dh' THEN 3
+                        WHEN 'btv' THEN 4
+                        WHEN 'gbh' THEN 5
+                    END
+            """)
+            all_retailers = [row["name"] for row in cur.fetchall()]
+
+            # Get verified correct matches
+            cur.execute("""
+                SELECT DISTINCT ON (pm.candidate_product_id)
+                    p.product_id, p.name, r.name as retailer_name
+                FROM product_matches pm
+                JOIN products p ON pm.candidate_product_id = p.product_id
+                JOIN retailers r ON p.retailer_id = r.retailer_id
+                WHERE pm.base_product_id = %s
+                  AND pm.verified_by_user = TRUE
+                  AND pm.is_same = TRUE
+                ORDER BY pm.candidate_product_id, pm.confidence_score DESC NULLS LAST
+            """, (product_id,))
+            matches = cur.fetchall()
+
+            # Get price history for each match
+            matched_histories = {}
+            for match in matches:
+                cur.execute("""
+                    SELECT price, scraped_at
+                    FROM price_history
+                    WHERE product_id = %s
+                      AND scraped_at >= NOW() - INTERVAL '%s days'
+                    ORDER BY scraped_at ASC
+                """, (match["product_id"], fetch_days))
+                matched_histories[match["retailer_name"]] = cur.fetchall()
+
+            # Create Excel workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Price History"
+
+            # Write headers with fixed retailer columns and Status
+            headers = ['Timestamp', 'SKU', 'Product Name', 'Brand', 'Sub-Dept', base_product["retailer_name"]]
+            for retailer in all_retailers:
+                headers.append(retailer)
+            headers.append('Status')  # Add status column
+            ws.append(headers)
+
+            # Style header row
+            header_font = Font(bold=True)
+            for col_num, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.font = header_font
+
+            # Define color fills
+            dark_green_fill = PatternFill(start_color="00C057", end_color="00C057", fill_type="solid")
+            light_green_fill = PatternFill(start_color="ABDB77", end_color="ABDB77", fill_type="solid")
+            dark_red_fill = PatternFill(start_color="D16969", end_color="D16969", fill_type="solid")
+            light_red_fill = PatternFill(start_color="DB9D9D", end_color="DB9D9D", fill_type="solid")
+            grey_fill = PatternFill(start_color="E8E8E8", end_color="E8E8E8", fill_type="solid")
+            white_font = Font(color="FFFFFF")
+
+            # Collect all unique dates with timestamps
+            all_timestamps = {}
+            for row in base_history:
+                date_key = row["scraped_at"].date()
+                if date_key not in all_timestamps:
+                    all_timestamps[date_key] = row["scraped_at"]
+            for history in matched_histories.values():
+                for row in history:
+                    date_key = row["scraped_at"].date()
+                    if date_key not in all_timestamps:
+                        all_timestamps[date_key] = row["scraped_at"]
+
+            # Sort dates
+            sorted_dates = sorted(all_timestamps.keys())
+
+            # Write data rows with colors
+            row_num = 2
+            for date in sorted_dates:
+                timestamp = all_timestamps[date]
+
+                # Base product price for this date
+                base_price = next((float(h["price"]) for h in base_history
+                                  if h["scraped_at"].date() == date), None)
+
+                # Collect all prices for this date
+                all_prices = []
+                if base_price:
+                    all_prices.append(base_price)
+
+                retailer_prices = {}
+                for retailer in all_retailers:
+                    if retailer in matched_histories:
+                        match_price = next((float(h["price"]) for h in matched_histories[retailer]
+                                          if h["scraped_at"].date() == date), None)
+                        retailer_prices[retailer] = match_price
+                        if match_price:
+                            all_prices.append(match_price)
+                    else:
+                        retailer_prices[retailer] = None
+
+                # Determine min and max prices
+                min_price = min(all_prices) if all_prices else None
+                max_price = max(all_prices) if all_prices else None
+
+                # Determine status
+                status = ''
+                if base_price:
+                    if len(all_prices) == 1:
+                        status = 'No Competitor Data'
+                    elif base_price == min_price:
+                        if all(p == min_price for p in all_prices):
+                            status = 'Cheapest (Shared)'
+                        else:
+                            status = 'Cheapest'
+                    elif base_price == max_price:
+                        if all(p == max_price for p in all_prices):
+                            status = 'Most Expensive (Shared)'
+                        else:
+                            status = 'Most Expensive'
+
+                # Write basic info columns
+                ws.cell(row=row_num, column=1, value=timestamp.strftime('%Y-%m-%d %H:%M:%S'))
+                ws.cell(row=row_num, column=2, value=base_product["sku"] or '')
+                ws.cell(row=row_num, column=3, value=base_product["name"] or '')
+                ws.cell(row=row_num, column=4, value=base_product["brand"] or '')
+                ws.cell(row=row_num, column=5, value=base_product["watchlist_name"] or '')
+
+                # Write base product price with color (column 6)
+                if base_price:
+                    cell = ws.cell(row=row_num, column=6, value=base_price)
+                    if len(all_prices) > 1:
+                        if base_price == min_price:
+                            if all(p == min_price for p in all_prices):
+                                cell.fill = light_green_fill
+                            else:
+                                cell.fill = dark_green_fill
+                                cell.font = white_font
+                        elif base_price == max_price:
+                            if all(p == max_price for p in all_prices):
+                                cell.fill = light_red_fill
+                            else:
+                                cell.fill = dark_red_fill
+                                cell.font = white_font
+                else:
+                    ws.cell(row=row_num, column=6, value='')
+
+                # Write retailer prices with colors (columns 7-11)
+                for col_offset, retailer in enumerate(all_retailers):
+                    col_num = 7 + col_offset
+                    retailer_price = retailer_prices.get(retailer)
+                    if retailer_price:
+                        cell = ws.cell(row=row_num, column=col_num, value=retailer_price)
+                        if len(all_prices) > 1:
+                            if base_price and retailer_price == base_price:
+                                cell.fill = grey_fill
+                            elif retailer_price == min_price:
+                                if all(p == min_price for p in all_prices):
+                                    cell.fill = light_green_fill
+                                else:
+                                    cell.fill = dark_green_fill
+                                    cell.font = white_font
+                            elif retailer_price == max_price:
+                                if all(p == max_price for p in all_prices):
+                                    cell.fill = light_red_fill
+                                else:
+                                    cell.fill = dark_red_fill
+                                    cell.font = white_font
+                    else:
+                        ws.cell(row=row_num, column=col_num, value='')
+
+                # Write status (last column)
+                ws.cell(row=row_num, column=len(headers), value=status)
+
+                row_num += 1
+
+            # Auto-adjust column widths
+            for col_num, header in enumerate(headers, 1):
+                ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max(len(str(header)) + 2, 12)
+
+            # Save to BytesIO
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+
+            return Response(
+                content=output.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename=price_history_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
+            )
+
+
 @app.get("/api/products/{product_id}")
 def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
     """Get product details with all matches for comparison view"""
@@ -1979,7 +2233,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
             cur.execute("""
                 SELECT p.product_id, p.sku, p.name, p.brand, p.category,
                        p.current_price, p.original_price, p.link, p.image,
-                       p.last_updated_at,
+                       p.last_updated_at, p.scrape_fail_count,
                        r.name as retailer_name, r.retailer_id
                 FROM products p
                 JOIN retailers r ON p.retailer_id = r.retailer_id
@@ -2003,6 +2257,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
                 "retailer_name": product["retailer_name"],
                 "retailer_id": product["retailer_id"],
                 "last_updated_at": product["last_updated_at"].isoformat() if product["last_updated_at"] else None,
+                "scrape_fail_count": product["scrape_fail_count"] if product["scrape_fail_count"] is not None else 0,
             }
 
             # Get all matches for this product
@@ -2024,6 +2279,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
                     p2.link as matched_link,
                     p2.image as matched_image,
                     p2.last_updated_at as matched_last_updated_at,
+                    p2.scrape_fail_count as matched_scrape_fail_count,
                     r.name as matched_retailer_name,
                     r.retailer_id as matched_retailer_id
                 FROM product_matches pm
@@ -2081,6 +2337,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
                                     "retailer_name": row["matched_retailer_name"],
                                     "retailer_id": row["matched_retailer_id"],
                                     "last_updated_at": row["matched_last_updated_at"].isoformat() if row["matched_last_updated_at"] else None,
+                                    "scrape_fail_count": row["matched_scrape_fail_count"] if row["matched_scrape_fail_count"] is not None else 0,
                                 }
                             })
                             break  # Only one verified correct match per retailer
@@ -2107,6 +2364,7 @@ def get_product_detail(product_id: int, user: dict = Depends(get_current_user)):
                                 "retailer_name": row["matched_retailer_name"],
                                 "retailer_id": row["matched_retailer_id"],
                                 "last_updated_at": row["matched_last_updated_at"].isoformat() if row["matched_last_updated_at"] else None,
+                                "scrape_fail_count": row["matched_scrape_fail_count"] if row["matched_scrape_fail_count"] is not None else 0,
                             }
                         })
 
@@ -3409,6 +3667,216 @@ def manual_comparison(
                 "results": results,
                 "lowest_price": lowest_price,
             }
+
+
+# ==================== PRICE ALERTS API ====================
+
+@app.get("/api/price-alerts/settings")
+def get_alert_settings(user: dict = Depends(get_current_user)):
+    """Get current alert configuration"""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM price_alert_settings LIMIT 1")
+        result = cur.fetchone()
+
+        if not result:
+            # Create default settings if none exist
+            cur.execute("""
+                INSERT INTO price_alert_settings
+                (schedule_frequency, schedule_time, enabled)
+                VALUES ('daily', '09:00:00', true)
+                RETURNING *
+            """)
+            result = cur.fetchone()
+            conn.commit()
+
+        # RealDictRow to dict, convert datetime to string
+        data = dict(result)
+        if 'schedule_time' in data and data['schedule_time']:
+            data['schedule_time'] = str(data['schedule_time'])
+        if 'created_at' in data and data['created_at']:
+            data['created_at'] = data['created_at'].isoformat()
+        if 'updated_at' in data and data['updated_at']:
+            data['updated_at'] = data['updated_at'].isoformat()
+        if 'last_alert_sent_at' in data and data['last_alert_sent_at']:
+            data['last_alert_sent_at'] = data['last_alert_sent_at'].isoformat()
+
+        return data
+
+
+@app.put("/api/price-alerts/settings")
+def update_alert_settings(
+    data: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Update schedule configuration"""
+    # Validate frequency
+    frequency = data.get('schedule_frequency')
+    if frequency not in ['immediate', 'hourly', 'daily', 'weekly']:
+        raise HTTPException(status_code=400, detail="Invalid schedule_frequency")
+
+    # Validate schedule_time format if provided
+    schedule_time = data.get('schedule_time', None)
+    if schedule_time and not isinstance(schedule_time, str):
+        raise HTTPException(status_code=400, detail="schedule_time must be a string")
+
+    # Default to '09:00:00' if not provided
+    if not schedule_time:
+        schedule_time = '09:00:00'
+
+    # Validate schedule_day if weekly
+    schedule_day = data.get('schedule_day', None)
+    if frequency == 'weekly':
+        if schedule_day is None or not (0 <= schedule_day <= 6):
+            raise HTTPException(status_code=400, detail="schedule_day must be 0-6 for weekly frequency")
+
+    enabled = data.get('enabled', True)
+
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        # Check if settings row exists
+        cur.execute("SELECT COUNT(*) as count FROM price_alert_settings")
+        result = cur.fetchone()
+        count = result['count']
+
+        if count == 0:
+            # Insert new settings
+            cur.execute("""
+                INSERT INTO price_alert_settings
+                (schedule_frequency, schedule_time, schedule_day, enabled)
+                VALUES (%s, %s, %s, %s)
+            """, (frequency, schedule_time, schedule_day, enabled))
+        else:
+            # Update existing settings
+            cur.execute("""
+                UPDATE price_alert_settings SET
+                    schedule_frequency = %s,
+                    schedule_time = %s,
+                    schedule_day = %s,
+                    enabled = %s,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (frequency, schedule_time, schedule_day, enabled))
+
+        conn.commit()
+
+    return {"success": True}
+
+
+@app.get("/api/price-alerts/emails")
+def get_alert_emails(user: dict = Depends(get_current_user)):
+    """List all email recipients"""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT email_id, email, verified, created_at FROM price_alert_emails ORDER BY created_at")
+        rows = cur.fetchall()
+        # Convert RealDictRow to dict and serialize datetimes
+        result = []
+        for row in rows:
+            data = dict(row)
+            if 'created_at' in data and data['created_at']:
+                data['created_at'] = data['created_at'].isoformat()
+            result.append(data)
+        return result
+
+
+@app.post("/api/price-alerts/emails")
+def add_alert_email(
+    data: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Add email to recipient list"""
+    import re
+    import psycopg2
+
+    email = data.get('email', '').strip().lower()
+
+    # Validate email format
+    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                INSERT INTO price_alert_emails (email, verified)
+                VALUES (%s, false)
+                RETURNING email_id, email, verified, created_at
+            """, (email,))
+            result = cur.fetchone()
+            conn.commit()
+            # Convert RealDictRow to dict and serialize datetime
+            data = dict(result)
+            if 'created_at' in data and data['created_at']:
+                data['created_at'] = data['created_at'].isoformat()
+            return data
+        except psycopg2.IntegrityError:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail="Email already exists")
+
+
+@app.delete("/api/price-alerts/emails/{email_id}")
+def remove_alert_email(
+    email_id: int,
+    user: dict = Depends(get_current_user)
+):
+    """Remove email from recipient list"""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM price_alert_emails WHERE email_id = %s",
+            (email_id,)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Email not found")
+        conn.commit()
+    return {"success": True}
+
+
+@app.get("/api/price-alerts/history")
+def get_alert_history(
+    limit: int = 50,
+    user: dict = Depends(get_current_user)
+):
+    """Get recent alert send history"""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM price_alert_history
+            ORDER BY sent_at DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        # Convert RealDictRow to dict and serialize datetimes
+        result = []
+        for row in rows:
+            data = dict(row)
+            for key in ['sent_at', 'period_start', 'period_end']:
+                if key in data and data[key]:
+                    data[key] = data[key].isoformat()
+            result.append(data)
+        return result
+
+
+@app.post("/api/price-alerts/test")
+def send_test_alert(
+    data: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Send test email to verify configuration"""
+    email = data.get('email', '').strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email required")
+
+    from services.email_service import EmailService
+
+    email_service = EmailService()
+    success = email_service.send_test_email(email)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to send test email. Check SMTP configuration.")
+
+    return {"success": True, "message": f"Test email sent to {email}"}
 
 
 if __name__ == "__main__":

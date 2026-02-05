@@ -15,7 +15,7 @@ function MultiSelect({
   placeholder,
   className = '',
 }: {
-  options: string[];
+  options: string[] | { value: string; label: string }[];
   selected: string[];
   onChange: (selected: string[]) => void;
   placeholder: string;
@@ -23,8 +23,16 @@ function MultiSelect({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [dropdownWidth, setDropdownWidth] = useState<number | null>(null); // null = auto width
+  const [dropdownHeight, setDropdownHeight] = useState(192); // Default 192px
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const resizeHandleCornerRef = useRef<HTMLDivElement>(null);
+
+  // Normalize options to always be { value, label }
+  const normalizedOptions = options.map(opt =>
+    typeof opt === 'string' ? { value: opt, label: opt } : opt
+  );
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -45,11 +53,46 @@ function MultiSelect({
     }
   }, [isOpen]);
 
-  const toggleOption = (option: string) => {
-    if (selected.includes(option)) {
-      onChange(selected.filter(s => s !== option));
+  // Handle corner resize drag (both horizontal and vertical)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      if (!containerRect) return;
+
+      // Handle corner resize (both width and height simultaneously)
+      if (resizeHandleCornerRef.current?.dataset.dragging === 'true') {
+        e.preventDefault();
+        const newWidth = e.clientX - containerRect.left;
+        const newHeight = e.clientY - containerRect.top - 70; // 70px for search input
+        setDropdownWidth(Math.max(200, Math.min(800, newWidth)));
+        setDropdownHeight(Math.max(100, Math.min(600, newHeight)));
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (resizeHandleCornerRef.current) {
+        resizeHandleCornerRef.current.dataset.dragging = 'false';
+      }
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isOpen]);
+
+  const toggleOption = (value: string) => {
+    if (selected.includes(value)) {
+      onChange(selected.filter(s => s !== value));
     } else {
-      onChange([...selected, option]);
+      onChange([...selected, value]);
     }
   };
 
@@ -58,9 +101,19 @@ function MultiSelect({
     onChange([]);
   };
 
+  // Get labels for selected values
+  const getSelectedLabels = () => {
+    return selected.map(val => {
+      const option = normalizedOptions.find(opt => opt.value === val);
+      return option ? option.label : val;
+    });
+  };
+
+  const selectedLabels = getSelectedLabels();
+
   // Filter options based on search term
-  const filteredOptions = options.filter(option =>
-    option.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredOptions = normalizedOptions.filter(option =>
+    option.label.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -74,7 +127,7 @@ function MultiSelect({
           {selected.length === 0
             ? placeholder
             : selected.length === 1
-            ? selected[0]
+            ? selectedLabels[0]
             : `${selected.length} selected`}
         </span>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -91,44 +144,73 @@ function MultiSelect({
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg">
-          {/* Search input */}
-          <div className="p-2 border-b border-gray-200">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search..."
-                className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
-              />
+        <div
+          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col"
+          style={{
+            width: dropdownWidth ? `${dropdownWidth}px` : '100%',
+            minWidth: '100%'
+          }}
+        >
+          <div className="flex flex-1 min-h-0">
+            <div className="flex-1 flex flex-col min-w-0">
+              {/* Search input */}
+              <div className="p-2 border-b border-gray-200">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search..."
+                    className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  />
+                </div>
+              </div>
+              {/* Options list */}
+              <div
+                className="overflow-auto"
+                style={{ height: `${dropdownHeight}px` }}
+              >
+                {filteredOptions.length === 0 ? (
+                  <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
+                ) : (
+                  filteredOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleOption(option.value)}
+                      className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
+                        selected.includes(option.value)
+                          ? 'bg-cyan-500 border-cyan-500'
+                          : 'border-gray-300'
+                      }`}>
+                        {selected.includes(option.value) && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      <span className="text-sm text-gray-900 break-words">{option.label}</span>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
           </div>
-          {/* Options list */}
-          <div className="max-h-48 overflow-auto">
-            {filteredOptions.length === 0 ? (
-              <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
-            ) : (
-              filteredOptions.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => toggleOption(option)}
-                  className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
-                    selected.includes(option)
-                      ? 'bg-cyan-500 border-cyan-500'
-                      : 'border-gray-300'
-                  }`}>
-                    {selected.includes(option) && <Check className="w-3 h-3 text-white" />}
-                  </div>
-                  <span className="text-sm text-gray-900 truncate">{option}</span>
-                </button>
-              ))
-            )}
+          {/* Corner resize handle (bottom-right) */}
+          <div
+            ref={resizeHandleCornerRef}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              if (resizeHandleCornerRef.current) {
+                resizeHandleCornerRef.current.dataset.dragging = 'true';
+                document.body.style.cursor = 'nwse-resize';
+                document.body.style.userSelect = 'none';
+              }
+            }}
+            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-cyan-100 rounded-bl-lg flex items-center justify-center group"
+            title="Drag to resize"
+          >
+            <div className="w-3 h-3 border-r-2 border-b-2 border-gray-400 group-hover:border-cyan-500"></div>
           </div>
         </div>
       )}
@@ -302,7 +384,9 @@ function ProductsContent() {
   );
   const [verificationFilter, setVerificationFilter] = useState(searchParams.get('verified') || '');
   const [retailerFilter, setRetailerFilter] = useState(searchParams.get('retailer') || '');
-  const [watchlistFilter, setWatchlistFilter] = useState(searchParams.get('watchlist') || '');
+  const [selectedWatchlists, setSelectedWatchlists] = useState<string[]>(
+    searchParams.get('watchlist')?.split(',').filter(Boolean) || []
+  );
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [isExporting, setIsExporting] = useState(false);
   const pageSize = 10;
@@ -325,7 +409,7 @@ function ProductsContent() {
       brand: selectedBrands.join(','),
       verified: verificationFilter,
       retailer: retailerFilter,
-      watchlist: watchlistFilter,
+      watchlist: selectedWatchlists.join(','),
       page,
       ...newParams
     };
@@ -348,7 +432,7 @@ function ProductsContent() {
 
   useEffect(() => {
     fetchProducts();
-  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter, watchlistFilter]);
+  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter, selectedWatchlists]);
 
   const fetchWatchlistGroups = async () => {
     try {
@@ -377,7 +461,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
-      if (watchlistFilter) params.append('watchlist_group_id', watchlistFilter);
+      if (selectedWatchlists.length > 0) params.append('watchlist_group_id', selectedWatchlists.join(','));
 
 
       const response = await apiFetch(`/api/products?${params}`);
@@ -412,7 +496,7 @@ function ProductsContent() {
     setSelectedBrands([]);
     setVerificationFilter('');
     setRetailerFilter('');
-    setWatchlistFilter('');
+    setSelectedWatchlists([]);
     setPage(1);
     router.push('/products', { scroll: false });
     // Don't call fetchProducts() here - the useEffect will trigger it when state changes
@@ -438,7 +522,6 @@ function ProductsContent() {
     const setters: Record<string, (v: string) => void> = {
       verified: setVerificationFilter,
       retailer: setRetailerFilter,
-      watchlist: setWatchlistFilter,
     };
     setters[filterName]?.(value);
     setPage(1);
@@ -447,6 +530,14 @@ function ProductsContent() {
     if (value) {
       trackFilter(filterName, value);
     }
+  };
+
+  const handleWatchlistChange = (newWatchlists: string[]) => {
+    setSelectedWatchlists(newWatchlists);
+    setPage(1);
+    updateURL({ watchlist: newWatchlists.join(','), page: 1 });
+    // Track filter usage
+    trackFilter('watchlist', newWatchlists.join(', '));
   };
 
   const handlePageChange = (newPage: number) => {
@@ -463,7 +554,7 @@ function ProductsContent() {
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
       if (verificationFilter) params.append('verified', verificationFilter);
       if (retailerFilter) params.append('retailer', retailerFilter);
-      if (watchlistFilter) params.append('watchlist_group_id', watchlistFilter);
+      if (selectedWatchlists.length > 0) params.append('watchlist_group_id', selectedWatchlists.join(','));
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {
@@ -629,10 +720,10 @@ function ProductsContent() {
               placeholder="All Retailers"
               className="w-[150px]"
             />
-            <SingleSelect
+            <MultiSelect
               options={watchlistGroups.map(g => ({ value: g.group_id.toString(), label: g.name }))}
-              value={watchlistFilter}
-              onChange={(value) => handleFilterChange('watchlist', value)}
+              selected={selectedWatchlists}
+              onChange={handleWatchlistChange}
               placeholder="Watchlist"
               className="w-[180px]"
             />

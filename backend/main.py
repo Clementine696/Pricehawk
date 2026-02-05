@@ -3035,9 +3035,10 @@ def scrape_single_url(url: str) -> dict:
         output_file = os.path.join(RESULTS_DIR, f"scrape_{uuid.uuid4().hex}.json")
 
         # Run the scraper script
-        # HomePro gets 60 second timeout (vs 30 default) due to slower page loads in production
+        # HomePro gets 120 second timeout (vs 30 default) due to slower page loads in production
+        # Increased from 60s to allow React page transition from home-page to product-page state
         # HomePro also gets max_concurrent=1 for sequential scraping to avoid browser conflicts
-        timeout_seconds = "60" if "homepro.co.th" in url.lower() else "30"
+        timeout_seconds = "120" if "homepro.co.th" in url.lower() else "30"
         
         cmd = [
             "python",
@@ -3051,7 +3052,7 @@ def scrape_single_url(url: str) -> dict:
         if "homepro.co.th" in url.lower():
             cmd.extend(["--max-concurrent", "1"])
 
-        timeout_indicator = " (60s timeout)" if "homepro.co.th" in url.lower() else ""
+        timeout_indicator = " (120s timeout)" if "homepro.co.th" in url.lower() else ""
         print(f"\n  [PARALLEL] Scraping: {url}{timeout_indicator}")
 
         # Execute scraper with timeout
@@ -3071,7 +3072,7 @@ def scrape_single_url(url: str) -> dict:
         )
 
         # Wait for process with timeout
-        # HomePro needs longer timeout due to multiple wait delays (15s + wait_for + 20s = ~35-40s minimum)
+        # HomePro needs longer timeout: 20s initial + 120s wait_for page_timeout + buffer = ~180s minimum
         timeout_duration = 180 if "homepro.co.th" in url.lower() else 120
         try:
             stdout, stderr = process.communicate(timeout=timeout_duration)

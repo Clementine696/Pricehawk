@@ -816,6 +816,15 @@ class Crawl4AIWrapper:
                         override_navigator=True,
                     )
                     crawl_result = await self.crawler.arun(url=url, config=run_config)
+                    
+                    # DEBUG: Log what crawl4ai actually returned
+                    logger.info(f"Crawl4AI result for {url}:")
+                    logger.info(f"  - success: {crawl_result.success}")
+                    logger.info(f"  - html length: {len(crawl_result.html) if crawl_result.html else 0}")
+                    logger.info(f"  - cleaned_html length: {len(crawl_result.cleaned_html) if crawl_result.cleaned_html else 0}")
+                    logger.info(f"  - markdown length: {len(str(crawl_result.markdown)) if crawl_result.markdown else 0}")
+                    if crawl_result.html:
+                        logger.info(f"  - HTML preview (first 200 chars): {crawl_result.html[:200]}")
                 else:
                     # Fallback for older versions or non-browser mode
                     # Default wait_for ensures page has meaningful content

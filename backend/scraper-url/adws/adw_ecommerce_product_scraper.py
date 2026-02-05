@@ -235,12 +235,19 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             # Must wait for price element AND no shimmer loading indicators
             wait_for = "() => { const hasPrice = document.body.innerText.includes('฿') || document.body.innerText.includes('บาท'); const noShimmer = !document.querySelector('[class*=\"shimmer\"]') || document.querySelectorAll('[class*=\"shimmer\"]').length < 3; return hasPrice && noShimmer; }"
         elif 'homepro.co.th' in url:
-            # HomePro needs to wait for price element to load (React SPA)
-            # Also wait for h1 to ensure product name is loaded
-            wait_for = "() => document.querySelector('[class*=\"price\"]') !== null && document.body.innerText.includes('฿') && document.querySelector('h1') !== null"
+            # HomePro needs to wait for price element to load with actual content (React SPA)
+            # Check for price text with actual number, not just element existence
+            # Also ensure loading overlay is hidden and page has meaningful content
+            wait_for = """() => {
+                const priceEl = document.querySelector('[class*="price"]');
+                const hasPriceContent = priceEl && priceEl.innerText && /\\d/.test(priceEl.innerText);
+                const loadingHidden = !document.querySelector('.loading-overlay:not(.hidden)');
+                const hasContent = document.body.innerText.length > 50000;
+                return hasPriceContent && loadingHidden && hasContent;
+            }"""
             import sys
             print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] Using extended wait_for condition (waiting for price + h1)", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Using extended wait_for condition (price content + no loading + 50K+ chars)", flush=True, file=sys.stderr)
             print(f"[SCRAPER] HomePro gets 3 extra seconds after page load for JS rendering", flush=True, file=sys.stderr)
         else:
             # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)

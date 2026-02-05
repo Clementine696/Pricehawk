@@ -799,6 +799,11 @@ class Crawl4AIWrapper:
                         logger.info(f"Using Boonthavorn wait_for for {url}")
                     else:
                         logger.info(f"Using DEFAULT wait_for for {url}")
+                    logger.info(
+                        "Wait_for details: page_timeout_ms=%s, wait_for_length=%s",
+                        self.config.timeout * 1000,
+                        len(effective_wait_for) if effective_wait_for else 0,
+                    )
 
                     run_config = CrawlerRunConfig(
                         stream=True,                                        # Process immediately
@@ -815,10 +820,19 @@ class Crawl4AIWrapper:
                         simulate_user=self.config.simulate_user,
                         override_navigator=True,
                     )
+                    wait_for_start = time.time()
                     crawl_result = await self.crawler.arun(url=url, config=run_config)
+                    wait_for_duration = time.time() - wait_for_start
+                    if wait_for_duration < 1.0:
+                        logger.warning(
+                            "Wait_for returned quickly (%.2fs) for %s; may indicate early exit or error",
+                            wait_for_duration,
+                            url,
+                        )
                     
                     # DEBUG: Log what crawl4ai actually returned
                     logger.info(f"Crawl4AI result for {url}:")
+                    logger.info(f"  - wait_for duration: {wait_for_duration:.2f}s")
                     logger.info(f"  - success: {crawl_result.success}")
                     logger.info(f"  - html length: {len(crawl_result.html) if crawl_result.html else 0}")
                     logger.info(f"  - cleaned_html length: {len(crawl_result.cleaned_html) if crawl_result.cleaned_html else 0}")

@@ -765,6 +765,7 @@ class Crawl4AIWrapper:
 
                 if is_ecommerce and "homepro.co.th" in url.lower():
                     # HomePro-specific in-page polling to ensure product page is ready
+                    # Check for actual DOM elements that exist immediately, not dynamically-generated JSON-LD
                     js_scroll_code += """
 (async () => {
     window.__homeproReady = false;
@@ -772,15 +773,36 @@ class Crawl4AIWrapper:
     const maxWaitMs = 120000;
 
     while (Date.now() - start < maxWaitMs) {
-        const hasJsonLD = document.querySelector('script[type="application/ld+json"]') !== null;
+        // Check for product page body
         const isProductPageBody = document.body.id === 'product-page' || document.body.className.includes('pdp-');
-        const hasProductContainer = document.querySelector('#product-page, .pdp-container, .product-detail') !== null;
-        const mainPrice = document.querySelector('#product-page .item-price .price, .pdp-price-section .price, .product-price');
-        const hasProductPrice = mainPrice && mainPrice.innerText && /\\d/.test(mainPrice.innerText);
-        const productTitle = document.querySelector('h1');
-        const hasProductTitle = productTitle && productTitle.innerText && productTitle.innerText.trim().length > 5;
-
-        if ((hasJsonLD || (isProductPageBody && hasProductContainer)) && hasProductPrice && hasProductTitle) {
+        
+        // Check for actual product in-page elements (these exist before JSON-LD)
+        const itemNameElements = document.querySelectorAll('.item-name');
+        const itemPriceElements = document.querySelectorAll('.item-price');
+        const hasProductElements = itemNameElements.length > 0 && itemPriceElements.length > 0;
+        
+        // Also check if there's meaningful text content in the name/price elements
+        let hasProductContent = false;
+        if (hasProductElements) {
+            let nameContent = '';
+            for (const elem of itemNameElements) {
+                if (elem.innerText && elem.innerText.trim().length > 10) {
+                    nameContent = elem.innerText;
+                    break;
+                }
+            }
+            let priceContent = '';
+            for (const elem of itemPriceElements) {
+                if (elem.innerText && /\\d/.test(elem.innerText)) {
+                    priceContent = elem.innerText;
+                    break;
+                }
+            }
+            hasProductContent = nameContent.length > 10 && priceContent.length > 0;
+        }
+        
+        // Ready when: product page body + product elements + content
+        if (isProductPageBody && hasProductElements && hasProductContent) {
             window.__homeproReady = true;
             break;
         }

@@ -238,7 +238,7 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             # HomePro needs to wait for price element to load (React SPA)
             # Also wait for h1 to ensure product name is loaded
             wait_for = "() => document.querySelector('[class*=\"price\"]') !== null && document.body.innerText.includes('฿') && document.querySelector('h1') !== null"
-            print(f"[DEBUG] HomePro detected - using wait_for condition (waiting for price + h1)")
+            print(f"[DEBUG] HomePro detected - using wait_for condition (waiting for price + h1)", flush=True)
 
         # Scrape the URL
         result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
@@ -267,13 +267,13 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
         # Extract product data
         product = extractor.extract_from_html(result.html or result.content, url)
         
-        print(f"[DEBUG] Extractor returned: {product is not None}")
+        print(f"[DEBUG] Extractor returned: {product is not None}", flush=True)
         if product:
-            print(f"[DEBUG] Product details:")
-            print(f"  Name: {product.name}")
-            print(f"  Retailer: {product.retailer}")
-            print(f"  URL: {product.url}")
-            print(f"  Price: {product.current_price}")
+            print(f"[DEBUG] Product details:", flush=True)
+            print(f"  Name: {product.name}", flush=True)
+            print(f"  Retailer: {product.retailer}", flush=True)
+            print(f"  URL: {product.url}", flush=True)
+            print(f"  Price: {product.current_price}", flush=True)
         
         # LLM Fallback Logic - TEMPORARILY DISABLED due to LLMConfig ForwardRef issue in crawl4ai
         # The primary extraction with JSON-LD and Quick Info parsing should be sufficient
@@ -288,6 +288,7 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             print_status_panel(console, f"Successfully extracted: {product.name[:50]}...", adw_id, "extraction", "success", url)
             return product
         else:
+            print(f"[ERROR] Extraction returned None for {url}", flush=True)
             print_status_panel(console, "Failed to extract product data", adw_id, "extraction", "error", url)
             return None
 
@@ -591,8 +592,8 @@ def main(
                                 result = await future
                                 if result:
                                     products.append(result)
-                                    print(f"[DEBUG] Added product to list. Total products: {len(products)}")
-                                    print(f"[DEBUG] Product retailer: {result.retailer}")
+                                    print(f"[DEBUG] Added product to list. Total products: {len(products)}", flush=True)
+                                    print(f"[DEBUG] Product retailer: {result.retailer}", flush=True)
                                     
                                     # Incremental save - separate files per retailer
                                     try:
@@ -609,12 +610,17 @@ def main(
                                         
                                         for retailer_name, retailer_products in products_by_retailer.items():
                                             retailer_file = os.path.join(output_dir, f"{retailer_name}.json")
-                                            print(f"[DEBUG] Writing {len(retailer_products)} products to: {retailer_file}")
+                                            print(f"[DEBUG] Writing {len(retailer_products)} products to: {retailer_file}", flush=True)
                                             with open(retailer_file, 'w', encoding='utf-8') as f:
                                                 json.dump(retailer_products, f, ensure_ascii=False, indent=2)
-                                            print(f"[DEBUG] Successfully wrote file: {retailer_file}")
+                                            print(f"[DEBUG] Successfully wrote file: {retailer_file}", flush=True)
                                     except Exception as e:
+                                        print(f"[ERROR] Failed to save incremental results: {e}", flush=True)
+                                        import traceback
+                                        traceback.print_exc()
                                         console.print(f"[yellow]Warning: Failed to save incremental results: {e}[/yellow]")
+                                else:
+                                    print(f"[DEBUG] Result was None - extraction failed for URL", flush=True)
                                         
                                 progress.advance(task_id)
                             except Exception as e:
@@ -712,11 +718,15 @@ def main(
         )
 
         # Exit with appropriate code
+        print(f"\n[DEBUG] Final product count: {len(products)} out of {len(urls)} URLs", flush=True)
         if len(products) == 0:
+            print(f"[DEBUG] Exiting with code 1 (all extractions failed)", flush=True)
             sys.exit(1)  # All extractions failed
         elif len(products) < len(urls):
+            print(f"[DEBUG] Exiting with code 2 (some extractions failed)", flush=True)
             sys.exit(2)  # Some extractions failed
         else:
+            print(f"[DEBUG] Exiting with code 0 (all extractions succeeded)", flush=True)
             sys.exit(0)  # All extractions succeeded
 
     except KeyboardInterrupt:

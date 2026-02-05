@@ -3116,8 +3116,17 @@ def scrape_single_url(url: str) -> dict:
 
         if returncode != 0:
             error_msg = stderr or stdout or 'Unknown error'
-            print(f"  [PARALLEL] FAILED: {url} - {error_msg[:200]}")
-            return {"success": False, "url": url, "error": f"Scraper failed: {error_msg[:500]}"}
+            print(f"  [PARALLEL] FAILED: {url} - returncode={returncode}")
+            print(f"  [PARALLEL] STDOUT: {stdout[:1000]}")
+            print(f"  [PARALLEL] STDERR: {stderr[:1000]}")
+            return {"success": False, "url": url, "error": f"Scraper failed (exit {returncode}): {error_msg[:500]}"}
+
+        # Log scraper output for debugging
+        print(f"  [DEBUG] Scraper returncode: {returncode}")
+        if stdout:
+            print(f"  [DEBUG] Scraper stdout (last 500 chars): {stdout[-500:]}")
+        if stderr:
+            print(f"  [DEBUG] Scraper stderr (last 500 chars): {stderr[-500:]}")
 
         # Look for scraped data in retailer files
         output_dir = os.path.dirname(output_file)

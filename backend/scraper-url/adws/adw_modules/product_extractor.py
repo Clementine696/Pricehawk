@@ -1507,17 +1507,17 @@ class HomeProExtractor(ProductExtractor):
         # 2. Try JSON-LD extraction (primary source for HomePro - most accurate)
         json_ld_data = self._extract_json_ld(html_content)
 
-        print(f"[HomePro DEBUG] JSON-LD extraction for {url}")
+        print(f"[HomePro DEBUG] JSON-LD extraction for {url}", flush=True)
         if json_ld_data:
-            print(f"  JSON-LD keys: {list(json_ld_data.keys())}")
-            print(f"  name: {json_ld_data.get('name')}")
-            print(f"  sku: {json_ld_data.get('sku')}")
-            print(f"  brand: {json_ld_data.get('brand')}")
+            print(f"  JSON-LD keys: {list(json_ld_data.keys())}", flush=True)
+            print(f"  name: {json_ld_data.get('name')}", flush=True)
+            print(f"  sku: {json_ld_data.get('sku')}", flush=True)
+            print(f"  brand: {json_ld_data.get('brand')}", flush=True)
             offers = json_ld_data.get('offers', {})
             if isinstance(offers, dict):
-                print(f"  price: {offers.get('price')}")
+                print(f"  price: {offers.get('price')}", flush=True)
         else:
-            print(f"  JSON-LD not found - will use HTML extraction")
+            print(f"  JSON-LD not found - will use HTML extraction", flush=True)
 
         if json_ld_data:
             # Name from JSON-LD
@@ -1754,16 +1754,16 @@ class HomeProExtractor(ProductExtractor):
         product.retailer = "HomePro"
         
         # DEBUG: Log extraction results
-        print(f"\n[HomePro DEBUG] Extraction completed for: {url}")
-        print(f"  Name: {product.name}")
-        print(f"  Price: {product.current_price}")
-        print(f"  Brand: {product.brand}")
-        print(f"  SKU: {product.sku}")
-        print(f"  Images: {len(product.images) if product.images else 0}")
+        print(f"\n[HomePro DEBUG] Extraction completed for: {url}", flush=True)
+        print(f"  Name: {product.name}", flush=True)
+        print(f"  Price: {product.current_price}", flush=True)
+        print(f"  Brand: {product.brand}", flush=True)
+        print(f"  SKU: {product.sku}", flush=True)
+        print(f"  Images: {len(product.images) if product.images else 0}", flush=True)
         
         # Validation: HomePro products must have at minimum name OR sku
         if not product.name and not product.sku:
-            print(f"[HomePro ERROR] Failed to extract name or SKU - extraction failed!")
+            print(f"[HomePro ERROR] Failed to extract name or SKU - extraction failed!", flush=True)
             return None
         
         return product

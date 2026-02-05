@@ -433,6 +433,7 @@ function ManualAddContent() {
         setExistingMatches([]);
         setVerifiedRetailers([]);
         setProductFound(null);
+        // Don't auto-clear URL - user might be typing a new product
         return;
       }
 
@@ -444,6 +445,14 @@ function ManualAddContent() {
           setProductFound(data.found);
           setVerifiedRetailers(data.verified_retailers || []);
           setExistingMatches(data.matches || []);
+          
+          // Auto-fill URL from existing product if found
+          if (data.found && data.product?.link) {
+            setThaiWatsuduInput(prev => ({
+              ...prev,
+              url: data.product.link
+            }));
+          }
         }
       } catch (error) {
         console.error('Error fetching existing matches:', error);

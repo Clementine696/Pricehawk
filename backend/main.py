@@ -3122,21 +3122,26 @@ def scrape_single_url(url: str) -> dict:
         if returncode != 0:
             error_msg = stderr or stdout or 'Unknown error'
             print(f"  [PARALLEL] FAILED: {url} - returncode={returncode}")
-            print(f"  [PARALLEL] STDOUT: {stdout[:1000]}")
-            print(f"  [PARALLEL] STDERR: {stderr[:1000]}")
+            # For HomePro, show much more output to debug extraction failures
+            if 'homepro' in url.lower():
+                print(f"  [PARALLEL] STDOUT (last 8000 chars):\n{stdout[-8000:]}")
+                print(f"  [PARALLEL] STDERR (last 8000 chars):\n{stderr[-8000:]}")
+            else:
+                print(f"  [PARALLEL] STDOUT: {stdout[:1000]}")
+                print(f"  [PARALLEL] STDERR: {stderr[:1000]}")
             return {"success": False, "url": url, "error": f"Scraper failed (exit {returncode}): {error_msg[:500]}"}
 
         # Log scraper output for debugging
         print(f"  [DEBUG] Scraper returncode: {returncode}")
         if stdout:
-            # For HomePro debugging, show more output (last 2000 chars)
+            # For HomePro debugging, show much more output (last 5000 chars to capture extraction logs)
             if 'homepro' in url.lower():
-                print(f"  [DEBUG] Scraper stdout (last 2000 chars): {stdout[-2000:]}")
+                print(f"  [DEBUG] Scraper stdout (last 5000 chars):\n{stdout[-5000:]}")
             else:
                 print(f"  [DEBUG] Scraper stdout (last 500 chars): {stdout[-500:]}")
         if stderr:
             if 'homepro' in url.lower():
-                print(f"  [DEBUG] Scraper stderr (last 2000 chars): {stderr[-2000:]}")
+                print(f"  [DEBUG] Scraper stderr (last 5000 chars):\n{stderr[-5000:]}")
             else:
                 print(f"  [DEBUG] Scraper stderr (last 500 chars): {stderr[-500:]}")
 

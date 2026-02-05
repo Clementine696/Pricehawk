@@ -3131,16 +3131,32 @@ def scrape_single_url(url: str) -> dict:
             "unknown.json"
         ]
 
+        print(f"  [DEBUG] Looking for output in: {output_dir}")
+        print(f"  [DEBUG] Output file: {output_file}")
+        
+        # List all JSON files in the directory for debugging
+        try:
+            all_files = [f for f in os.listdir(output_dir) if f.endswith('.json')]
+            print(f"  [DEBUG] Found JSON files: {all_files}")
+        except Exception as e:
+            print(f"  [DEBUG] Error listing directory: {e}")
+
         for retailer_file in retailer_files:
             retailer_path = os.path.join(output_dir, retailer_file)
             if os.path.exists(retailer_path):
                 try:
+                    print(f"  [DEBUG] Checking file: {retailer_file}")
                     with open(retailer_path, 'r', encoding='utf-8') as f:
                         scraped_data = json.load(f)
 
                     if isinstance(scraped_data, list):
+                        print(f"  [DEBUG] Found {len(scraped_data)} products in {retailer_file}")
                         for product_data in scraped_data:
                             product_url = product_data.get('url', '')
+                            print(f"  [DEBUG] Product URL: {product_url}")
+                            print(f"  [DEBUG] Requested URL: {url}")
+                            print(f"  [DEBUG] Normalized product: {normalize_url(product_url)}")
+                            print(f"  [DEBUG] Normalized request: {normalize_url(url)}")
                             if normalize_url(product_url) == normalize_url(url) or product_url == url:
                                 product_data["source_url"] = url
                                 print(f"  [PARALLEL] SUCCESS: {url} -> {product_data.get('name', 'N/A')[:40]}...")

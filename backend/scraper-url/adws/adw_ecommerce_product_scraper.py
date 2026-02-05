@@ -240,13 +240,16 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             wait_for = "() => { const hasPrice = document.body.innerText.includes('฿') || document.body.innerText.includes('บาท'); const noShimmer = !document.querySelector('[class*=\"shimmer\"]') || document.querySelectorAll('[class*=\"shimmer\"]').length < 3; return hasPrice && noShimmer; }"
         elif 'homepro.co.th' in url:
             # HomePro needs to wait for the MAIN product page to load (not recommendation carousel)
-            # In-page polling sets window.__homeproReady; wait_for checks the flag.
+            # In-page polling sets window.__homeproReady by checking for:
+            # - Product page body class (pdp-1234386)
+            # - .item-name elements with text content
+            # - .item-price elements with numbers
             wait_for = """() => {
                 return window.__homeproReady === true;
             }"""
             import sys
             print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] Strategy: In-page polling sets window.__homeproReady flag", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Strategy: In-page polling checks .item-name + .item-price + pdp body", flush=True, file=sys.stderr)
             print(f"[SCRAPER] HomePro gets 20s initial + 120s in-page polling", flush=True, file=sys.stderr)
         else:
             # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)

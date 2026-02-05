@@ -791,12 +791,21 @@ class Crawl4AIWrapper:
 
                     # Use custom wait_for if provided (e.g., HomePro), otherwise Boonthavorn's, otherwise default
                     effective_wait_for = wait_for or boonthavorn_wait_for or default_wait_for
+                    
+                    # Debug: Log which wait_for is being used
+                    if wait_for:
+                        logger.info(f"Using CUSTOM wait_for for {url}")
+                    elif boonthavorn_wait_for:
+                        logger.info(f"Using Boonthavorn wait_for for {url}")
+                    else:
+                        logger.info(f"Using DEFAULT wait_for for {url}")
 
                     run_config = CrawlerRunConfig(
                         stream=True,                                        # Process immediately
                         only_text=self.config.only_text,                    # From env: SCRAPER_ONLY_TEXT
                         exclude_external_images=self.config.exclude_external_images,  # From env: SCRAPER_EXCLUDE_EXTERNAL_IMAGES
                         wait_for=effective_wait_for,                        # Use custom wait_for or Boonthavorn's
+                        page_timeout=self.config.timeout * 1000,            # Convert seconds to milliseconds for Playwright
 
                         word_count_threshold=self.config.min_content_length,
                         extraction_strategy=extraction_strategy,

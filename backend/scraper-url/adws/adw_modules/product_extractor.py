@@ -1508,6 +1508,19 @@ class HomeProExtractor(ProductExtractor):
         preview = html_content[:500].replace('\n', ' ')[:200]
         print(f"[HomePro EXTRACT] HTML preview: {preview}...", flush=True, file=sys.stderr)
         
+        # DEBUG: Save HTML to file for inspection
+        import os
+        import hashlib
+        sku_from_url = re.search(r'/p/(\d+)', url)
+        sku_str = sku_from_url.group(1) if sku_from_url else 'unknown'
+        debug_file = f"results/debug_homepro_{sku_str}.html"
+        try:
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            print(f"[HomePro DEBUG] Saved HTML to: {debug_file}", flush=True, file=sys.stderr)
+        except Exception as e:
+            print(f"[HomePro DEBUG] Could not save HTML: {e}", flush=True, file=sys.stderr)
+        
         product = ProductData(url=url)
 
         # 1. Extract SKU from URL first (most reliable for HomePro)

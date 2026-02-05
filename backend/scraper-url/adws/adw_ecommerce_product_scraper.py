@@ -235,19 +235,24 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             # Must wait for price element AND no shimmer loading indicators
             wait_for = "() => { const hasPrice = document.body.innerText.includes('฿') || document.body.innerText.includes('บาท'); const noShimmer = !document.querySelector('[class*=\"shimmer\"]') || document.querySelectorAll('[class*=\"shimmer\"]').length < 3; return hasPrice && noShimmer; }"
         elif 'homepro.co.th' in url:
-            # HomePro needs to wait for price element to load with actual content (React SPA)
-            # Check for price text with actual number, not just element existence
-            # Also ensure loading overlay is hidden and page has meaningful content
+            # HomePro needs to wait for the MAIN product page to load (not recommendation carousel)
+            # Add initial 3s delay to let page navigation complete, THEN wait for specific content
             wait_for = """() => {
-                const priceEl = document.querySelector('[class*="price"]');
-                const hasPriceContent = priceEl && priceEl.innerText && /\\d/.test(priceEl.innerText);
+                // First, ensure we're on the product page (not the intermediate page-load state)
+                const isProductPage = document.body.id === 'product-page' || document.body.className.includes('pdp-');
+                if (!isProductPage) return false;
+                
+                // Wait for main product section with price (not recommendation carousel)
+                const mainPrice = document.querySelector('#product-page .item-price .price, .pdp-price-section .price');
+                const hasPriceContent = mainPrice && mainPrice.innerText && /\\d/.test(mainPrice.innerText);
                 const loadingHidden = !document.querySelector('.loading-overlay:not(.hidden)');
-                const hasContent = document.body.innerText.length > 50000;
-                return hasPriceContent && loadingHidden && hasContent;
+                const productLoaded = document.querySelector('#product-page, .pdp-container');
+                
+                return isProductPage && hasPriceContent && loadingHidden && productLoaded;
             }"""
             import sys
             print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] Using extended wait_for condition (price content + no loading + 50K+ chars)", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Using extended wait_for condition (main product price + no loading)", flush=True, file=sys.stderr)
             print(f"[SCRAPER] HomePro gets 3 extra seconds after page load for JS rendering", flush=True, file=sys.stderr)
         else:
             # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
@@ -257,14 +262,27 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
         # Scrape the URL
         import sys
         print(f"[SCRAPER] About to scrape URL: {url}", flush=True, file=sys.stderr)
+        
+        # HomePro: Add initial delay to let page navigation complete BEFORE wait_for check
+        if 'homepro.co.th' in url:
+            import asyncio
+            print(f"[SCRAPER] HomePro: Adding 3s initial delay for page navigation...", flush=True, file=sys.stderr)
+            await asyncio.sleep(3)
+            print(f"[SCRAPER] HomePro: Initial delay complete, now waiting for content...", flush=True, file=sys.stderr)
+        
         result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
         
         # HomePro: Give extra time for React to fully render (especially in slow networks)
         if 'homepro.co.th' in url and result.success:
             import asyncio
-            print(f"[SCRAPER] HomePro: Waiting 3 extra seconds for React rendering...", flush=True, file=sys.stderr)
-            await asyncio.sleep(3)
+            print(f"[SCRAPER] HomePro: Waiting 5 extra seconds for React rendering...", flush=True, file=sys.stderr)
+            await asyncio.sleep(5)
             print(f"[SCRAPER] HomePro: Extra wait complete", flush=True, file=sys.stderr)
+            
+            # Force browser cleanup to prevent state pollution for next HomePro scrape
+            print(f"[SCRAPER] HomePro: Cleaning browser state for next scrape...", flush=True, file=sys.stderr)
+            await wrapper._cleanup_browser()
+            print(f"[SCRAPER] HomePro: Browser cleanup complete", flush=True, file=sys.stderr)
 
         print(f"[SCRAPER] Scrape result - Success: {result.success}", flush=True, file=sys.stderr)
         if result.success:
@@ -424,8 +442,8 @@ def generate_summary_stats(products: List[ProductData]) -> Dict[str, Any]:
 @click.option(
     "--max-concurrent",
     type=int,
-    default=3,
-    help="Maximum concurrent requests"
+    default=int(os.getenv('SCRAPER_MAX_CONCURRENT', '3')),
+    help="Maximum concurrent requests (auto-reduced to 1 for HomePro)"
 )
 @click.option(
     "--delay",
@@ -535,6 +553,16 @@ def main(
         output_dir = "."
         output_file_full_path = output_file
         base_output_folder = "."
+
+    # Check if any URLs are HomePro and reduce max_concurrent automatically
+    homepro_urls = [url for url in urls if 'homepro.co.th' in url.lower()]
+    if homepro_urls and max_concurrent > 1:
+        original_max_concurrent = max_concurrent
+        max_concurrent = 1  # Force sequential scraping for HomePro stability
+        import sys
+        print(f"\n[HOMEPRO AUTO-ADJUST] Detected {len(homepro_urls)} HomePro URLs out of {len(urls)} total", flush=True, file=sys.stderr)
+        print(f"[HOMEPRO AUTO-ADJUST] Reducing max_concurrent: {original_max_concurrent} → 1", flush=True, file=sys.stderr)
+        print(f"[HOMEPRO AUTO-ADJUST] HomePro React pages require sequential scraping for stability\n", flush=True, file=sys.stderr)
 
     # Create scraping configuration
     config = create_simple_config(

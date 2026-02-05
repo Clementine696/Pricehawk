@@ -113,7 +113,7 @@ class ScrapingConfig:
     """
     max_concurrent: int = 3
     delay_between_requests: float = 1.0
-    timeout: int = 30
+    timeout: int = 30  # Default timeout (increased to 60 for HomePro in scraper)
     user_agent: str = "Mozilla/5.0 (compatible; Crawl4AI/1.0)"
     headless: bool = True
     verbose: bool = None  # None = use env var
@@ -763,6 +763,17 @@ class Crawl4AIWrapper:
 })();
                 """
 
+                if is_ecommerce and "homepro.co.th" in url.lower():
+                    # HomePro-specific: Click specification tab to load dimensions/volume
+                    js_scroll_code += """
+        // HomePro specific - click specification tab to load dimensions/volume
+        const homeproSpecTab = document.getElementById('product-specification-tab');
+        if (homeproSpecTab) {
+            homeproSpecTab.click();
+            await new Promise(resolve => setTimeout(resolve, 800));
+        }
+                    """
+
                 # Perform the crawl using CrawlerRunConfig if available (v0.7.x+)
                 if CrawlerRunConfig is not None and self.config.use_browser:
                     # Log config for debugging
@@ -783,11 +794,34 @@ class Crawl4AIWrapper:
                         }
                     """ if is_boonthavorn else None
 
+                    # Default wait_for ensures page has meaningful content
+                    default_wait_for = """
+                        () => document.readyState === 'complete' &&
+                        document.body && document.body.innerText.length > 500
+                    """
+
+                    # Use custom wait_for if provided (e.g., HomePro), otherwise Boonthavorn's, otherwise default
+                    effective_wait_for = wait_for or boonthavorn_wait_for or default_wait_for
+                    
+                    # Debug: Log which wait_for is being used
+                    if wait_for:
+                        logger.info(f"Using CUSTOM wait_for for {url}")
+                    elif boonthavorn_wait_for:
+                        logger.info(f"Using Boonthavorn wait_for for {url}")
+                    else:
+                        logger.info(f"Using DEFAULT wait_for for {url}")
+                    logger.info(
+                        "Wait_for details: page_timeout_ms=%s, wait_for_length=%s",
+                        self.config.timeout * 1000,
+                        len(effective_wait_for) if effective_wait_for else 0,
+                    )
+
                     run_config = CrawlerRunConfig(
                         stream=True,                                        # Process immediately
                         only_text=self.config.only_text,                    # From env: SCRAPER_ONLY_TEXT
                         exclude_external_images=self.config.exclude_external_images,  # From env: SCRAPER_EXCLUDE_EXTERNAL_IMAGES
-                        wait_for=boonthavorn_wait_for,                      # Wait for price on Boonthavorn
+                        wait_for=effective_wait_for,                        # Use custom wait_for or Boonthavorn's
+                        page_timeout=self.config.timeout * 1000,            # Convert seconds to milliseconds for Playwright
 
                         word_count_threshold=self.config.min_content_length,
                         extraction_strategy=extraction_strategy,
@@ -797,22 +831,41 @@ class Crawl4AIWrapper:
                         simulate_user=self.config.simulate_user,
                         override_navigator=True,
                     )
+                    wait_for_start = time.time()
                     crawl_result = await self.crawler.arun(url=url, config=run_config)
+                    wait_for_duration = time.time() - wait_for_start
+                    if wait_for_duration < 1.0:
+                        logger.warning(
+                            "Wait_for returned quickly (%.2fs) for %s; may indicate early exit or error",
+                            wait_for_duration,
+                            url,
+                        )
+                    
+                    # DEBUG: Log what crawl4ai actually returned
+                    logger.info(f"Crawl4AI result for {url}:")
+                    logger.info(f"  - wait_for duration: {wait_for_duration:.2f}s")
+                    logger.info(f"  - success: {crawl_result.success}")
+                    logger.info(f"  - html length: {len(crawl_result.html) if crawl_result.html else 0}")
+                    logger.info(f"  - cleaned_html length: {len(crawl_result.cleaned_html) if crawl_result.cleaned_html else 0}")
+                    logger.info(f"  - markdown length: {len(str(crawl_result.markdown)) if crawl_result.markdown else 0}")
+                    if crawl_result.html:
+                        logger.info(f"  - HTML preview (first 200 chars): {crawl_result.html[:200]}")
                 else:
                     # Fallback for older versions or non-browser mode
+                    # Default wait_for ensures page has meaningful content
+                    default_wait_for = """
+                        () => document.readyState === 'complete' &&
+                        document.body && document.body.innerText.length > 500
+                        """ if self.config.use_browser else None
+                    
                     crawl_result = await self.crawler.arun(
                         url=url,
                         word_count_threshold=self.config.min_content_length,
                         extraction_strategy=extraction_strategy,
                         bypass_cache=False,
                         js_code=js_scroll_code if self.config.use_browser else None,
-                        wait_for=wait_for or ("""
-                        () => document.readyState === 'complete' &&
-                        document.body && document.body.innerText.length > 100
-                        """ if self.config.use_browser else None),
-                        css_selector=css_selector or ("""
-                        body
-                        """ if self.config.use_browser else None),
+                        wait_for=wait_for or default_wait_for,
+                        css_selector=css_selector or "body" if self.config.use_browser else None,
                         simulate_user=self.config.simulate_user,
                         override_navigator=True,
                     )

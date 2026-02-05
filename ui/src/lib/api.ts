@@ -37,14 +37,16 @@ export function removeAuthToken(): void {
 
 interface ApiFetchOptions extends RequestInit {
   skipAuthRedirect?: boolean;
+  timeout?: number; // Timeout in milliseconds
 }
 
 /**
  * API utility that handles 401 Unauthorized errors by redirecting to login
  * @param skipAuthRedirect - Set to true to skip automatic redirect on 401 (useful for auth checks)
+ * @param timeout - Request timeout in milliseconds (default: no timeout)
  */
 export async function apiFetch(url: string, options: ApiFetchOptions = {}): Promise<Response> {
-  const { skipAuthRedirect, ...fetchOptions } = options;
+  const { skipAuthRedirect, timeout, ...fetchOptions } = options;
 
   // Prepend API base URL for production deployment
   const fullUrl = url.startsWith('/api') ? `${API_BASE_URL}${url}` : url;
@@ -59,22 +61,56 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
   // Debug: Log the actual URL being called
   console.log('[api.ts] Fetching:', fullUrl);
 
-  const response = await fetch(fullUrl, {
-    ...fetchOptions,
-    headers,
-    credentials: 'include',  // Keep for backward compatibility with cookies
-  });
-
-  // Redirect to login on 401 Unauthorized (unless skipAuthRedirect is set)
-  if (response.status === 401 && !skipAuthRedirect) {
-    // Clear token on auth failure
-    removeAuthToken();
-    // Only redirect if we're in the browser and not already on login page
-    if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
-      window.location.href = '/login';
-    }
-    throw new Error('Unauthorized');
+  // Setup timeout using AbortController if timeout is specified
+  let abortController: AbortController | undefined;
+  let timeoutId: NodeJS.Timeout | undefined;
+  
+  if (timeout && timeout > 0) {
+    abortController = new AbortController();
+    timeoutId = setTimeout(() => {
+      if (abortController) {
+        abortController.abort();
+        console.log(`[api.ts] Request timeout after ${timeout}ms:`, fullUrl);
+      }
+    }, timeout);
   }
 
-  return response;
+  try {
+    const response = await fetch(fullUrl, {
+      ...fetchOptions,
+      headers,
+      credentials: 'include',  // Keep for backward compatibility with cookies
+      signal: abortController?.signal,
+    });
+
+    // Clear timeout if request completed
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+
+    // Redirect to login on 401 Unauthorized (unless skipAuthRedirect is set)
+    if (response.status === 401 && !skipAuthRedirect) {
+      // Clear token on auth failure
+      removeAuthToken();
+      // Only redirect if we're in the browser and not already on login page
+      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+        window.location.href = '/login';
+      }
+      throw new Error('Unauthorized');
+    }
+
+    return response;
+  } catch (error) {
+    // Clear timeout on error
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    
+    // Re-throw AbortError with better message
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeout}ms`);
+    }
+    
+    throw error;
+  }
 }

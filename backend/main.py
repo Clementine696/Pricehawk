@@ -3035,14 +3035,25 @@ def scrape_single_url(url: str) -> dict:
         output_file = os.path.join(RESULTS_DIR, f"scrape_{uuid.uuid4().hex}.json")
 
         # Run the scraper script
+        # HomePro gets 120 second timeout (vs 30 default) due to slower page loads in production
+        # Increased from 60s to allow React page transition from home-page to product-page state
+        # HomePro also gets max_concurrent=1 for sequential scraping to avoid browser conflicts
+        timeout_seconds = "120" if "homepro.co.th" in url.lower() else "30"
+        
         cmd = [
             "python",
             SCRAPER_SCRIPT,
             "--url", url,
-            "--output-file", output_file
+            "--output-file", output_file,
+            "--timeout", timeout_seconds
         ]
+        
+        # Add max-concurrent=1 for HomePro to prevent browser state pollution
+        if "homepro.co.th" in url.lower():
+            cmd.extend(["--max-concurrent", "1"])
 
-        print(f"\n  [PARALLEL] Scraping: {url}")
+        timeout_indicator = " (120s timeout)" if "homepro.co.th" in url.lower() else ""
+        print(f"\n  [PARALLEL] Scraping: {url}{timeout_indicator}")
 
         # Execute scraper with timeout
         env = os.environ.copy()
@@ -3061,12 +3072,14 @@ def scrape_single_url(url: str) -> dict:
         )
 
         # Wait for process with timeout
+        # HomePro needs longer timeout: 20s initial + 120s wait_for page_timeout + buffer = ~180s minimum
+        timeout_duration = 180 if "homepro.co.th" in url.lower() else 120
         try:
-            stdout, stderr = process.communicate(timeout=120)
+            stdout, stderr = process.communicate(timeout=timeout_duration)
             returncode = process.returncode
         except subprocess.TimeoutExpired:
             # Kill the process and all its children on timeout
-            print(f"  [PARALLEL] TIMEOUT: {url} - killing process tree")
+            print(f"  [PARALLEL] TIMEOUT ({timeout_duration}s): {url} - killing process tree")
             try:
                 # Try to kill process group (includes child processes like Chrome)
                 if PSUTIL_AVAILABLE:
@@ -3116,8 +3129,29 @@ def scrape_single_url(url: str) -> dict:
 
         if returncode != 0:
             error_msg = stderr or stdout or 'Unknown error'
-            print(f"  [PARALLEL] FAILED: {url} - {error_msg[:200]}")
-            return {"success": False, "url": url, "error": f"Scraper failed: {error_msg[:500]}"}
+            print(f"  [PARALLEL] FAILED: {url} - returncode={returncode}")
+            # For HomePro, show much more output to debug extraction failures
+            if 'homepro' in url.lower():
+                print(f"  [PARALLEL] STDOUT (last 8000 chars):\n{stdout[-8000:]}")
+                print(f"  [PARALLEL] STDERR (last 8000 chars):\n{stderr[-8000:]}")
+            else:
+                print(f"  [PARALLEL] STDOUT: {stdout[:1000]}")
+                print(f"  [PARALLEL] STDERR: {stderr[:1000]}")
+            return {"success": False, "url": url, "error": f"Scraper failed (exit {returncode}): {error_msg[:500]}"}
+
+        # Log scraper output for debugging
+        print(f"  [DEBUG] Scraper returncode: {returncode}")
+        if stdout:
+            # For HomePro debugging, show much more output (last 5000 chars to capture extraction logs)
+            if 'homepro' in url.lower():
+                print(f"  [DEBUG] Scraper stdout (last 5000 chars):\n{stdout[-5000:]}")
+            else:
+                print(f"  [DEBUG] Scraper stdout (last 500 chars): {stdout[-500:]}")
+        if stderr:
+            if 'homepro' in url.lower():
+                print(f"  [DEBUG] Scraper stderr (last 5000 chars):\n{stderr[-5000:]}")
+            else:
+                print(f"  [DEBUG] Scraper stderr (last 500 chars): {stderr[-500:]}")
 
         # Look for scraped data in retailer files
         output_dir = os.path.dirname(output_file)
@@ -3131,16 +3165,32 @@ def scrape_single_url(url: str) -> dict:
             "unknown.json"
         ]
 
+        print(f"  [DEBUG] Looking for output in: {output_dir}")
+        print(f"  [DEBUG] Output file: {output_file}")
+        
+        # List all JSON files in the directory for debugging
+        try:
+            all_files = [f for f in os.listdir(output_dir) if f.endswith('.json')]
+            print(f"  [DEBUG] Found JSON files: {all_files}")
+        except Exception as e:
+            print(f"  [DEBUG] Error listing directory: {e}")
+
         for retailer_file in retailer_files:
             retailer_path = os.path.join(output_dir, retailer_file)
             if os.path.exists(retailer_path):
                 try:
+                    print(f"  [DEBUG] Checking file: {retailer_file}")
                     with open(retailer_path, 'r', encoding='utf-8') as f:
                         scraped_data = json.load(f)
 
                     if isinstance(scraped_data, list):
+                        print(f"  [DEBUG] Found {len(scraped_data)} products in {retailer_file}")
                         for product_data in scraped_data:
                             product_url = product_data.get('url', '')
+                            print(f"  [DEBUG] Product URL: {product_url}")
+                            print(f"  [DEBUG] Requested URL: {url}")
+                            print(f"  [DEBUG] Normalized product: {normalize_url(product_url)}")
+                            print(f"  [DEBUG] Normalized request: {normalize_url(url)}")
                             if normalize_url(product_url) == normalize_url(url) or product_url == url:
                                 product_data["source_url"] = url
                                 print(f"  [PARALLEL] SUCCESS: {url} -> {product_data.get('name', 'N/A')[:40]}...")
@@ -3881,4 +3931,15 @@ def send_test_alert(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Increase timeout to handle HomePro scraping (15s + wait_for + 20s per URL)
+    # Use Config object for more control over timeouts
+    config = uvicorn.Config(
+        app=app,
+        host="0.0.0.0",
+        port=8000,
+        timeout_keep_alive=300,  # Keep connection alive for 5 minutes
+        timeout_graceful_shutdown=30,
+        limit_max_requests=None,  # No limit on requests per worker
+    )
+    server = uvicorn.Server(config)
+    server.run()

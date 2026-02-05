@@ -433,6 +433,7 @@ function ManualAddContent() {
         setExistingMatches([]);
         setVerifiedRetailers([]);
         setProductFound(null);
+        // Don't auto-clear URL - user might be typing a new product
         return;
       }
 
@@ -444,6 +445,14 @@ function ManualAddContent() {
           setProductFound(data.found);
           setVerifiedRetailers(data.verified_retailers || []);
           setExistingMatches(data.matches || []);
+          
+          // Auto-fill URL from existing product if found
+          if (data.found && data.product?.link) {
+            setThaiWatsuduInput(prev => ({
+              ...prev,
+              url: data.product.link
+            }));
+          }
         }
       } catch (error) {
         console.error('Error fetching existing matches:', error);
@@ -567,12 +576,19 @@ function ManualAddContent() {
 
       setScrapeProgress({ current: 0, total: urlsToScrape.length });
 
-      // Call the scrape API
+      console.log('[Manual Add] Starting scrape with 5 minute timeout...');
+      
+      // Call the scrape API with extended timeout for HomePro (5 minutes = 300000ms)
+      // HomePro requires 15s initial + wait_for + 20s post-load = ~35-40s per URL
+      // Allow generous timeout to handle multiple HomePro products or slow networks
       const scrapeResponse = await apiFetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ urls: urlsToScrape }),
+        timeout: 300000, // 5 minutes timeout
       });
+      
+      console.log('[Manual Add] Scrape completed, response status:', scrapeResponse.status);
 
       if (!scrapeResponse.ok) {
         throw new Error('Failed to scrape URLs');
@@ -623,6 +639,7 @@ function ManualAddContent() {
       }
 
       // Now submit comparison with scraped data
+      console.log('[Manual Add] Submitting comparison...');
       const response = await apiFetch('/api/comparison/manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -631,7 +648,10 @@ function ManualAddContent() {
           competitors: validCompetitors.map((e) => ({ retailer: e.retailer, url: e.url })),
           scraped_data: scrapeResult.results || [],
         }),
+        timeout: 60000, // 1 minute timeout for DB operations
       });
+      
+      console.log('[Manual Add] Comparison response status:', response.status);
 
       if (!response.ok) throw new Error('Failed to process comparison');
 

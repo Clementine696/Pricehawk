@@ -116,14 +116,18 @@ def print_status_panel(
 
     content = f"{icon} {action}"
 
-    console.print(
-        Panel(
-            content,
-            title=f"[bold {border_style}]{title}[/bold {border_style}]",
-            border_style=border_style,
-            padding=(0, 1),
+    try:
+        console.print(
+            Panel(
+                content,
+                title=f"[bold {border_style}]{title}[/bold {border_style}]",
+                border_style=border_style,
+                padding=(0, 1),
+            )
         )
-    )
+    except Exception as e:
+        # Fallback for Windows terminal rendering issues
+        print(f"[{title}] {action}", flush=True)
 
 
 def create_output_directory_structure(base_output_folder: str, adw_id: str, organization_type: str = "date") -> str:
@@ -225,6 +229,7 @@ def load_urls_from_file(file_path: str) -> List[str]:
 
 async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, console: Console) -> Optional[ProductData]:
     """Extract product data from a single URL."""
+    import sys  # Ensure sys is available for error logging
     try:
         # Determine specific wait conditions per retailer
         css_selector = None
@@ -237,21 +242,111 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
         elif 'homepro.co.th' in url:
             # HomePro needs to wait for price element to load (React SPA)
             wait_for = "() => document.querySelector('[class*=\"price\"]') !== null && document.body.innerText.includes('฿')"
+        else:
+            # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
+            # Ensure page has meaningful content before scraping
+            wait_for = "() => document.readyState === 'complete' && document.body && document.body.innerText.length > 500"
 
         # Scrape the URL
         result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+        
+        # HomePro: Retry once if we get empty page (execution context destroyed)
+        if 'homepro.co.th' in url and result.success and result.html and len(result.html) < 100:
+            print(f"[SCRAPER] ⚠️ HomePro: Empty page detected ({len(result.html)} chars), retrying once...", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] This happens when page navigation destroys execution context during wait_for", flush=True, file=sys.stderr)
+            
+            import asyncio
+            # Wait a bit before retry
+            await asyncio.sleep(5)
+            
+            # Retry with longer delay
+            print(f"[SCRAPER] HomePro RETRY: Adding 25s initial delay...", flush=True, file=sys.stderr)
+            await asyncio.sleep(25)
+            print(f"[SCRAPER] HomePro RETRY: Now attempting scrape...", flush=True, file=sys.stderr)
+            
+            result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+            
+            if result.success and result.html and len(result.html) > 100:
+                print(f"[SCRAPER] ✓ Retry succeeded! HTML length: {len(result.html)}", flush=True, file=sys.stderr)
+            else:
+                print(f"[SCRAPER] ✗ Retry still failed. HTML length: {len(result.html) if result.html else 0}", flush=True, file=sys.stderr)
+        
+        # HomePro: Validate captured page state
+        if 'homepro.co.th' in url and result.success and result.html:
+            import re
+            # Check body tag to verify we captured the right state
+            body_match = re.search(r'<body[^>]*>', result.html)
+            if body_match:
+                body_tag = body_match.group(0)
+                print(f"[SCRAPER] HomePro: Captured page body tag: {body_tag}", flush=True, file=sys.stderr)
+                if 'home-page' in body_tag:
+                    print(f"[SCRAPER] ⚠️ WARNING: Page still in home-page state! This should not happen.", flush=True, file=sys.stderr)
+                elif 'product-page' in body_tag or 'pdp-' in body_tag:
+                    print(f"[SCRAPER] ✓ Page correctly in product-page state", flush=True, file=sys.stderr)
+                else:
+                    print(f"[SCRAPER] ⚠️ UNKNOWN page state (not home-page or product-page)", flush=True, file=sys.stderr)
+        
+        # DISABLED: Post-load wait and cleanup - they don't help if HTML is already empty
+        # # HomePro: Give extra time for React to fully render (especially in slow networks)
+        # if 'homepro.co.th' in url and result.success:
+        #     import asyncio
+        #     print(f"[SCRAPER] HomePro: Waiting 20 extra seconds for React rendering...", flush=True, file=sys.stderr)
+        #     await asyncio.sleep(20)
+        #     print(f"[SCRAPER] HomePro: Extra wait complete", flush=True, file=sys.stderr)
+        #     
+        #     # Force browser cleanup to prevent state pollution for next HomePro scrape
+        #     print(f"[SCRAPER] HomePro: Cleaning browser state for next scrape...", flush=True, file=sys.stderr)
+        #     await wrapper._cleanup_browser()
+        #     print(f"[SCRAPER] HomePro: Browser cleanup complete", flush=True, file=sys.stderr)
 
+        print(f"[SCRAPER] Scrape result - Success: {result.success}", flush=True, file=sys.stderr)
+        if result.success:
+            print(f"[SCRAPER] HTML length: {len(result.html) if result.html else 0}", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Content length: {len(result.content) if result.content else 0}", flush=True, file=sys.stderr)
+            
+            # HomePro: Detect if page didn't actually load despite wait_for passing
+            if 'homepro.co.th' in url and result.html and len(result.html) < 500:
+                print(f"[SCRAPER] ⚠️  EMPTY PAGE: HomePro HTML only {len(result.html)} chars - wait_for passed but page is blank!", flush=True, file=sys.stderr)
+                print(f"[SCRAPER] This suggests wait_for has a bug or page is being cleared", flush=True, file=sys.stderr)
+                # Don't mark as failed yet - let extraction handle it
+        
         if not result.success:
             print_status_panel(console, f"Failed to scrape: {result.error_message}", adw_id, "extraction", "error", url)
             return None
 
-        print_status_panel(console, f"Extracted {len(result.content) if result.content else 0} characters", adw_id, "extraction", "success", url)
+        html_length = len(result.html) if result.html else 0
+        content_length = len(result.content) if result.content else 0
+        print_status_panel(console, f"Extracted HTML: {html_length} chars, Content: {content_length} chars", adw_id, "extraction", "success", url)
+        
+        # DEBUG: For HomePro, check if key elements are present
+        if 'homepro.co.th' in url and result.html:
+            has_json_ld = 'application/ld+json' in result.html
+            has_price_element = 'price' in result.html.lower()
+            has_product_name = '<h1' in result.html
+            print(f"[HomePro DEBUG] HTML analysis:")
+            print(f"  Has JSON-LD: {has_json_ld}")
+            print(f"  Has price element: {has_price_element}")
+            print(f"  Has H1 tag: {has_product_name}")
 
         # Get appropriate extractor for the URL
+        import sys
         extractor = get_extractor(url)
+        print(f"[SCRAPER] Using extractor: {type(extractor).__name__}", flush=True, file=sys.stderr)
         
         # Extract product data
+        print(f"[SCRAPER] Starting extraction...", flush=True, file=sys.stderr)
         product = extractor.extract_from_html(result.html or result.content, url)
+        print(f"[SCRAPER] Extraction complete. Product returned: {product is not None}", flush=True, file=sys.stderr)
+        
+        if product:
+            print(f"[SCRAPER] ✓ Product extracted successfully:", flush=True, file=sys.stderr)
+            print(f"    Name: {product.name}", flush=True, file=sys.stderr)
+            print(f"    Retailer: {product.retailer}", flush=True, file=sys.stderr)
+            print(f"    SKU: {product.sku}", flush=True, file=sys.stderr)
+            print(f"    Price: {product.current_price}", flush=True, file=sys.stderr)
+            print(f"    Brand: {product.brand}", flush=True, file=sys.stderr)
+        else:
+            print(f"[SCRAPER] ✗ Extraction returned None!", flush=True, file=sys.stderr)
         
         # LLM Fallback Logic - TEMPORARILY DISABLED due to LLMConfig ForwardRef issue in crawl4ai
         # The primary extraction with JSON-LD and Quick Info parsing should be sufficient
@@ -264,8 +359,11 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
 
         if product:
             print_status_panel(console, f"Successfully extracted: {product.name[:50]}...", adw_id, "extraction", "success", url)
+            print(f"[SCRAPER] Returning product object", flush=True, file=sys.stderr)
             return product
         else:
+            import sys
+            print(f"[SCRAPER] ✗✗✗ EXTRACTION FAILED - Returning None for {url}", flush=True, file=sys.stderr)
             print_status_panel(console, "Failed to extract product data", adw_id, "extraction", "error", url)
             return None
 
@@ -365,8 +463,8 @@ def generate_summary_stats(products: List[ProductData]) -> Dict[str, Any]:
 @click.option(
     "--max-concurrent",
     type=int,
-    default=3,
-    help="Maximum concurrent requests"
+    default=int(os.getenv('SCRAPER_MAX_CONCURRENT', '3')),
+    help="Maximum concurrent requests (auto-reduced to 1 for HomePro)"
 )
 @click.option(
     "--delay",
@@ -459,6 +557,14 @@ def main(
     if not urls:
         raise click.ClickException("No URLs found to scrape")
 
+    # DEBUG: Log working directory and paths
+    import sys as sys_module
+    print(f"\n[DEBUG] Working directory: {os.getcwd()}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Script location: {os.path.abspath(__file__)}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Output file parameter: {output_file}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Output folder parameter: {output_folder}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] WRITE_AGENTS_FOLDER: {WRITE_AGENTS_FOLDER}\n", flush=True, file=sys_module.stderr)
+
     # Handle output directory structure
     if output_folder:
         # Create organized output directory structure
@@ -469,13 +575,28 @@ def main(
         # Use legacy ADW structure (only if enabled via env)
         output_dir = f"./agents/{adw_id}/ecommerce_scraper"
         os.makedirs(output_dir, exist_ok=True)
-        output_file_full_path = output_file
+        output_file_full_path = os.path.join(output_dir, output_file)
         base_output_folder = output_dir
     else:
         # No folder writing - use current directory
         output_dir = "."
         output_file_full_path = output_file
         base_output_folder = "."
+
+    # DEBUG: Show resolved paths
+    print(f"[DEBUG] Resolved output_dir: {output_dir}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Resolved output_file_full_path: {output_file_full_path}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Resolved base_output_folder: {base_output_folder}\n", flush=True, file=sys_module.stderr)
+
+    # Check if any URLs are HomePro and reduce max_concurrent automatically
+    homepro_urls = [url for url in urls if 'homepro.co.th' in url.lower()]
+    if homepro_urls and max_concurrent > 1:
+        original_max_concurrent = max_concurrent
+        max_concurrent = 1  # Force sequential scraping for HomePro stability
+        import sys
+        print(f"\n[HOMEPRO AUTO-ADJUST] Detected {len(homepro_urls)} HomePro URLs out of {len(urls)} total", flush=True, file=sys.stderr)
+        print(f"[HOMEPRO AUTO-ADJUST] Reducing max_concurrent: {original_max_concurrent} → 1", flush=True, file=sys.stderr)
+        print(f"[HOMEPRO AUTO-ADJUST] HomePro React pages require sequential scraping for stability\n", flush=True, file=sys.stderr)
 
     # Create scraping configuration
     config = create_simple_config(
@@ -509,14 +630,30 @@ def main(
     config_table.add_row("Use browser", str(use_browser))
     config_table.add_row("Headless", str(headless))
 
-    console.print(
-        Panel(
-            config_table,
-            title=f"[bold blue]🛍️  E-commerce Product Scraper Configuration[/bold blue]",
-            border_style="blue",
+    try:
+        console.print(
+            Panel(
+                config_table,
+                title=f"[bold blue]🛍️  E-commerce Product Scraper Configuration[/bold blue]",
+                border_style="blue",
+            )
         )
-    )
-    console.print()
+    except Exception as e:
+        # Fallback for Windows terminal rendering issues
+        print(f"E-commerce Product Scraper Configuration:", flush=True)
+        print(f"  ADW ID: {adw_id}", flush=True)
+        print(f"  Products to scrape: {len(urls)}", flush=True)
+        print(f"  Input source: {source_description}", flush=True)
+        print(f"  Output file: {output_file_full_path}", flush=True)
+        if output_folder:
+            print(f"  Base output folder: {output_folder}", flush=True)
+        print(f"  Max concurrent: {max_concurrent}", flush=True)
+        print(f"  Timeout (seconds): {timeout}", flush=True)
+    
+    try:
+        console.print()
+    except:
+        pass
 
     # Prepare for scraping
     products = []
@@ -569,6 +706,8 @@ def main(
                                 result = await future
                                 if result:
                                     products.append(result)
+                                    print(f"[DEBUG] Added product to list. Total products: {len(products)}", flush=True)
+                                    print(f"[DEBUG] Product retailer: {result.retailer}", flush=True)
                                     
                                     # Incremental save - separate files per retailer
                                     try:
@@ -585,10 +724,17 @@ def main(
                                         
                                         for retailer_name, retailer_products in products_by_retailer.items():
                                             retailer_file = os.path.join(output_dir, f"{retailer_name}.json")
+                                            print(f"[DEBUG] Writing {len(retailer_products)} products to: {retailer_file}", flush=True)
                                             with open(retailer_file, 'w', encoding='utf-8') as f:
                                                 json.dump(retailer_products, f, ensure_ascii=False, indent=2)
+                                            print(f"[DEBUG] Successfully wrote file: {retailer_file}", flush=True)
                                     except Exception as e:
+                                        print(f"[ERROR] Failed to save incremental results: {e}", flush=True)
+                                        import traceback
+                                        traceback.print_exc()
                                         console.print(f"[yellow]Warning: Failed to save incremental results: {e}[/yellow]")
+                                else:
+                                    print(f"[DEBUG] Result was None - extraction failed for URL", flush=True)
                                         
                                 progress.advance(task_id)
                             except Exception as e:
@@ -642,6 +788,9 @@ def main(
 
         # Save results - separate file per retailer
         output_dir = os.path.dirname(output_file_full_path)
+        # Safeguard: if output_dir is empty, use current directory
+        if not output_dir:
+            output_dir = "."
         os.makedirs(output_dir, exist_ok=True)
         
         saved_files = []
@@ -651,6 +800,11 @@ def main(
             with open(retailer_file, 'w', encoding='utf-8') as f:
                 json.dump(retailer_products, f, ensure_ascii=False, indent=2)
             saved_files.append((retailer_name, retailer_file, len(retailer_products)))
+            # DEBUG: Confirm file was written
+            full_path = os.path.abspath(retailer_file)
+            file_exists = os.path.exists(retailer_file)
+            file_size = os.path.getsize(retailer_file) if file_exists else 0
+            print(f"[DEBUG] Saved {retailer_name}: {full_path} (exists={file_exists}, size={file_size})", flush=True)
         
         print_status_panel(console, f"Saved {len(saved_files)} retailer files to {output_dir}", adw_id, "output", "success")
         
@@ -686,11 +840,16 @@ def main(
         )
 
         # Exit with appropriate code
+        import sys
+        print(f"\n[DEBUG] Final product count: {len(products)} out of {len(urls)} URLs", flush=True, file=sys.stderr)
         if len(products) == 0:
+            print(f"[DEBUG] Exiting with code 1 (all extractions failed)", flush=True, file=sys.stderr)
             sys.exit(1)  # All extractions failed
         elif len(products) < len(urls):
+            print(f"[DEBUG] Exiting with code 2 (some extractions failed)", flush=True, file=sys.stderr)
             sys.exit(2)  # Some extractions failed
         else:
+            print(f"[DEBUG] Exiting with code 0 (all extractions succeeded)", flush=True, file=sys.stderr)
             sys.exit(0)  # All extractions succeeded
 
     except KeyboardInterrupt:

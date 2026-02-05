@@ -267,7 +267,7 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             import sys
             print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
             print(f"[SCRAPER] Using STRICT wait_for with home-page blocker: MUST exit home-page state", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] HomePro gets 15s initial + wait_for + state validation", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] HomePro gets 20s initial + 120s wait_for page_timeout + state validation", flush=True, file=sys.stderr)
         else:
             # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
             # Ensure page has meaningful content before scraping

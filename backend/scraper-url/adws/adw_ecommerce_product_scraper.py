@@ -242,6 +242,10 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
             print(f"[SCRAPER] Using extended wait_for condition (waiting for price + h1)", flush=True, file=sys.stderr)
             print(f"[SCRAPER] HomePro gets 3 extra seconds after page load for JS rendering", flush=True, file=sys.stderr)
+        else:
+            # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
+            # Ensure page has meaningful content before scraping
+            wait_for = "() => document.readyState === 'complete' && document.body && document.body.innerText.length > 500"
 
         # Scrape the URL
         import sys

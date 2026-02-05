@@ -229,6 +229,7 @@ def load_urls_from_file(file_path: str) -> List[str]:
 
 async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, console: Console) -> Optional[ProductData]:
     """Extract product data from a single URL."""
+    import sys  # Ensure sys is available for error logging
     try:
         # Determine specific wait conditions per retailer
         css_selector = None
@@ -239,35 +240,14 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             # Must wait for price element AND no shimmer loading indicators
             wait_for = "() => { const hasPrice = document.body.innerText.includes('฿') || document.body.innerText.includes('บาท'); const noShimmer = !document.querySelector('[class*=\"shimmer\"]') || document.querySelectorAll('[class*=\"shimmer\"]').length < 3; return hasPrice && noShimmer; }"
         elif 'homepro.co.th' in url:
-            # HomePro needs to wait for the MAIN product page to load (not recommendation carousel)
-            # In-page polling sets window.__homeproReady by checking for:
-            # - Product page body class (pdp-1234386)
-            # - .item-name elements with text content
-            # - .item-price elements with numbers
-            wait_for = """() => {
-                return window.__homeproReady === true;
-            }"""
-            import sys
-            print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] Strategy: In-page polling checks .item-name + .item-price + pdp body", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] HomePro gets 20s initial + 120s in-page polling", flush=True, file=sys.stderr)
+            # HomePro needs to wait for price element to load (React SPA)
+            wait_for = "() => document.querySelector('[class*=\"price\"]') !== null && document.body.innerText.includes('฿')"
         else:
             # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
             # Ensure page has meaningful content before scraping
             wait_for = "() => document.readyState === 'complete' && document.body && document.body.innerText.length > 500"
 
         # Scrape the URL
-        import sys
-        print(f"[SCRAPER] About to scrape URL: {url}", flush=True, file=sys.stderr)
-        
-        # HomePro: Add initial delay to let page navigation complete BEFORE wait_for check
-        # Must be long enough to avoid "Execution context was destroyed" errors
-        if 'homepro.co.th' in url:
-            import asyncio
-            print(f"[SCRAPER] HomePro: Adding 20s initial delay for page navigation...", flush=True, file=sys.stderr)
-            await asyncio.sleep(20)
-            print(f"[SCRAPER] HomePro: Initial delay complete, now waiting for content...", flush=True, file=sys.stderr)
-        
         result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
         
         # HomePro: Retry once if we get empty page (execution context destroyed)

@@ -764,52 +764,14 @@ class Crawl4AIWrapper:
                 """
 
                 if is_ecommerce and "homepro.co.th" in url.lower():
-                    # HomePro-specific in-page polling to ensure product page is ready
-                    # Check for actual DOM elements that exist immediately, not dynamically-generated JSON-LD
+                    # HomePro-specific: Click specification tab to load dimensions/volume
                     js_scroll_code += """
-(async () => {
-    window.__homeproReady = false;
-    const start = Date.now();
-    const maxWaitMs = 120000;
-
-    while (Date.now() - start < maxWaitMs) {
-        // Check for product page body
-        const isProductPageBody = document.body.id === 'product-page' || document.body.className.includes('pdp-');
-        
-        // Check for actual product in-page elements (these exist before JSON-LD)
-        const itemNameElements = document.querySelectorAll('.item-name');
-        const itemPriceElements = document.querySelectorAll('.item-price');
-        const hasProductElements = itemNameElements.length > 0 && itemPriceElements.length > 0;
-        
-        // Also check if there's meaningful text content in the name/price elements
-        let hasProductContent = false;
-        if (hasProductElements) {
-            let nameContent = '';
-            for (const elem of itemNameElements) {
-                if (elem.innerText && elem.innerText.trim().length > 10) {
-                    nameContent = elem.innerText;
-                    break;
-                }
-            }
-            let priceContent = '';
-            for (const elem of itemPriceElements) {
-                if (elem.innerText && /\\d/.test(elem.innerText)) {
-                    priceContent = elem.innerText;
-                    break;
-                }
-            }
-            hasProductContent = nameContent.length > 10 && priceContent.length > 0;
+        // HomePro specific - click specification tab to load dimensions/volume
+        const homeproSpecTab = document.getElementById('product-specification-tab');
+        if (homeproSpecTab) {
+            homeproSpecTab.click();
+            await new Promise(resolve => setTimeout(resolve, 800));
         }
-        
-        // Ready when: product page body + product elements + content
-        if (isProductPageBody && hasProductElements && hasProductContent) {
-            window.__homeproReady = true;
-            break;
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 500));
-    }
-})();
                     """
 
                 # Perform the crawl using CrawlerRunConfig if available (v0.7.x+)

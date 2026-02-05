@@ -240,8 +240,11 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             wait_for = "() => { const hasPrice = document.body.innerText.includes('฿') || document.body.innerText.includes('บาท'); const noShimmer = !document.querySelector('[class*=\"shimmer\"]') || document.querySelectorAll('[class*=\"shimmer\"]').length < 3; return hasPrice && noShimmer; }"
         elif 'homepro.co.th' in url:
             # HomePro needs to wait for the MAIN product page to load (not recommendation carousel)
-            # Add initial 3s delay to let page navigation complete, THEN wait for specific content
+            # Strict multi-condition check to ensure complete page load
             wait_for = """() => {
+                // CRITICAL: Block if still in home-page state (carousel/recommendations)
+                if (document.body.className.includes('home-page')) return false;
+                
                 // First, ensure we're on the product page (not the intermediate page-load state)
                 const isProductPage = document.body.id === 'product-page' || document.body.className.includes('pdp-');
                 if (!isProductPage) return false;
@@ -252,12 +255,19 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
                 const loadingHidden = !document.querySelector('.loading-overlay:not(.hidden)');
                 const productLoaded = document.querySelector('#product-page, .pdp-container');
                 
-                return isProductPage && hasPriceContent && loadingHidden && productLoaded;
+                // ADDITIONAL CHECK: Ensure product title exists with content (not empty h1)
+                const productTitle = document.querySelector('h1');
+                const hasTitleContent = productTitle && productTitle.innerText && productTitle.innerText.trim().length > 5;
+                
+                // ADDITIONAL CHECK: Ensure page has substantial content (not skeleton/placeholder)
+                const hasSubstantialContent = document.body.innerText.length > 1000;
+                
+                return isProductPage && hasPriceContent && loadingHidden && productLoaded && hasTitleContent && hasSubstantialContent;
             }"""
             import sys
             print(f"\n[SCRAPER] HomePro URL detected: {url}", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] Using extended wait_for condition (main product price + no loading)", flush=True, file=sys.stderr)
-            print(f"[SCRAPER] HomePro gets 3 extra seconds after page load for JS rendering", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] Using STRICT wait_for with home-page blocker: MUST exit home-page state", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] HomePro gets 15s initial + wait_for + state validation", flush=True, file=sys.stderr)
         else:
             # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
             # Ensure page has meaningful content before scraping
@@ -268,30 +278,74 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
         print(f"[SCRAPER] About to scrape URL: {url}", flush=True, file=sys.stderr)
         
         # HomePro: Add initial delay to let page navigation complete BEFORE wait_for check
+        # Must be long enough to avoid "Execution context was destroyed" errors
         if 'homepro.co.th' in url:
             import asyncio
-            print(f"[SCRAPER] HomePro: Adding 3s initial delay for page navigation...", flush=True, file=sys.stderr)
-            await asyncio.sleep(3)
+            print(f"[SCRAPER] HomePro: Adding 20s initial delay for page navigation...", flush=True, file=sys.stderr)
+            await asyncio.sleep(20)
             print(f"[SCRAPER] HomePro: Initial delay complete, now waiting for content...", flush=True, file=sys.stderr)
         
         result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
         
-        # HomePro: Give extra time for React to fully render (especially in slow networks)
-        if 'homepro.co.th' in url and result.success:
-            import asyncio
-            print(f"[SCRAPER] HomePro: Waiting 5 extra seconds for React rendering...", flush=True, file=sys.stderr)
-            await asyncio.sleep(5)
-            print(f"[SCRAPER] HomePro: Extra wait complete", flush=True, file=sys.stderr)
+        # HomePro: Retry once if we get empty page (execution context destroyed)
+        if 'homepro.co.th' in url and result.success and result.html and len(result.html) < 100:
+            print(f"[SCRAPER] ⚠️ HomePro: Empty page detected ({len(result.html)} chars), retrying once...", flush=True, file=sys.stderr)
+            print(f"[SCRAPER] This happens when page navigation destroys execution context during wait_for", flush=True, file=sys.stderr)
             
-            # Force browser cleanup to prevent state pollution for next HomePro scrape
-            print(f"[SCRAPER] HomePro: Cleaning browser state for next scrape...", flush=True, file=sys.stderr)
-            await wrapper._cleanup_browser()
-            print(f"[SCRAPER] HomePro: Browser cleanup complete", flush=True, file=sys.stderr)
+            import asyncio
+            # Wait a bit before retry
+            await asyncio.sleep(5)
+            
+            # Retry with longer delay
+            print(f"[SCRAPER] HomePro RETRY: Adding 25s initial delay...", flush=True, file=sys.stderr)
+            await asyncio.sleep(25)
+            print(f"[SCRAPER] HomePro RETRY: Now attempting scrape...", flush=True, file=sys.stderr)
+            
+            result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+            
+            if result.success and result.html and len(result.html) > 100:
+                print(f"[SCRAPER] ✓ Retry succeeded! HTML length: {len(result.html)}", flush=True, file=sys.stderr)
+            else:
+                print(f"[SCRAPER] ✗ Retry still failed. HTML length: {len(result.html) if result.html else 0}", flush=True, file=sys.stderr)
+        
+        # HomePro: Validate captured page state
+        if 'homepro.co.th' in url and result.success and result.html:
+            import re
+            # Check body tag to verify we captured the right state
+            body_match = re.search(r'<body[^>]*>', result.html)
+            if body_match:
+                body_tag = body_match.group(0)
+                print(f"[SCRAPER] HomePro: Captured page body tag: {body_tag}", flush=True, file=sys.stderr)
+                if 'home-page' in body_tag:
+                    print(f"[SCRAPER] ⚠️ WARNING: Page still in home-page state! This should not happen.", flush=True, file=sys.stderr)
+                elif 'product-page' in body_tag or 'pdp-' in body_tag:
+                    print(f"[SCRAPER] ✓ Page correctly in product-page state", flush=True, file=sys.stderr)
+                else:
+                    print(f"[SCRAPER] ⚠️ UNKNOWN page state (not home-page or product-page)", flush=True, file=sys.stderr)
+        
+        # DISABLED: Post-load wait and cleanup - they don't help if HTML is already empty
+        # # HomePro: Give extra time for React to fully render (especially in slow networks)
+        # if 'homepro.co.th' in url and result.success:
+        #     import asyncio
+        #     print(f"[SCRAPER] HomePro: Waiting 20 extra seconds for React rendering...", flush=True, file=sys.stderr)
+        #     await asyncio.sleep(20)
+        #     print(f"[SCRAPER] HomePro: Extra wait complete", flush=True, file=sys.stderr)
+        #     
+        #     # Force browser cleanup to prevent state pollution for next HomePro scrape
+        #     print(f"[SCRAPER] HomePro: Cleaning browser state for next scrape...", flush=True, file=sys.stderr)
+        #     await wrapper._cleanup_browser()
+        #     print(f"[SCRAPER] HomePro: Browser cleanup complete", flush=True, file=sys.stderr)
 
         print(f"[SCRAPER] Scrape result - Success: {result.success}", flush=True, file=sys.stderr)
         if result.success:
             print(f"[SCRAPER] HTML length: {len(result.html) if result.html else 0}", flush=True, file=sys.stderr)
             print(f"[SCRAPER] Content length: {len(result.content) if result.content else 0}", flush=True, file=sys.stderr)
+            
+            # HomePro: Detect if page didn't actually load despite wait_for passing
+            if 'homepro.co.th' in url and result.html and len(result.html) < 500:
+                print(f"[SCRAPER] ⚠️  EMPTY PAGE: HomePro HTML only {len(result.html)} chars - wait_for passed but page is blank!", flush=True, file=sys.stderr)
+                print(f"[SCRAPER] This suggests wait_for has a bug or page is being cleared", flush=True, file=sys.stderr)
+                # Don't mark as failed yet - let extraction handle it
         
         if not result.success:
             print_status_panel(console, f"Failed to scrape: {result.error_message}", adw_id, "extraction", "error", url)
@@ -558,7 +612,7 @@ def main(
         # Use legacy ADW structure (only if enabled via env)
         output_dir = f"./agents/{adw_id}/ecommerce_scraper"
         os.makedirs(output_dir, exist_ok=True)
-        output_file_full_path = output_file
+        output_file_full_path = os.path.join(output_dir, output_file)
         base_output_folder = output_dir
     else:
         # No folder writing - use current directory

@@ -3071,12 +3071,14 @@ def scrape_single_url(url: str) -> dict:
         )
 
         # Wait for process with timeout
+        # HomePro needs longer timeout due to multiple wait delays (15s + wait_for + 20s = ~35-40s minimum)
+        timeout_duration = 180 if "homepro.co.th" in url.lower() else 120
         try:
-            stdout, stderr = process.communicate(timeout=120)
+            stdout, stderr = process.communicate(timeout=timeout_duration)
             returncode = process.returncode
         except subprocess.TimeoutExpired:
             # Kill the process and all its children on timeout
-            print(f"  [PARALLEL] TIMEOUT: {url} - killing process tree")
+            print(f"  [PARALLEL] TIMEOUT ({timeout_duration}s): {url} - killing process tree")
             try:
                 # Try to kill process group (includes child processes like Chrome)
                 if PSUTIL_AVAILABLE:
@@ -3928,4 +3930,15 @@ def send_test_alert(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Increase timeout to handle HomePro scraping (15s + wait_for + 20s per URL)
+    # Use Config object for more control over timeouts
+    config = uvicorn.Config(
+        app=app,
+        host="0.0.0.0",
+        port=8000,
+        timeout_keep_alive=300,  # Keep connection alive for 5 minutes
+        timeout_graceful_shutdown=30,
+        limit_max_requests=None,  # No limit on requests per worker
+    )
+    server = uvicorn.Server(config)
+    server.run()

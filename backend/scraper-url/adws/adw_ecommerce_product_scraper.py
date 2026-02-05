@@ -116,14 +116,18 @@ def print_status_panel(
 
     content = f"{icon} {action}"
 
-    console.print(
-        Panel(
-            content,
-            title=f"[bold {border_style}]{title}[/bold {border_style}]",
-            border_style=border_style,
-            padding=(0, 1),
+    try:
+        console.print(
+            Panel(
+                content,
+                title=f"[bold {border_style}]{title}[/bold {border_style}]",
+                border_style=border_style,
+                padding=(0, 1),
+            )
         )
-    )
+    except Exception as e:
+        # Fallback for Windows terminal rendering issues
+        print(f"[{title}] {action}", flush=True)
 
 
 def create_output_directory_structure(base_output_folder: str, adw_id: str, organization_type: str = "date") -> str:
@@ -536,6 +540,14 @@ def main(
     if not urls:
         raise click.ClickException("No URLs found to scrape")
 
+    # DEBUG: Log working directory and paths
+    import sys as sys_module
+    print(f"\n[DEBUG] Working directory: {os.getcwd()}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Script location: {os.path.abspath(__file__)}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Output file parameter: {output_file}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Output folder parameter: {output_folder}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] WRITE_AGENTS_FOLDER: {WRITE_AGENTS_FOLDER}\n", flush=True, file=sys_module.stderr)
+
     # Handle output directory structure
     if output_folder:
         # Create organized output directory structure
@@ -553,6 +565,11 @@ def main(
         output_dir = "."
         output_file_full_path = output_file
         base_output_folder = "."
+
+    # DEBUG: Show resolved paths
+    print(f"[DEBUG] Resolved output_dir: {output_dir}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Resolved output_file_full_path: {output_file_full_path}", flush=True, file=sys_module.stderr)
+    print(f"[DEBUG] Resolved base_output_folder: {base_output_folder}\n", flush=True, file=sys_module.stderr)
 
     # Check if any URLs are HomePro and reduce max_concurrent automatically
     homepro_urls = [url for url in urls if 'homepro.co.th' in url.lower()]
@@ -596,14 +613,30 @@ def main(
     config_table.add_row("Use browser", str(use_browser))
     config_table.add_row("Headless", str(headless))
 
-    console.print(
-        Panel(
-            config_table,
-            title=f"[bold blue]🛍️  E-commerce Product Scraper Configuration[/bold blue]",
-            border_style="blue",
+    try:
+        console.print(
+            Panel(
+                config_table,
+                title=f"[bold blue]🛍️  E-commerce Product Scraper Configuration[/bold blue]",
+                border_style="blue",
+            )
         )
-    )
-    console.print()
+    except Exception as e:
+        # Fallback for Windows terminal rendering issues
+        print(f"E-commerce Product Scraper Configuration:", flush=True)
+        print(f"  ADW ID: {adw_id}", flush=True)
+        print(f"  Products to scrape: {len(urls)}", flush=True)
+        print(f"  Input source: {source_description}", flush=True)
+        print(f"  Output file: {output_file_full_path}", flush=True)
+        if output_folder:
+            print(f"  Base output folder: {output_folder}", flush=True)
+        print(f"  Max concurrent: {max_concurrent}", flush=True)
+        print(f"  Timeout (seconds): {timeout}", flush=True)
+    
+    try:
+        console.print()
+    except:
+        pass
 
     # Prepare for scraping
     products = []
@@ -738,6 +771,9 @@ def main(
 
         # Save results - separate file per retailer
         output_dir = os.path.dirname(output_file_full_path)
+        # Safeguard: if output_dir is empty, use current directory
+        if not output_dir:
+            output_dir = "."
         os.makedirs(output_dir, exist_ok=True)
         
         saved_files = []
@@ -747,6 +783,11 @@ def main(
             with open(retailer_file, 'w', encoding='utf-8') as f:
                 json.dump(retailer_products, f, ensure_ascii=False, indent=2)
             saved_files.append((retailer_name, retailer_file, len(retailer_products)))
+            # DEBUG: Confirm file was written
+            full_path = os.path.abspath(retailer_file)
+            file_exists = os.path.exists(retailer_file)
+            file_size = os.path.getsize(retailer_file) if file_exists else 0
+            print(f"[DEBUG] Saved {retailer_name}: {full_path} (exists={file_exists}, size={file_size})", flush=True)
         
         print_status_panel(console, f"Saved {len(saved_files)} retailer files to {output_dir}", adw_id, "output", "success")
         

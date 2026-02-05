@@ -3036,6 +3036,7 @@ def scrape_single_url(url: str) -> dict:
 
         # Run the scraper script
         # HomePro gets 60 second timeout (vs 30 default) due to slower page loads in production
+        # HomePro also gets max_concurrent=1 for sequential scraping to avoid browser conflicts
         timeout_seconds = "60" if "homepro.co.th" in url.lower() else "30"
         
         cmd = [
@@ -3045,6 +3046,10 @@ def scrape_single_url(url: str) -> dict:
             "--output-file", output_file,
             "--timeout", timeout_seconds
         ]
+        
+        # Add max-concurrent=1 for HomePro to prevent browser state pollution
+        if "homepro.co.th" in url.lower():
+            cmd.extend(["--max-concurrent", "1"])
 
         timeout_indicator = " (60s timeout)" if "homepro.co.th" in url.lower() else ""
         print(f"\n  [PARALLEL] Scraping: {url}{timeout_indicator}")

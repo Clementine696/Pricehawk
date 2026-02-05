@@ -783,11 +783,20 @@ class Crawl4AIWrapper:
                         }
                     """ if is_boonthavorn else None
 
+                    # Default wait_for ensures page has meaningful content
+                    default_wait_for = """
+                        () => document.readyState === 'complete' &&
+                        document.body && document.body.innerText.length > 500
+                    """
+
+                    # Use custom wait_for if provided (e.g., HomePro), otherwise Boonthavorn's, otherwise default
+                    effective_wait_for = wait_for or boonthavorn_wait_for or default_wait_for
+
                     run_config = CrawlerRunConfig(
                         stream=True,                                        # Process immediately
                         only_text=self.config.only_text,                    # From env: SCRAPER_ONLY_TEXT
                         exclude_external_images=self.config.exclude_external_images,  # From env: SCRAPER_EXCLUDE_EXTERNAL_IMAGES
-                        wait_for=boonthavorn_wait_for,                      # Wait for price on Boonthavorn
+                        wait_for=effective_wait_for,                        # Use custom wait_for or Boonthavorn's
 
                         word_count_threshold=self.config.min_content_length,
                         extraction_strategy=extraction_strategy,
@@ -800,19 +809,20 @@ class Crawl4AIWrapper:
                     crawl_result = await self.crawler.arun(url=url, config=run_config)
                 else:
                     # Fallback for older versions or non-browser mode
+                    # Default wait_for ensures page has meaningful content
+                    default_wait_for = """
+                        () => document.readyState === 'complete' &&
+                        document.body && document.body.innerText.length > 500
+                        """ if self.config.use_browser else None
+                    
                     crawl_result = await self.crawler.arun(
                         url=url,
                         word_count_threshold=self.config.min_content_length,
                         extraction_strategy=extraction_strategy,
                         bypass_cache=False,
                         js_code=js_scroll_code if self.config.use_browser else None,
-                        wait_for=wait_for or ("""
-                        () => document.readyState === 'complete' &&
-                        document.body && document.body.innerText.length > 100
-                        """ if self.config.use_browser else None),
-                        css_selector=css_selector or ("""
-                        body
-                        """ if self.config.use_browser else None),
+                        wait_for=wait_for or default_wait_for,
+                        css_selector=css_selector or "body" if self.config.use_browser else None,
                         simulate_user=self.config.simulate_user,
                         override_navigator=True,
                     )

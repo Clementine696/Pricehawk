@@ -229,7 +229,7 @@ def load_urls_from_file(file_path: str) -> List[str]:
 
 async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, console: Console) -> Optional[ProductData]:
     """Extract product data from a single URL."""
-    import sys  # Ensure sys is available for error logging
+    # import sys  # Ensure sys is available for error logging
     try:
         # Determine specific wait conditions per retailer
         css_selector = None
@@ -329,7 +329,7 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             print(f"  Has H1 tag: {has_product_name}")
 
         # Get appropriate extractor for the URL
-        import sys
+        # import sys
         extractor = get_extractor(url)
         print(f"[SCRAPER] Using extractor: {type(extractor).__name__}", flush=True, file=sys.stderr)
         
@@ -348,6 +348,54 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
         else:
             print(f"[SCRAPER] ✗ Extraction returned None!", flush=True, file=sys.stderr)
         
+        # Generic Retry: If price extraction failed, retry for ALL retailers
+        extraction_attempt = 1
+        max_extraction_retries = 3
+        
+        while extraction_attempt <= max_extraction_retries:
+            # Check if price is missing (critical field)
+            if not product or not product.current_price:
+                print(f"[SCRAPER DEBUG] Extraction completed for: {url}", flush=True, file=sys.stderr)
+                print(f"  Name: {product.name if product else None}", flush=True, file=sys.stderr)
+                print(f"  Price: {product.current_price if product else None}", flush=True, file=sys.stderr)
+                
+                if extraction_attempt < max_extraction_retries:
+                    print(f"[SCRAPER] ⚠️ Price not found (attempt {extraction_attempt}/{max_extraction_retries}), retrying...", flush=True, file=sys.stderr)
+                    
+                    import asyncio
+                    # Wait before retry (5 seconds each attempt)
+                    retry_delay = 5
+                    print(f"[SCRAPER] RETRY: Waiting {retry_delay}s before re-scraping...", flush=True, file=sys.stderr)
+                    await asyncio.sleep(retry_delay)
+                    
+                    # Re-scrape the page
+                    print(f"[SCRAPER] RETRY: Re-scraping page (attempt {extraction_attempt + 1})...", flush=True, file=sys.stderr)
+                    result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+                    
+                    if result.success and result.html:
+                        print(f"[SCRAPER] RETRY: Scrape successful, HTML length: {len(result.html)}", flush=True, file=sys.stderr)
+                        
+                        # Re-extract
+                        print(f"[SCRAPER] RETRY: Re-extracting data...", flush=True, file=sys.stderr)
+                        product = extractor.extract_from_html(result.html or result.content, url)
+                        
+                        if product and product.current_price:
+                            print(f"[SCRAPER] ✓ RETRY SUCCEEDED! Got Price={product.current_price}", flush=True, file=sys.stderr)
+                            break  # Success! Exit retry loop
+                        else:
+                            print(f"[SCRAPER] ✗ RETRY: Price still not found", flush=True, file=sys.stderr)
+                    else:
+                        print(f"[SCRAPER] ✗ RETRY: Scrape failed: {result.error_message if result else 'No result'}", flush=True, file=sys.stderr)
+                    
+                    extraction_attempt += 1
+                else:
+                    # Final attempt failed
+                    print(f"[SCRAPER] ✗✗✗ All {max_extraction_retries} extraction attempts failed!", flush=True, file=sys.stderr)
+                    break
+            else:
+                # Extraction succeeded, exit retry loop
+                break
+        
         # LLM Fallback Logic - TEMPORARILY DISABLED due to LLMConfig ForwardRef issue in crawl4ai
         # The primary extraction with JSON-LD and Quick Info parsing should be sufficient
         # TODO: Re-enable once LLMConfig import issue is resolved
@@ -362,7 +410,7 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             print(f"[SCRAPER] Returning product object", flush=True, file=sys.stderr)
             return product
         else:
-            import sys
+            # import sys
             print(f"[SCRAPER] ✗✗✗ EXTRACTION FAILED - Returning None for {url}", flush=True, file=sys.stderr)
             print_status_panel(console, "Failed to extract product data", adw_id, "extraction", "error", url)
             return None
@@ -593,7 +641,7 @@ def main(
     if homepro_urls and max_concurrent > 1:
         original_max_concurrent = max_concurrent
         max_concurrent = 1  # Force sequential scraping for HomePro stability
-        import sys
+        # import sys
         print(f"\n[HOMEPRO AUTO-ADJUST] Detected {len(homepro_urls)} HomePro URLs out of {len(urls)} total", flush=True, file=sys.stderr)
         print(f"[HOMEPRO AUTO-ADJUST] Reducing max_concurrent: {original_max_concurrent} → 1", flush=True, file=sys.stderr)
         print(f"[HOMEPRO AUTO-ADJUST] HomePro React pages require sequential scraping for stability\n", flush=True, file=sys.stderr)
@@ -840,7 +888,7 @@ def main(
         )
 
         # Exit with appropriate code
-        import sys
+        # import sys
         print(f"\n[DEBUG] Final product count: {len(products)} out of {len(urls)} URLs", flush=True, file=sys.stderr)
         if len(products) == 0:
             print(f"[DEBUG] Exiting with code 1 (all extractions failed)", flush=True, file=sys.stderr)

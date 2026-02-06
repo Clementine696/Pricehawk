@@ -315,6 +315,7 @@ class Crawl4AIWrapper:
                             # Playwright requires launch_persistent_context() for those, which crawl4ai doesn't use
                             # === Essential container flags ===
                             "--no-sandbox",
+                            "--single-process"
                             "--disable-setuid-sandbox",
                             "--disable-gpu",
                             "--no-zygote",  # Single process startup (helps with cleanup)

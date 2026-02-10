@@ -1,2 +1,7 @@
 [build]
 builder = "nixpacks"
+
+# Cron job for price alerts
+[[cron]]
+schedule = "0 * * * *"  # Every hour at :00
+command = "python alert_checker.py"

@@ -754,6 +754,52 @@ const filteredProducts = products.filter((product) => {
 - Placeholder updated to "Search by name or SKU..."
 - Case-insensitive search across both fields
 
+### Email Template UI Polishing (February 2026)
+
+#### Symmetric Product Layout Standardization
+Standardized all product cards across price change, inactive status, and active status sections in email alerts ([backend/services/email_service.py](backend/services/email_service.py)):
+
+**Changes Made:**
+
+1. **Image Standardization**
+   - All product images: `80x80px` (consistent across all sections)
+   - Border-radius: `8px` (rounded corners)
+   - Object-fit: `cover` (proper scaling)
+   - Applied to: price changes, inactive products, active products
+
+2. **Typography Standardization**
+   - Product name: `font-size: 16px; font-weight: bold; color: #111827`
+   - Info/SKU text: `font-size: 14px; color: #6b7280`
+   - Spacing: `margin: 0 0 8px` for name, `margin: 0 0 10px` for info
+   - Applied consistently across all product rows
+
+3. **Button Styling**
+   - "View on PriceHawk" button: `padding: 6px 12px; background-color: #06b6d4`
+   - Font: `font-size: 12px; font-weight: bold`
+   - Same styling for all alert types
+
+4. **Layout Structure**
+   - All rows now use 3-column layout:
+     - Column 1: Product image (80px width)
+     - Column 2: Product info (name, brand/category/retailer/SKU, view button)
+     - Column 3: Price info (price changes) or empty spacer (status changes)
+   - Padding: `20px` across all sections
+   - Border: `1px solid #e5e7eb` between rows
+   - Consistent `vertical-align: top`
+
+5. **Footer Link Fix**
+   - "Go to Dashboard" button now links to `{self.frontend_url}` (functional)
+   - Previously: `href="#"` (broken link)
+   - Uses `FRONTEND_URL` environment variable (default: https://pricehawk-ruddy.vercel.app)
+
+**Email Sections Updated:**
+- ✅ Price change rows (`_build_product_row`)
+- ✅ Inactive product rows (`_build_status_change_row` with `status='inactive'`)
+- ✅ Active/back-in-stock rows (`_build_status_change_row` with `status='active'`)
+- ✅ Footer link to dashboard
+
+**Result:** All email alert templates now have visually symmetric, professional appearance with consistent spacing, typography, and interactive elements.
+
 ---
 
 ## Future Features (Planned)

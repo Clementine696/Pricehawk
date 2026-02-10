@@ -89,25 +89,31 @@ class AlertService:
             period_start = last_sent if last_sent else datetime.now() - timedelta(hours=24)
             period_end = datetime.now()
 
-            products = await self.get_price_changes_since(period_start)
+            # Convert to UTC for price_history comparison (price_history stores UTC, alert settings store Bangkok +7)
+            period_start_utc = period_start - timedelta(hours=7)
+            products = await self.get_price_changes_since(period_start_utc)
+            logger.info(f"Found {len(products)} products with price changes")
 
-            if not products:
-                logger.info("No price changes detected")
+            # Get status changes (products becoming active/inactive)
+            status_changes = await self.get_status_changes()
+            logger.info(f"Found {len(status_changes)} products with status changes")
+
+            if not products and not status_changes:
+                logger.info("No price or status changes detected")
                 # Update last_alert_sent_at even if no changes (to prevent checking old data repeatedly)
                 await self.update_last_alert_sent(period_end)
                 return {
                     'should_send': True,
                     'alerts_sent': 0,
                     'products_count': 0,
-                    'reason': 'No price changes'
+                    'reason': 'No changes'
                 }
-
-            logger.info(f"Found {len(products)} products with price changes")
 
             # Send emails
             email_result = self.email_service.send_price_alert_email(
                 to_emails=emails,
                 products=products,
+                status_changes=status_changes,
                 period_start=period_start,
                 period_end=period_end
             )
@@ -120,9 +126,13 @@ class AlertService:
             else:
                 status = 'failed'
 
+            # Update product alert status for status changes
+            if status_changes:
+                await self.update_product_alert_status(status_changes)
+
             # Log to history
             await self.log_alert_history(
-                products_count=len(products),
+                products_count=len(products) + len(status_changes),
                 emails_sent=emails,
                 status=status,
                 period_start=period_start,
@@ -133,12 +143,14 @@ class AlertService:
             # Update last_alert_sent_at
             await self.update_last_alert_sent(period_end)
 
-            logger.info(f"Alert sent successfully: {len(products)} products, {email_result['sent_count']} emails")
+            logger.info(f"Alert sent successfully: {len(products)} price changes, {len(status_changes)} status changes, {email_result['sent_count']} emails")
 
             return {
                 'should_send': True,
                 'alerts_sent': email_result['sent_count'],
-                'products_count': len(products),
+                'products_count': len(products) + len(status_changes),
+                'price_changes_count': len(products),
+                'status_changes_count': len(status_changes),
                 'emails_sent': emails,
                 'status': status,
                 'failed_emails': email_result['failed']
@@ -190,41 +202,132 @@ class AlertService:
             List of product dicts with old_price, new_price, and product info
         """
         query = """
-        WITH price_changes AS (
+        WITH all_prices AS (
             SELECT
-                ph.product_id,
-                ph.price as new_price,
-                ph.scraped_at,
-                LAG(ph.price) OVER (PARTITION BY ph.product_id ORDER BY ph.scraped_at) as old_price,
-                ROW_NUMBER() OVER (PARTITION BY ph.product_id ORDER BY ph.scraped_at DESC) as rn
-            FROM price_history ph
-            WHERE ph.scraped_at >= $1
+                product_id,
+                price,
+                scraped_at,
+                LAG(price) OVER (PARTITION BY product_id ORDER BY scraped_at) as old_price
+            FROM price_history
+        ),
+        recent_changes AS (
+            SELECT
+                ap.product_id,
+                ap.price as new_price,
+                ap.scraped_at,
+                ap.old_price,
+                ROW_NUMBER() OVER (PARTITION BY ap.product_id ORDER BY ap.scraped_at DESC) as rn
+            FROM all_prices ap
+            WHERE ap.scraped_at >= $1
         )
         SELECT
-            pc.product_id,
-            pc.old_price,
-            pc.new_price,
-            pc.scraped_at,
+            rc.product_id,
+            rc.old_price,
+            rc.new_price,
+            rc.scraped_at,
             p.name,
             p.sku,
             p.description,
             p.category,
             p.brand,
-            p.images,
+            p.image,
+            p.link,
             r.name as retailer_name,
-            r.retailer_id
-        FROM price_changes pc
-        JOIN products p ON pc.product_id = p.product_id
+            r.retailer_id,
+            CASE
+                WHEN p.retailer_id = 'twd' THEN p.product_id
+                ELSE COALESCE(pm.base_product_id, p.product_id)
+            END as twd_product_id
+        FROM recent_changes rc
+        JOIN products p ON rc.product_id = p.product_id
         JOIN retailers r ON p.retailer_id = r.retailer_id
-        WHERE pc.rn = 1
-          AND pc.old_price IS NOT NULL
-          AND pc.old_price != pc.new_price
-        ORDER BY pc.scraped_at DESC;
+        LEFT JOIN product_matches pm ON p.product_id = pm.candidate_product_id AND pm.verified_result = true
+        WHERE rc.rn = 1
+          AND rc.old_price IS NOT NULL
+          AND rc.old_price != rc.new_price
+        ORDER BY rc.scraped_at DESC;
         """
 
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(query, since)
             return [dict(row) for row in rows]
+
+    async def get_status_changes(self) -> List[Dict]:
+        """
+        Query products table for status changes (active <-> inactive)
+        
+        Detection logic:
+        - Became INACTIVE: last_alert_status = 'active' AND scrape_fail_count >= 3
+        - Became ACTIVE: last_alert_status = 'inactive' AND scrape_fail_count < 3
+        
+        Returns:
+            List of product dicts with status change info
+        """
+        query = """
+        SELECT
+            p.product_id,
+            p.name,
+            p.sku,
+            p.description,
+            p.category,
+            p.brand,
+            p.image,
+            p.link,
+            p.scrape_fail_count,
+            p.last_alert_status,
+            CASE
+                WHEN p.last_alert_status = 'active' AND p.scrape_fail_count >= 3 THEN 'inactive'
+                WHEN p.last_alert_status = 'inactive' AND p.scrape_fail_count < 3 THEN 'active'
+            END as new_status,
+            r.name as retailer_name,
+            r.retailer_id,
+            CASE
+                WHEN p.retailer_id = 'twd' THEN p.product_id
+                ELSE COALESCE(pm.base_product_id, p.product_id)
+            END as twd_product_id
+        FROM products p
+        JOIN retailers r ON p.retailer_id = r.retailer_id
+        LEFT JOIN product_matches pm ON p.product_id = pm.candidate_product_id AND pm.verified_result = true
+        WHERE
+            (p.last_alert_status = 'active' AND p.scrape_fail_count >= 3)
+            OR (p.last_alert_status = 'inactive' AND p.scrape_fail_count < 3)
+        ORDER BY p.last_updated_at DESC;
+        """
+        
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch(query)
+            return [dict(row) for row in rows]
+
+    async def update_product_alert_status(self, status_changes: List[Dict]) -> None:
+        """
+        Update last_alert_status for products that had status changes
+        
+        Args:
+            status_changes: List of products with 'product_id' and 'new_status'
+        """
+        if not status_changes:
+            return
+        
+        async with self.db_pool.acquire() as conn:
+            # Group by new status for efficient batch update
+            inactive_ids = [p['product_id'] for p in status_changes if p['new_status'] == 'inactive']
+            active_ids = [p['product_id'] for p in status_changes if p['new_status'] == 'active']
+            
+            if inactive_ids:
+                await conn.execute("""
+                    UPDATE products
+                    SET last_alert_status = 'inactive'
+                    WHERE product_id = ANY($1)
+                """, inactive_ids)
+                logger.info(f"Updated {len(inactive_ids)} products to inactive status")
+            
+            if active_ids:
+                await conn.execute("""
+                    UPDATE products
+                    SET last_alert_status = 'active'
+                    WHERE product_id = ANY($1)
+                """, active_ids)
+                logger.info(f"Updated {len(active_ids)} products to active status")
 
     def should_send_alert_now(
         self,

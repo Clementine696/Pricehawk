@@ -1009,10 +1009,10 @@ class ThaiWatsaduExtractor(ProductExtractor):
         # CASE 2 & 3: Normal and Coupon case - Red price with text-redPrice class
         # This covers both discount and coupon scenarios
         if not html_current_price:
-            # Look for: <span class="... font-price ... text-redPrice ... text-2xl ...">7,740</span>
+            # Look for: <span class="... font-price ... text-redPrice ...">7,740</span>
             # Use sequential pattern: classes must appear in this order in the HTML
-            # This is more reliable than lookahead which can match across HTML boundaries
-            red_price_pattern = r'<span[^>]*class="[^"]*font-price[^"]*text-redPrice[^"]*text-2xl[^"]*"[^>]*>([\d,]+)</span>'
+            # Removed text-2xl requirement since Thai Watsadu now uses responsive sizes like text-sm sm:text-lg
+            red_price_pattern = r'<span[^>]*class="[^"]*font-price[^"]*text-redPrice[^"]*"[^>]*>([\d,]+)</span>'
             red_match = re.search(red_price_pattern, html_content, re.IGNORECASE)
             if red_match:
                 try:

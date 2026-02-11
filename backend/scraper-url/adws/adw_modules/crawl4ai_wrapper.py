@@ -604,7 +604,8 @@ class Crawl4AIWrapper:
             extraction_strategy: Optional extraction strategy
             wait_for: Optional JavaScript condition to wait for
             css_selector: Optional CSS selector to wait for
-            gbh_location: Optional GlobalHouse location name for price by location (e.g., 'นครปฐม')
+            gbh_location: Optional GlobalHouse location name (Thai) for location-based pricing
+                         e.g., "นครปฐม", "ขอนแก่น"
 
         Returns:
             ScrapingResult with scraped data
@@ -655,10 +656,108 @@ class Crawl4AIWrapper:
                 # Determine if this is an e-commerce URL that needs scrolling
                 is_ecommerce = self.is_ecommerce_url(url)
 
+                # GlobalHouse location selection (if specified)
+                is_globalhouse = 'globalhouse.co.th' in url.lower()
+                gbh_location_code = ""
+                if is_globalhouse and gbh_location:
+                    logger.info(f"GlobalHouse location selection: {gbh_location}")
+                    gbh_location_code = f"""
+    // GlobalHouse Location Selection
+    async function selectGlobalhouseLocation(locationName) {{
+        try {{
+            console.log('Starting GlobalHouse location selection for:', locationName);
+
+            // Step 1: Find and click the location button in navbar
+            // Look for button with text "กำลังช็อปที่" and has location pin icon
+            const locationButtons = Array.from(document.querySelectorAll('button'));
+            const navbarButton = locationButtons.find(btn =>
+                btn.textContent.includes('กำลังช็อปที่') ||
+                btn.querySelector('svg[class*="iconify"][viewBox*="24"]')
+            );
+
+            if (!navbarButton) {{
+                console.error('Location navbar button not found');
+                return false;
+            }}
+
+            navbarButton.click();
+            console.log('Clicked navbar location button');
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            // Step 2: Wait for modal to appear and find search input
+            const searchInput = document.querySelector('input[placeholder*="ค้นหา"], input[type="text"]');
+            if (!searchInput) {{
+                console.error('Search input not found');
+                return false;
+            }}
+
+            // Step 3: Type location name in search
+            searchInput.focus();
+            searchInput.value = locationName;
+            searchInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            searchInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            console.log('Typed location name:', locationName);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Step 4: Find and click the matching location from search results
+            // Look for elements containing the location name
+            const allElements = Array.from(document.querySelectorAll('*'));
+            const locationElement = allElements.find(el =>
+                el.textContent.includes(locationName) &&
+                el.textContent.includes('สาขา') &&
+                (el.tagName === 'DIV' || el.tagName === 'BUTTON' || el.tagName === 'SPAN')
+            );
+
+            if (locationElement) {{
+                // Click the location element or its parent if it's not clickable
+                const clickableElement = locationElement.closest('button, [role="button"], [onclick]') || locationElement;
+                clickableElement.click();
+                console.log('Clicked location:', locationName);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }} else {{
+                console.error('Location not found in search results');
+                return false;
+            }}
+
+            // Step 5: Click "เลือกช้อปที่สาขานี้" button
+            const confirmButtons = Array.from(document.querySelectorAll('button'));
+            const confirmButton = confirmButtons.find(btn =>
+                btn.textContent.includes('เลือกช้อปที่สาขานี้') ||
+                btn.textContent.includes('เลือก')
+            );
+
+            if (!confirmButton) {{
+                console.error('Confirm button not found');
+                return false;
+            }}
+
+            confirmButton.click();
+            console.log('Clicked confirm button');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Step 6: Wait for price to update
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            console.log('Location selection completed successfully');
+            return true;
+        }} catch (error) {{
+            console.error('Error in selectGlobalhouseLocation:', error);
+            return false;
+        }}
+    }}
+
+    // Execute location selection
+    const locationSelected = await selectGlobalhouseLocation('{gbh_location}');
+    if (!locationSelected) {{
+        console.warn('Failed to select location, proceeding with default location');
+    }}
+    """
+
                 # Enhanced JS code for e-commerce sites - scroll to load lazy content
                 # Wrapped in async IIFE for proper execution
                 js_scroll_code = """
 (async () => {
+""" + gbh_location_code + """
     // Function to scroll down the page to load lazy content
     async function scrollToBottom() {
         const scrollHeight = document.body.scrollHeight;

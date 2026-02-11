@@ -1220,12 +1220,28 @@ class ThaiWatsaduExtractor(ProductExtractor):
 
         Thai Watsadu uses Next.js images like:
         /_next/image?url=https://pim.thaiwatsadu.com/TWDPIM/web/Thumbnail/Image/0204/60265581r.jpg&w=1920&q=75
+
+        Images can be in srcset or src attributes. Prioritize srcset for product images.
+        Filter out badge/promotional images (e.g., /images/badge/).
         """
         from urllib.parse import unquote
         images = []
 
-        # Pattern 1: Find Next.js images with pim.thaiwatsadu URLs containing the SKU
-        if sku:
+        # Pattern 1: Find Next.js images in srcset attributes (main product images)
+        srcset_pattern = r'srcset="([^"]*/_next/image\?url=https%3A%2F%2Fpim\.thaiwatsadu\.com[^"]*)"'
+        srcset_matches = re.findall(srcset_pattern, html_content, re.IGNORECASE)
+        for srcset_value in srcset_matches:
+            # srcset can have multiple URLs like "url1 1x, url2 2x"
+            # Extract all URLs from srcset
+            url_matches = re.findall(r'/_next/image\?url=(https%3A%2F%2Fpim\.thaiwatsadu\.com[^&\s]+)', srcset_value)
+            for url_encoded in url_matches:
+                actual_url = unquote(url_encoded)
+                # Filter out badge images
+                if '/badge/' not in actual_url.lower() and actual_url not in images:
+                    images.append(actual_url)
+
+        # Pattern 2: Find Next.js images with pim.thaiwatsadu URLs containing the SKU in src
+        if sku and not images:
             sku_pattern = rf'src="(/_next/image\?url=[^"]*{sku}[^"]*)"'
             matches = re.findall(sku_pattern, html_content, re.IGNORECASE)
             for match in matches:
@@ -1233,24 +1249,27 @@ class ThaiWatsaduExtractor(ProductExtractor):
                 url_match = re.search(r'url=([^&]+)', match)
                 if url_match:
                     actual_url = unquote(url_match.group(1))
-                    if actual_url and actual_url not in images:
+                    # Filter out badge images
+                    if actual_url and '/badge/' not in actual_url.lower() and actual_url not in images:
                         images.append(actual_url)
 
-        # Pattern 2: Find all pim.thaiwatsadu.com images
+        # Pattern 3: Find all pim.thaiwatsadu.com images in src attributes
         if not images:
-            pim_pattern = r'src="/_next/image\?url=(https%3A%2F%2Fpim\.thaiwatsadu\.com[^&]+)'
+            pim_pattern = r'src="/_next/image\?url=(https%3A%2F%2Fpim\.thaiwatsadu\.com[^&"]+)'
             matches = re.findall(pim_pattern, html_content, re.IGNORECASE)
             for match in matches[:10]:
                 actual_url = unquote(match)
-                if actual_url and actual_url not in images:
+                # Filter out badge images
+                if actual_url and '/badge/' not in actual_url.lower() and actual_url not in images:
                     images.append(actual_url)
 
-        # Pattern 3: Direct pim.thaiwatsadu.com URLs (if not Next.js wrapped)
+        # Pattern 4: Direct pim.thaiwatsadu.com URLs (if not Next.js wrapped)
         if not images:
             direct_pattern = r'src="(https://pim\.thaiwatsadu\.com[^"]+)"'
             matches = re.findall(direct_pattern, html_content, re.IGNORECASE)
             for match in matches[:10]:
-                if match not in images:
+                # Filter out badge images
+                if '/badge/' not in match.lower() and match not in images:
                     images.append(match)
 
         return images[:10]  # Limit to 10 images

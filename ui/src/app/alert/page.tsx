@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { apiFetch } from '@/lib/api';
-import { Trash2, Plus, Bell, CheckCircle2 } from 'lucide-react';
+import { Trash2, Plus, Bell, CheckCircle2, Mail } from 'lucide-react';
 
 interface AlertSettings {
   setting_id: number;
@@ -30,7 +30,6 @@ export default function PriceChangePage() {
   const [newEmail, setNewEmail] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSendingTest, setIsSendingTest] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [emailError, setEmailError] = useState('');
@@ -166,73 +165,6 @@ export default function PriceChangePage() {
     }
   };
 
-  const handleSendTest = async () => {
-    if (emails.length === 0) {
-      setError('Please add at least one email address first');
-      return;
-    }
-
-    const testEmail = emails[0].email;
-
-    setIsSendingTest(true);
-    setError('');
-    setSuccess('');
-
-    try {
-      const response = await apiFetch('/api/price-alerts/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: testEmail }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || 'Failed to send test email');
-      }
-
-      setSuccess(`Test email sent to ${testEmail}! Check your inbox.`);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsSendingTest(false);
-    }
-  };
-
-  const calculateNextAlert = () => {
-    if (!settings || !settings.enabled) {
-      return 'Alerts disabled';
-    }
-
-    const { schedule_frequency, schedule_time, schedule_day, last_alert_sent_at } = settings;
-
-    if (!last_alert_sent_at) {
-      return 'Next check (never sent before)';
-    }
-
-    const now = new Date();
-    const lastSent = new Date(last_alert_sent_at);
-
-    if (schedule_frequency === 'immediate') {
-      const nextTime = new Date(lastSent.getTime() + 60000); // +1 minute
-      return nextTime.toLocaleString();
-    } else if (schedule_frequency === 'hourly') {
-      const nextTime = new Date(lastSent.getTime() + 3600000); // +1 hour
-      return nextTime.toLocaleString();
-    } else if (schedule_frequency === 'daily') {
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const [hours, minutes] = schedule_time.split(':');
-      tomorrow.setHours(parseInt(hours), parseInt(minutes), 0, 0);
-      return tomorrow.toLocaleString();
-    } else if (schedule_frequency === 'weekly' && schedule_day !== null) {
-      const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-      const [hours, minutes] = schedule_time.split(':');
-      return `Every ${daysOfWeek[schedule_day]} at ${hours}:${minutes}`;
-    }
-
-    return 'Unknown';
-  };
-
   if (isLoading) {
     return (
       <MainLayout>
@@ -245,11 +177,10 @@ export default function PriceChangePage() {
 
   return (
     <MainLayout>
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-6 w-full">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
-            <Bell className="w-8 h-8 text-cyan-500" />
             <h1 className="text-3xl font-bold text-gray-900">Price Change Alerts</h1>
           </div>
           <p className="text-gray-600">
@@ -270,14 +201,13 @@ export default function PriceChangePage() {
             {success}
           </div>
         )}
-
+        
         <div className="space-y-8">
           {/* Schedule Section */}
-          <section className="bg-white rounded-lg shadow-md p-6">
+          {/* <section className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Alert Schedule</h2>
 
             <div className="space-y-4">
-              {/* Frequency Selector */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Alert Frequency
@@ -294,7 +224,6 @@ export default function PriceChangePage() {
                 </select>
               </div>
 
-              {/* Time Picker for Daily/Weekly */}
               {settings && (settings.schedule_frequency === 'daily' || settings.schedule_frequency === 'weekly') && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -309,7 +238,6 @@ export default function PriceChangePage() {
                 </div>
               )}
 
-              {/* Day Picker for Weekly */}
               {settings && settings.schedule_frequency === 'weekly' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -331,7 +259,6 @@ export default function PriceChangePage() {
                 </div>
               )}
 
-              {/* Enable/Disable Toggle */}
               <div className="flex items-center gap-3">
                 <input
                   type="checkbox"
@@ -345,7 +272,6 @@ export default function PriceChangePage() {
                 </label>
               </div>
 
-              {/* Save Button */}
               <div className="pt-2">
                 <button
                   onClick={handleSaveSettings}
@@ -356,59 +282,24 @@ export default function PriceChangePage() {
                 </button>
               </div>
             </div>
-          </section>
+          </section> */}
 
           {/* Email List Section */}
           <section className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Email Recipients</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Add email addresses to receive price change alerts. All addresses will receive the same notifications.
+            <div className="flex items-center gap-2 mb-2">
+              <Mail className="w-5 h-5 text-gray-700" />
+              <h2 className="text-xl font-bold text-gray-900">Email Recipients</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              List of email addresses that will receive price change notifications
             </p>
 
-            {/* Email List */}
-            <div className="space-y-2 mb-4">
-              {emails.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  No email addresses added yet. Add one below to get started.
-                </div>
-              ) : (
-                emails.map((email) => (
-                  <div
-                    key={email.email_id}
-                    className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center">
-                        <Bell className="w-5 h-5 text-cyan-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{email.email}</p>
-                        <p className="text-sm text-gray-500">
-                          Added {new Date(email.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => handleRemoveEmail(email.email_id)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                      title="Remove email"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-
             {/* Add Email Form */}
-            <div className="border-t border-gray-200 pt-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Add Email Address
-              </label>
+            <div className="mb-6">
               <div className="flex gap-2">
                 <input
                   type="email"
-                  placeholder="Enter email address"
+                  placeholder="Add new email..."
                   value={newEmail}
                   onChange={(e) => {
                     setNewEmail(e.target.value);
@@ -436,54 +327,42 @@ export default function PriceChangePage() {
               )}
             </div>
 
-            {/* Test Email Button */}
-            <div className="border-t border-gray-200 pt-4 mt-4">
-              <button
-                onClick={handleSendTest}
-                disabled={isSendingTest || emails.length === 0}
-                className="px-6 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-              >
-                {isSendingTest ? 'Sending...' : 'Send Test Email'}
-              </button>
-              {emails.length > 0 && (
-                <p className="mt-2 text-sm text-gray-500">
-                  Test email will be sent to: {emails[0].email}
-                </p>
+            {/* Email List */}
+            <div className="space-y-3 mb-6">
+              {emails.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No email addresses added yet. Add one above to get started.
+                </div>
+              ) : (
+                emails.map((email) => (
+                  <div
+                    key={email.email_id}
+                    className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Mail className="w-5 h-5 text-gray-500" />
+                      <span className="text-gray-900">{email.email}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleRemoveEmail(email.email_id)}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Remove email"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
-          </section>
 
-          {/* Status Section */}
-          <section className="bg-gradient-to-r from-cyan-50 to-blue-50 rounded-lg border border-cyan-200 p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Alert Status</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Last Alert Sent</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {settings?.last_alert_sent_at
-                    ? new Date(settings.last_alert_sent_at).toLocaleString()
-                    : 'Never'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Next Alert</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {calculateNextAlert()}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Recipients</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {emails.length} {emails.length === 1 ? 'email' : 'emails'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Status</p>
-                <p className={`text-lg font-semibold ${settings?.enabled ? 'text-green-600' : 'text-gray-500'}`}>
-                  {settings?.enabled ? '✓ Enabled' : '○ Disabled'}
-                </p>
-              </div>
-            </div>
+            {/* Total count */}
+            {emails.length > 0 && (
+              <p className="text-sm text-gray-600">
+                Total: {emails.length} {emails.length === 1 ? 'email' : 'emails'}
+              </p>
+            )}
           </section>
         </div>
       </div>

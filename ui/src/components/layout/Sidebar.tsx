@@ -50,11 +50,11 @@ const menuItems = [
     label: 'Watchlist',
     icon: ListChecks,
   },
-  // {
-  //   href: '/price-change',
-  //   label: 'Price Alerts',
-  //   icon: Bell,
-  // },
+  {
+    href: '/alert',
+    label: 'Price Alerts',
+    icon: Bell,
+  },
   // {
   //   href: '/comparison',
   //   label: 'Comparison',

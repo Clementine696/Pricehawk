@@ -53,17 +53,19 @@ class EmailService:
         Returns:
             Dict with 'success' (bool), 'sent_count' (int), 'failed' (list of emails)
         """
-        if not products and not status_changes:
-            logger.info("No products or status changes to send in alert email")
-            return {'success': True, 'sent_count': 0, 'failed': []}
-
         if not to_emails:
             logger.warning("No recipient emails provided")
             return {'success': False, 'sent_count': 0, 'failed': []}
 
         # Build email content
         total_changes = len(products) + len(status_changes)
-        subject = f"Price Alert: {total_changes} Changes Detected"
+
+        if total_changes == 0:
+            subject = "Price Alert: No Changes Today"
+            logger.info("No products or status changes - sending 'No changes' notification")
+        else:
+            subject = f"Price Alert: {total_changes} Changes Detected"
+
         html_body = self._build_html_email(products, status_changes, period_start, period_end)
         plain_body = self._build_plain_text_email(products, status_changes, period_start, period_end)
 
@@ -203,6 +205,26 @@ class EmailService:
                             {more_footer}
             """
 
+        # Build "No Changes" section if no products and no status changes
+        no_changes_section = ""
+        if not products and not status_changes:
+            no_changes_section = f"""
+                            <!-- No Changes Section -->
+                            <tr>
+                                <td style="padding: 40px 20px; background-color: #ffffff; text-align: center;">
+                                    <div style="background-color: #f0f9ff; padding: 30px; border-radius: 8px; border: 2px solid #06b6d4;">
+                                        <h2 style="margin: 0 0 15px; font-size: 24px; color: #0891b2;">
+                                            ✅ No Product Changes Today
+                                        </h2>
+                                        <p style="margin: 0; font-size: 16px; color: #374151; line-height: 1.6;">
+                                            All monitored products maintained their prices during this period.<br>
+                                            We'll continue monitoring and notify you of any changes.
+                                        </p>
+                                    </div>
+                                </td>
+                            </tr>
+            """
+
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -240,6 +262,7 @@ class EmailService:
                             <!-- Status Changes and Price Changes -->
                             {status_section}
                             {price_section}
+                            {no_changes_section}
 
                             <!-- Footer -->
                             <tr>
@@ -561,6 +584,17 @@ Period: {start_str} → {end_str}
             if more_count > 0:
                 text += f"... and {more_count} more products\n\n"
 
+        # No changes section
+        if not products and not status_changes:
+            text += """
+✅ NO PRODUCT CHANGES TODAY
+===========================
+
+All monitored products maintained their prices during this period.
+We'll continue monitoring and notify you of any changes.
+
+"""
+
         text += """
 --
 This is an automated alert from PriceHawk
@@ -587,14 +621,6 @@ View all products on your dashboard
                 <p style="font-size: 16px; color: #374151; line-height: 1.6; margin: 0 0 20px;">
                     If you received this email, your SMTP configuration is set up correctly and price change alerts will be delivered successfully.
                 </p>
-                <div style="background-color: #f9fafb; padding: 20px; border-radius: 6px; border-left: 4px solid #06b6d4;">
-                    <p style="margin: 0; font-size: 14px; color: #6b7280;">
-                        <strong>Next steps:</strong><br>
-                        1. Add email addresses to your alert list<br>
-                        2. Configure your preferred alert schedule<br>
-                        3. Enable alerts in the settings
-                    </p>
-                </div>
                 <p style="margin: 30px 0 0; font-size: 12px; color: #9ca3af; text-align: center;">
                     PriceHawk - Price Monitoring System
                 </p>

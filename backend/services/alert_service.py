@@ -343,9 +343,18 @@ class AlertService:
 
         Returns:
             True if alert should be sent now, False otherwise
+
+        Note:
+            - Database stores schedule_time in Bangkok time (UTC+7)
+            - Railway server runs in UTC
+            - This method converts Bangkok time to UTC for comparison
         """
         frequency = settings.get('schedule_frequency')
-        now = datetime.now()
+        # Get current time in UTC (Railway server time)
+        now = datetime.utcnow()
+
+        # Bangkok timezone offset (UTC+7)
+        BANGKOK_OFFSET_HOURS = 7
 
         # If never sent, send immediately
         if not last_sent:
@@ -365,7 +374,7 @@ class AlertService:
         elif frequency == 'daily':
             # Send if:
             # 1. At least 20 hours have passed (prevents duplicate sends)
-            # 2. Current time is past scheduled time
+            # 2. Current time is past scheduled time (converted from Bangkok to UTC)
             # 3. Either it's a different day, or we haven't sent today
             if time_since_last < timedelta(hours=20):
                 return False
@@ -379,13 +388,18 @@ class AlertService:
                 hour, minute, second = schedule_time.split(':')
                 schedule_time = datetime_time(int(hour), int(minute), int(second))
 
-            current_time = now.time()
+            # Convert Bangkok schedule time to UTC
+            # Example: 09:00 Bangkok = 02:00 UTC
+            schedule_hour_utc = (schedule_time.hour - BANGKOK_OFFSET_HOURS) % 24
+            schedule_time_utc = datetime_time(schedule_hour_utc, schedule_time.minute, schedule_time.second)
 
-            # Check if we're past the scheduled time
-            if current_time < schedule_time:
+            current_time_utc = now.time()
+
+            # Check if we're past the scheduled time (in UTC)
+            if current_time_utc < schedule_time_utc:
                 return False
 
-            # Check if we already sent today
+            # Check if we already sent today (in UTC)
             if last_sent.date() == now.date():
                 return False
 
@@ -395,7 +409,7 @@ class AlertService:
             # Send if:
             # 1. At least 6 days have passed (prevents duplicate sends)
             # 2. Current day matches scheduled day
-            # 3. Current time is past scheduled time
+            # 3. Current time is past scheduled time (converted from Bangkok to UTC)
             # 4. We haven't sent this week on this day
             if time_since_last < timedelta(days=6):
                 return False
@@ -411,13 +425,17 @@ class AlertService:
                 hour, minute, second = schedule_time.split(':')
                 schedule_time = datetime_time(int(hour), int(minute), int(second))
 
+            # Convert Bangkok schedule time to UTC
+            schedule_hour_utc = (schedule_time.hour - BANGKOK_OFFSET_HOURS) % 24
+            schedule_time_utc = datetime_time(schedule_hour_utc, schedule_time.minute, schedule_time.second)
+
             # Check if today is the scheduled day (0=Monday)
             if now.weekday() != schedule_day:
                 return False
 
-            # Check if we're past the scheduled time
-            current_time = now.time()
-            if current_time < schedule_time:
+            # Check if we're past the scheduled time (in UTC)
+            current_time_utc = now.time()
+            if current_time_utc < schedule_time_utc:
                 return False
 
             # Check if we already sent this week on this day
@@ -484,13 +502,16 @@ class AlertService:
             last_sent: Last alert timestamp
 
         Returns:
-            Human-readable string of next alert time
+            Human-readable string of next alert time (in Bangkok time for display)
         """
         if not settings.get('enabled'):
             return "Alerts disabled"
 
         frequency = settings.get('schedule_frequency')
-        now = datetime.now()
+        now = datetime.utcnow()
+
+        # Bangkok timezone offset (UTC+7)
+        BANGKOK_OFFSET_HOURS = 7
 
         if not last_sent:
             return "Next check (never sent before)"
@@ -508,15 +529,22 @@ class AlertService:
             if not schedule_time:
                 return "No schedule time set"
 
-            # Convert to datetime.time if string
+            # Convert to datetime.time if string (this is Bangkok time from DB)
             if isinstance(schedule_time, str):
                 hour, minute, second = schedule_time.split(':')
                 schedule_time = datetime_time(int(hour), int(minute), int(second))
 
-            # Next occurrence is tomorrow at scheduled time
+            # Convert to UTC for calculation
+            schedule_hour_utc = (schedule_time.hour - BANGKOK_OFFSET_HOURS) % 24
+            schedule_time_utc = datetime_time(schedule_hour_utc, schedule_time.minute, schedule_time.second)
+
+            # Next occurrence is tomorrow at scheduled time (UTC)
             next_date = (now + timedelta(days=1)).date()
-            next_time = datetime.combine(next_date, schedule_time)
-            return next_time.strftime('%Y-%m-%d %H:%M:%S')
+            next_time_utc = datetime.combine(next_date, schedule_time_utc)
+
+            # Convert back to Bangkok time for display
+            next_time_bangkok = next_time_utc + timedelta(hours=BANGKOK_OFFSET_HOURS)
+            return next_time_bangkok.strftime('%Y-%m-%d %H:%M:%S')
 
         elif frequency == 'weekly':
             schedule_day = settings.get('schedule_day')
@@ -525,10 +553,14 @@ class AlertService:
             if schedule_day is None or not schedule_time:
                 return "Schedule not configured"
 
-            # Convert to datetime.time if string
+            # Convert to datetime.time if string (this is Bangkok time from DB)
             if isinstance(schedule_time, str):
                 hour, minute, second = schedule_time.split(':')
                 schedule_time = datetime_time(int(hour), int(minute), int(second))
+
+            # Convert to UTC for calculation
+            schedule_hour_utc = (schedule_time.hour - BANGKOK_OFFSET_HOURS) % 24
+            schedule_time_utc = datetime_time(schedule_hour_utc, schedule_time.minute, schedule_time.second)
 
             # Find next occurrence of scheduled day
             days_ahead = schedule_day - now.weekday()
@@ -536,7 +568,10 @@ class AlertService:
                 days_ahead += 7
 
             next_date = now.date() + timedelta(days=days_ahead)
-            next_time = datetime.combine(next_date, schedule_time)
-            return next_time.strftime('%Y-%m-%d %H:%M:%S')
+            next_time_utc = datetime.combine(next_date, schedule_time_utc)
+
+            # Convert back to Bangkok time for display
+            next_time_bangkok = next_time_utc + timedelta(hours=BANGKOK_OFFSET_HOURS)
+            return next_time_bangkok.strftime('%Y-%m-%d %H:%M:%S')
 
         return "Unknown"

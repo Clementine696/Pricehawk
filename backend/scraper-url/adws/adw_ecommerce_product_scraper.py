@@ -382,7 +382,7 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
                     
                     # Re-scrape the page
                     print(f"[SCRAPER] RETRY: Re-scraping page (attempt {extraction_attempt + 1})...", flush=True, file=sys.stderr)
-                    result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+                    result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for, gbh_location=gbh_location)
                     
                     if result.success and result.html:
                         print(f"[SCRAPER] RETRY: Scrape successful, HTML length: {len(result.html)}", flush=True, file=sys.stderr)

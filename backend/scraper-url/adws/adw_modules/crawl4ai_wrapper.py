@@ -594,7 +594,8 @@ class Crawl4AIWrapper:
         url: str,
         extraction_strategy: Optional[Any] = None,
         wait_for: Optional[str] = None,
-        css_selector: Optional[str] = None
+        css_selector: Optional[str] = None,
+        gbh_location: Optional[str] = None
     ) -> ScrapingResult:
         """Scrape a single URL.
 
@@ -603,6 +604,7 @@ class Crawl4AIWrapper:
             extraction_strategy: Optional extraction strategy
             wait_for: Optional JavaScript condition to wait for
             css_selector: Optional CSS selector to wait for
+            gbh_location: Optional GlobalHouse location name for price by location (e.g., 'นครปฐม')
 
         Returns:
             ScrapingResult with scraped data
@@ -775,6 +777,181 @@ class Crawl4AIWrapper:
         }
                     """
 
+                # GlobalHouse location selection (if gbh_location is provided)
+                if gbh_location and "globalhouse.co.th" in url.lower():
+                    logger.info(f"GlobalHouse: Selecting location '{gbh_location}'")
+                    # Prepend location selection JavaScript BEFORE scroll code
+                    location_selection_js = f"""
+(async () => {{
+    try {{
+        // GlobalHouse location selection automation
+        const locationName = "{gbh_location}";
+
+        // Helper to add visible logging to page
+        const log = (msg, isError = false) => {{
+            const prefix = isError ? '[LOCATION ERROR]' : '[LOCATION]';
+            console.log(prefix, msg);
+            // Also add to page body for visibility
+            const logDiv = document.createElement('div');
+            logDiv.textContent = `${{prefix}} ${{msg}}`;
+            logDiv.style.cssText = isError ? 'color: red; font-weight: bold;' : 'color: green;';
+            document.body.appendChild(logDiv);
+        }};
+
+        log(`Starting location selection for: ${{locationName}}`);
+
+        // Step 1: Find and click navbar location button
+        log('Step 1: Waiting 5s for page load...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    log('Searching for location button...');
+    const navbarButtons = Array.from(document.querySelectorAll('button'));
+    log(`Found ${{navbarButtons.length}} buttons total`);
+
+    const locationButton = navbarButtons.find(btn =>
+        btn.textContent && btn.textContent.includes('กำลังช็อปที่')
+    );
+
+    if (!locationButton) {{
+        log('Location button with "กำลังช็อปที่" not found!', true);
+        // Try alternative text patterns
+        const altButton = navbarButtons.find(btn =>
+            btn.textContent && (
+                btn.textContent.includes('ช็อปที่') ||
+                btn.textContent.includes('สาขา') ||
+                btn.textContent.includes('เลือกสาขา')
+            )
+        );
+        if (altButton) {{
+            log(`Found alternative button with text: ${{altButton.textContent.substring(0, 50)}}`);
+            altButton.click();
+        }} else {{
+            log('No location/branch button found at all!', true);
+            log(`Button texts (first 5): ${{navbarButtons.slice(0, 5).map(b => b.textContent?.substring(0, 30)).join(' | ')}}`, true);
+            return 'ERROR: Location button not found';
+        }}
+    }} else {{
+        log('Found location button, clicking...');
+        locationButton.click();
+    }}
+
+    log('Step 2: Waiting 2s for modal to open...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Step 2: Find and use search input
+    const searchInput = document.querySelector('input[placeholder*="ค้นหาด้วยรหัสไปรษณีย์"]');
+    if (!searchInput) {{
+        log('Search input not found!', true);
+        return 'ERROR: Search input not found';
+    }}
+
+    log(`Found search input, typing: ${{locationName}}`);
+    searchInput.focus();
+    searchInput.value = locationName;
+    searchInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    searchInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+    log('Step 3: Waiting 1.5s for search results...');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // Step 3: Find and click location radio button
+    const labels = Array.from(document.querySelectorAll('label[for]'));
+    const matchingLabel = labels.find(label =>
+        label.textContent &&
+        label.textContent.includes(locationName) &&
+        label.textContent.includes('สาขา')
+    );
+
+    if (!matchingLabel) {{
+        log(`Location label not found for: ${{locationName}}`, true);
+        log(`Found labels: ${{labels.length}}`, true);
+        return 'ERROR: Location label not found';
+    }}
+
+    const radioId = matchingLabel.getAttribute('for');
+    const radioButton = document.getElementById(radioId);
+
+    if (!radioButton) {{
+        log(`Radio button not found for ID: ${{radioId}}`, true);
+        return 'ERROR: Radio button not found';
+    }}
+
+    log(`Found location radio (ID: ${{radioId}}), clicking...`);
+    radioButton.click();
+
+    log('Step 4: Waiting 1.5s after selection...');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // Step 4: Find and click confirm button
+    const confirmButtons = Array.from(document.querySelectorAll('button'));
+    const confirmButton = confirmButtons.find(btn =>
+        btn.textContent && btn.textContent.includes('เลือกช้อปที่สาขานี้')
+    );
+
+    if (!confirmButton) {{
+        log('Confirm button not found!', true);
+        return 'ERROR: Confirm button not found';
+    }}
+
+    log('Found confirm button, clicking...');
+    confirmButton.click();
+
+    log('Step 5: Waiting 3s for modal to close...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    log('Step 6: Waiting for price element to update...');
+    // Wait up to 30 seconds for price to appear
+    let priceFound = false;
+    for (let i = 0; i < 60; i++) {{
+        // Check for any element with Thai Baht symbol and numbers
+        const bodyText = document.body.innerText || '';
+        const priceMatch = bodyText.match(/฿\s*[\d,]+/);
+
+        if (priceMatch) {{
+            log(`Price found in page: ${{priceMatch[0]}}`);
+            priceFound = true;
+            break;
+        }}
+
+        // Also check for price in any span
+        const allSpans = Array.from(document.querySelectorAll('span'));
+        const priceSpan = allSpans.find(el =>
+            el.textContent && el.textContent.match(/[\d,]{{2,}}/) && el.textContent.length < 20
+        );
+
+        if (priceSpan) {{
+            log(`Price span found: ${{priceSpan.textContent}}`);
+            priceFound = true;
+            break;
+        }}
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }}
+
+    if (!priceFound) {{
+        log('Price not found after 30s!', true);
+        log(`Current page text length: ${{document.body.innerText.length}}`, true);
+        return 'ERROR: Price not found';
+    }}
+
+        log('SUCCESS: Location selection complete, price element verified!');
+        return 'SUCCESS';
+    }} catch (error) {{
+        const log = (msg) => {{
+            const logDiv = document.createElement('div');
+            logDiv.textContent = '[LOCATION ERROR] ' + msg;
+            logDiv.style.cssText = 'color: red; font-weight: bold;';
+            document.body.appendChild(logDiv);
+        }};
+        log(`JavaScript error: ${{error.message}}`);
+        log(`Error stack: ${{error.stack}}`);
+        return 'ERROR: ' + error.message;
+    }}
+}})();
+"""
+                    # Execute location selection first, then scroll code
+                    js_scroll_code = location_selection_js + "\n" + js_scroll_code
+
                 # Perform the crawl using CrawlerRunConfig if available (v0.7.x+)
                 if CrawlerRunConfig is not None and self.config.use_browser:
                     # Log config for debugging
@@ -925,8 +1102,10 @@ class Crawl4AIWrapper:
                     logger.warning(f"Failed to scrape {url}: {error_msg}")
 
             except Exception as e:
-                result.error_message = f"Scraping error: {str(e)}"
-                logger.error(f"Error scraping {url} (attempt {attempt + 1}): {e}")
+                # Handle Unicode encoding errors in exception messages
+                error_str = str(e).encode('ascii', 'replace').decode('ascii')
+                result.error_message = f"Scraping error: {error_str}"
+                logger.error(f"Error scraping {url} (attempt {attempt + 1}): {error_str}")
 
                 # Check if this is a browser closure error
                 if self._is_browser_closed_error(e):

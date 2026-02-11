@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header, Request, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import bcrypt
@@ -3927,6 +3927,313 @@ def send_test_alert(
         raise HTTPException(status_code=500, detail="Failed to send test email. Check SMTP configuration.")
 
     return {"success": True, "message": f"Test email sent to {email}"}
+
+
+# ========================================
+# LOCATION PRICING ENDPOINTS
+# ========================================
+
+@app.get("/api/locations")
+def get_locations(
+    retailer_id: str = Query(None, description="Filter by retailer (e.g., 'gbh')"),
+    user: dict = Depends(get_current_user)
+):
+    """Get all locations, optionally filtered by retailer"""
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        if retailer_id:
+            cursor.execute("""
+                SELECT location_id, location_code, name_th, name_en,
+                       province_th, province_en, retailer_id
+                FROM locations
+                WHERE retailer_id = %s
+                ORDER BY province_th, name_th
+            """, (retailer_id,))
+        else:
+            cursor.execute("""
+                SELECT location_id, location_code, name_th, name_en,
+                       province_th, province_en, retailer_id
+                FROM locations
+                ORDER BY province_th, name_th
+            """)
+
+        locations = cursor.fetchall()
+        return [dict(row) for row in locations]
+
+
+@app.get("/api/location-watch/available-groups")
+def get_available_groups(user: dict = Depends(get_current_user)):
+    """Get all S-dept groups that have matched products"""
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                pgs.group_id,
+                pgs.sdept,
+                pgs.description,
+                COUNT(DISTINCT pm.product_id) as product_count
+            FROM product_groups_sdept pgs
+            LEFT JOIN product_matches pm ON pgs.sdept = pm.sdept
+            WHERE pm.match_confidence >= 0.5
+            GROUP BY pgs.group_id, pgs.sdept, pgs.description
+            HAVING COUNT(DISTINCT pm.product_id) > 0
+            ORDER BY pgs.sdept
+        """)
+
+        groups = cursor.fetchall()
+        return [dict(row) for row in groups]
+
+
+@app.get("/api/location-watch/monitored-groups")
+def get_monitored_groups(user: dict = Depends(get_current_user)):
+    """Get currently monitored groups"""
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT lmg.group_id, pgs.sdept, pgs.description
+            FROM location_monitored_groups lmg
+            JOIN product_groups_sdept pgs ON lmg.group_id = pgs.group_id
+            ORDER BY pgs.sdept
+        """)
+
+        groups = cursor.fetchall()
+        return [dict(row) for row in groups]
+
+
+@app.post("/api/location-watch/monitored-groups")
+def set_monitored_groups(
+    data: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Set which groups to monitor"""
+    group_ids = data.get('group_ids', [])
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        try:
+            # Clear existing
+            cursor.execute("DELETE FROM location_monitored_groups")
+
+            # Insert new
+            if group_ids:
+                cursor.executemany(
+                    "INSERT INTO location_monitored_groups (group_id) VALUES (%s)",
+                    [(gid,) for gid in group_ids]
+                )
+
+            conn.commit()
+            return {"success": True, "count": len(group_ids)}
+
+        except Exception as e:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/location-watch/monitored-locations")
+def get_monitored_locations(user: dict = Depends(get_current_user)):
+    """Get currently monitored locations"""
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT lml.location_id, l.location_code, l.name_th, l.name_en,
+                   l.province_th, l.province_en
+            FROM location_monitored_locations lml
+            JOIN locations l ON lml.location_id = l.location_id
+            ORDER BY l.province_th, l.name_th
+        """)
+
+        locations = cursor.fetchall()
+        return [dict(row) for row in locations]
+
+
+@app.post("/api/location-watch/monitored-locations")
+def set_monitored_locations(
+    data: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Set which locations to monitor"""
+    location_ids = data.get('location_ids', [])
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        try:
+            # Clear existing
+            cursor.execute("DELETE FROM location_monitored_locations")
+
+            # Insert new
+            if location_ids:
+                cursor.executemany(
+                    "INSERT INTO location_monitored_locations (location_id) VALUES (%s)",
+                    [(lid,) for lid in location_ids]
+                )
+
+            conn.commit()
+            return {"success": True, "count": len(location_ids)}
+
+        except Exception as e:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/location-prices")
+def get_location_prices(
+    group_id: int = Query(None, description="Filter by group ID"),
+    location_id: int = Query(None, description="Filter by location ID"),
+    user: dict = Depends(get_current_user)
+):
+    """Get location-based prices"""
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        query = """
+            SELECT
+                pm.twd_sku,
+                p_twd.name as twd_name,
+                pm.gbh_sku,
+                p_gbh.name as gbh_name,
+                p_gbh.url as gbh_url,
+                plp.location_id,
+                l.name_th as location_name_th,
+                l.name_en as location_name_en,
+                plp.price,
+                plp.scraped_at,
+                pgs.group_id,
+                pgs.sdept
+            FROM product_location_prices plp
+            JOIN locations l ON plp.location_id = l.location_id
+            JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+            JOIN product_matches pm ON p_gbh.sku = pm.gbh_sku
+            JOIN products p_twd ON pm.twd_sku = p_twd.sku
+            JOIN product_groups_sdept pgs ON pm.sdept = pgs.sdept
+            WHERE pm.match_confidence >= 0.5
+        """
+
+        params = []
+        if group_id:
+            query += " AND pgs.group_id = %s"
+            params.append(group_id)
+        if location_id:
+            query += " AND plp.location_id = %s"
+            params.append(location_id)
+
+        query += " ORDER BY pm.twd_sku, l.name_en"
+
+        cursor.execute(query, params)
+        prices = cursor.fetchall()
+
+        # Convert to list of dicts and format dates
+        result = []
+        for row in prices:
+            data = dict(row)
+            if 'scraped_at' in data and data['scraped_at']:
+                data['scraped_at'] = data['scraped_at'].isoformat()
+            result.append(data)
+
+        return result
+
+
+@app.get("/api/location-prices/export")
+def export_location_prices(user: dict = Depends(get_current_user)):
+    """Export location prices to Excel"""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from fastapi.responses import StreamingResponse
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                pm.twd_sku,
+                p_twd.name as twd_name,
+                pm.gbh_sku,
+                p_gbh.name as gbh_name,
+                pgs.sdept,
+                l.name_en as location,
+                plp.price,
+                plp.scraped_at
+            FROM product_location_prices plp
+            JOIN locations l ON plp.location_id = l.location_id
+            JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+            JOIN product_matches pm ON p_gbh.sku = pm.gbh_sku
+            JOIN products p_twd ON pm.twd_sku = p_twd.sku
+            JOIN product_groups_sdept pgs ON pm.sdept = pgs.sdept
+            WHERE pm.match_confidence >= 0.5
+            ORDER BY pm.twd_sku, l.name_en
+        """)
+
+        data = cursor.fetchall()
+
+        # Create Excel workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Location Prices"
+
+        # Headers
+        headers = ['TWD SKU', 'TWD Name', 'GBH SKU', 'GBH Name', 'Group', 'Location', 'Price', 'Scraped At']
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Data rows
+        for row_idx, row_data in enumerate(data, 2):
+            ws.cell(row=row_idx, column=1, value=row_data['twd_sku'])
+            ws.cell(row=row_idx, column=2, value=row_data['twd_name'])
+            ws.cell(row=row_idx, column=3, value=row_data['gbh_sku'])
+            ws.cell(row=row_idx, column=4, value=row_data['gbh_name'])
+            ws.cell(row=row_idx, column=5, value=row_data['sdept'])
+            ws.cell(row=row_idx, column=6, value=row_data['location'])
+            ws.cell(row=row_idx, column=7, value=row_data['price'])
+            ws.cell(row=row_idx, column=8, value=row_data['scraped_at'].strftime('%Y-%m-%d %H:%M:%S') if row_data['scraped_at'] else '')
+
+        # Auto-size columns
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column].width = adjusted_width
+
+        # Save to bytes
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=location_prices.xlsx"}
+        )
+
+
 
 
 if __name__ == "__main__":

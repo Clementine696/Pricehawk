@@ -98,18 +98,7 @@ class AlertService:
             status_changes = await self.get_status_changes()
             logger.info(f"Found {len(status_changes)} products with status changes")
 
-            if not products and not status_changes:
-                logger.info("No price or status changes detected")
-                # Update last_alert_sent_at even if no changes (to prevent checking old data repeatedly)
-                await self.update_last_alert_sent(period_end)
-                return {
-                    'should_send': True,
-                    'alerts_sent': 0,
-                    'products_count': 0,
-                    'reason': 'No changes'
-                }
-
-            # Send emails
+            # Send emails (even if no changes - send "No changes today" notification)
             email_result = self.email_service.send_price_alert_email(
                 to_emails=emails,
                 products=products,

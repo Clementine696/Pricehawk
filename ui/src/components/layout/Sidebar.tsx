@@ -51,7 +51,7 @@ const menuItems = [
     icon: ListChecks,
   },
   {
-    href: '/price-change',
+    href: '/alert',
     label: 'Price Alerts',
     icon: Bell,
   },

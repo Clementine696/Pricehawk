@@ -10,8 +10,13 @@ import smtplib
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from typing import List, Dict, Optional
 from datetime import datetime
+from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill, Font, Alignment
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +74,22 @@ class EmailService:
         html_body = self._build_html_email(products, status_changes, period_start, period_end)
         plain_body = self._build_plain_text_email(products, status_changes, period_start, period_end)
 
+        # Generate Excel attachments
+        attachments = []
+        if products:
+            price_excel = self._generate_price_excel(products)
+            attachments.append(('price_changes.xlsx', price_excel))
+        if status_changes:
+            status_excel = self._generate_status_excel(status_changes)
+            attachments.append(('status_changes.xlsx', status_excel))
+
         # Send to each recipient
         sent_count = 0
         failed = []
 
         for to_email in to_emails:
             try:
-                self._send_email(to_email, subject, html_body, plain_body)
+                self._send_email(to_email, subject, html_body, plain_body, attachments)
                 sent_count += 1
                 logger.info(f"Alert email sent successfully to {to_email}")
             except Exception as e:
@@ -116,7 +130,8 @@ class EmailService:
         to_email: str,
         subject: str,
         html_body: str,
-        plain_body: str
+        plain_body: str,
+        attachments: List[tuple] = None
     ) -> None:
         """
         Internal method to send email via SMTP
@@ -126,21 +141,35 @@ class EmailService:
             subject: Email subject
             html_body: HTML version of email
             plain_body: Plain text version of email
+            attachments: List of (filename, bytes_data) tuples
 
         Raises:
             Exception if email sending fails
         """
         # Create message
-        msg = MIMEMultipart('alternative')
+        msg = MIMEMultipart('mixed')
         msg['From'] = f"{self.from_name} <{self.from_email}>"
         msg['To'] = to_email
         msg['Subject'] = subject
 
+        # Create alternative part for text/html
+        msg_alternative = MIMEMultipart('alternative')
+        msg.attach(msg_alternative)
+
         # Attach both plain text and HTML versions
         part1 = MIMEText(plain_body, 'plain', 'utf-8')
         part2 = MIMEText(html_body, 'html', 'utf-8')
-        msg.attach(part1)
-        msg.attach(part2)
+        msg_alternative.attach(part1)
+        msg_alternative.attach(part2)
+
+        # Attach Excel files if provided
+        if attachments:
+            for filename, file_data in attachments:
+                part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                part.set_payload(file_data)
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition', f'attachment; filename={filename}')
+                msg.attach(part)
 
         # Send via SMTP
         with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
@@ -168,9 +197,9 @@ class EmailService:
         if status_changes:
             status_section = self._build_status_changes_section(status_changes)
 
-        # Limit to top 100 products (sorted by price change percentage)
+        # Limit to top 15 products (sorted by price change percentage)
         limited_products = self._limit_and_sort_products(products)
-        more_count = len(products) - len(limited_products) if len(products) > 100 else 0
+        more_count = len(products) - len(limited_products) if len(products) > 15 else 0
 
         # Build price change rows
         price_section = ""
@@ -184,8 +213,8 @@ class EmailService:
             if more_count > 0:
                 more_footer = f"""
                 <tr>
-                    <td colspan="3" style="padding: 20px; text-align: center; background-color: #f3f4f6; font-style: italic;">
-                        ... and {more_count} more products
+                    <td colspan="3" style="padding: 20px; text-align: center; background-color: #f3f4f6; font-style: italic; color: #6b7280;">
+                        ... and {more_count} more product{'s' if more_count > 1 else ''} (see attached Excel file for complete list)
                     </td>
                 </tr>
                 """
@@ -268,9 +297,9 @@ class EmailService:
                             <tr>
                                 <td style="padding: 30px 20px; text-align: center; background-color: #f9fafb; border-top: 1px solid #e5e7eb;">
                                     <p style="margin: 0 0 10px; font-size: 14px; color: #6b7280;">
-                                        View all products and detailed price history on your dashboard
+                                        View all products and detailed price history on product detail page
                                     </p>
-                                    <a href="{self.frontend_url}" style="display: inline-block; padding: 12px 24px; background-color: #06b6d4; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                                    <a href="{self.frontend_url}/products" style="display: inline-block; padding: 12px 24px; background-color: #06b6d4; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold;">
                                         Go to Dashboard
                                     </a>
                                     <p style="margin: 20px 0 0; font-size: 12px; color: #9ca3af;">
@@ -299,12 +328,22 @@ class EmailService:
         new_price = product.get('new_price', 0)
         image = product.get('image', '')
         twd_product_id = product.get('twd_product_id', '')
+        old_scraped_at = product.get('old_scraped_at')
+        new_scraped_at = product.get('new_scraped_at')
 
         # Get image URL or placeholder
         image_url = image if image else 'https://via.placeholder.com/80'
-        
+
         # Build product URL
         product_url = f"{self.frontend_url}/products/{twd_product_id}" if twd_product_id else "#"
+
+        # Format timestamps
+        old_time_str = ""
+        new_time_str = ""
+        if old_scraped_at:
+            old_time_str = old_scraped_at.strftime('%d.%m.%Y %H:%M')
+        if new_scraped_at:
+            new_time_str = new_scraped_at.strftime('%d.%m.%Y %H:%M')
 
         # Calculate price change
         price_diff = new_price - old_price
@@ -355,12 +394,14 @@ class EmailService:
                                 </a>
                             </div>
                         </td>
-                        <td style="width: 200px; text-align: right; vertical-align: top; padding-left: 20px;">
-                            <p style="margin: 0 0 4px; font-size: 12px; color: #9ca3af; text-decoration: line-through;">
-                                ฿{old_price:,.2f}
+                        <td style="width: 280px; text-align: right; vertical-align: top; padding-left: 20px;">
+                            <p style="margin: 0 0 6px; font-size: 11px; color: #9ca3af; line-height: 1.4;">
+                                {old_time_str} → {new_time_str}
                             </p>
-                            <p style="margin: 0 0 4px; font-size: 20px; font-weight: bold; color: #111827;">
-                                ฿{new_price:,.2f}
+                            <p style="margin: 0 0 8px; font-size: 20px; color: #111827; line-height: 1.4;">
+                                <span style="color: #9ca3af; font-weight: bold;">฿{old_price:,.2f}</span>
+                                <span style="margin: 0 6px; color: #9ca3af;">→</span>
+                                <span style="color: #111827; font-weight: bold;">฿{new_price:,.2f}</span>
                             </p>
                             <p style="margin: 0; font-size: 14px; font-weight: bold; color: {change_color};">
                                 {change_arrow} {change_text}
@@ -376,29 +417,33 @@ class EmailService:
 
     def _build_status_changes_section(self, status_changes: List[Dict]) -> str:
         """Build HTML section for status changes (products going active/inactive)"""
-        
+
         # Separate into inactive and active
         going_inactive = [p for p in status_changes if p['new_status'] == 'inactive']
         going_active = [p for p in status_changes if p['new_status'] == 'active']
-        
+
         section = """
                             <!-- Status Changes Header -->
                             <tr>
                                 <td style="padding: 20px 20px 10px; background-color: #ffffff;">
                                         <h2 style="margin: 0; font-size: 20px; color: #111827; border-bottom: 2px solid #06b6d4; padding-bottom: 10px;">
-                                            📦 Product Availability Changes ({total})
+                                            📦 Products Active Changes ({total})
                                         </h2>
                                 </td>
                             </tr>
         """.replace('{total}', str(len(status_changes)))
-        
+
         # Going inactive section
         if going_inactive:
+            # Limit to 15 products
+            limited_inactive = going_inactive[:15]
+            more_inactive_count = len(going_inactive) - len(limited_inactive)
+
             section += """
                             <tr>
                                 <td style="padding: 15px 20px 10px; background-color: #fef2f2;">
                                         <p style="margin: 0; font-size: 16px; font-weight: bold; color: #991b1b;">
-                                            ❌ Products Now Unavailable ({count})
+                                            ❌ Products Inactive ({count})
                                         </p>
                                         <p style="margin: 5px 0 0; font-size: 13px; color: #7f1d1d;">
                                             These products failed to fetch data and may be discontinued or out of stock
@@ -406,17 +451,31 @@ class EmailService:
                                 </td>
                             </tr>
             """.replace('{count}', str(len(going_inactive)))
-            
-            for product in going_inactive:
+
+            for product in limited_inactive:
                 section += self._build_status_change_row(product, 'inactive')
-        
+
+            # Add footer if there are more
+            if more_inactive_count > 0:
+                section += f"""
+                            <tr>
+                                <td style="padding: 10px 20px 20px; text-align: center; background-color: #fef2f2; font-style: italic; color: #991b1b;">
+                                    ... and {more_inactive_count} more inactive product{'s' if more_inactive_count > 1 else ''} (see attached Excel file)
+                                </td>
+                            </tr>
+                """
+
         # Going active section
         if going_active:
+            # Limit to 15 products
+            limited_active = going_active[:15]
+            more_active_count = len(going_active) - len(limited_active)
+
             section += """
                             <tr>
                                 <td style="padding: 15px 20px 10px; background-color: #f0fdf4;">
                                     <p style="margin: 0; font-size: 16px; font-weight: bold; color: #166534;">
-                                        ✅ Products Back in Stock ({count})
+                                        ✅ Products Active ({count})
                                     </p>
                                     <p style="margin: 5px 0 0; font-size: 13px; color: #14532d;">
                                         These products are now available again
@@ -424,10 +483,20 @@ class EmailService:
                                 </td>
                             </tr>
             """.replace('{count}', str(len(going_active)))
-            
-            for product in going_active:
+
+            for product in limited_active:
                 section += self._build_status_change_row(product, 'active')
-        
+
+            # Add footer if there are more
+            if more_active_count > 0:
+                section += f"""
+                            <tr>
+                                <td style="padding: 10px 20px 20px; text-align: center; background-color: #f0fdf4; font-style: italic; color: #166534;">
+                                    ... and {more_active_count} more active product{'s' if more_active_count > 1 else ''} (see attached Excel file)
+                                </td>
+                            </tr>
+                """
+
         return section
 
     def _build_status_change_row(self, product: Dict, status: str) -> str:
@@ -630,7 +699,7 @@ View all products on your dashboard
         """
         return html
 
-    def _limit_and_sort_products(self, products: List[Dict], limit: int = 100) -> List[Dict]:
+    def _limit_and_sort_products(self, products: List[Dict], limit: int = 15) -> List[Dict]:
         """
         Sort products by price drop percentage and limit to top N
 
@@ -656,3 +725,175 @@ View all products on your dashboard
 
         # Return top N
         return sorted_products[:limit]
+
+    def _generate_price_excel(self, products: List[Dict]) -> bytes:
+        """
+        Generate Excel file for price changes with the specified format
+
+        Columns: Product Name | SKU | Brand | Category | S-dept | Retail |
+                 Old Price | Updated at | Updated Price | Updated at
+
+        Args:
+            products: List of all products with price changes
+
+        Returns:
+            Excel file as bytes
+        """
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Price Changes"
+
+        # Define headers
+        headers = ['Product Name', 'SKU', 'Brand', 'Category', 'S-dept', 'Retail',
+                   'Old Price', 'Updated at', 'Updated Price', 'Updated at', 'URL']
+
+        # Write headers
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Define color fills
+        green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')  # Light green
+        red_fill = PatternFill(start_color='FFB6C1', end_color='FFB6C1', fill_type='solid')    # Light red
+
+        # Write product data
+        for row_num, product in enumerate(products, 2):
+            old_price = product.get('old_price', 0)
+            new_price = product.get('new_price', 0)
+
+            # Format timestamps
+            old_time = product.get('old_scraped_at')
+            new_time = product.get('new_scraped_at')
+            old_time_str = old_time.strftime('%d-%m-%Y %H:%M') if old_time else ''
+            new_time_str = new_time.strftime('%d-%m-%Y %H:%M') if new_time else ''
+
+            # Determine price change direction
+            price_increased = new_price > old_price
+
+            # Row data
+            row_data = [
+                product.get('name', ''),
+                product.get('sku', ''),
+                product.get('brand', ''),
+                product.get('category', ''),
+                product.get('watchlist_group', ''),
+                product.get('retailer_name', 'Thaiwatsadu'),
+                old_price,
+                old_time_str,
+                new_price,
+                new_time_str,
+                product.get('link', '')
+            ]
+
+            # Write row
+            for col_num, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_num, column=col_num, value=value)
+
+                # Apply color to price cells (columns 7 and 9)
+                if col_num == 7:  # Old Price
+                    cell.fill = red_fill if price_increased else green_fill
+                elif col_num == 9:  # Updated Price (New Price)
+                    cell.fill = green_fill if price_increased else red_fill
+
+        # Adjust column widths
+        ws.column_dimensions['A'].width = 40  # Product Name
+        ws.column_dimensions['B'].width = 15  # SKU
+        ws.column_dimensions['C'].width = 15  # Brand
+        ws.column_dimensions['D'].width = 20  # Category
+        ws.column_dimensions['E'].width = 20  # S-dept
+        ws.column_dimensions['F'].width = 15  # Retail
+        ws.column_dimensions['G'].width = 12  # Old Price
+        ws.column_dimensions['H'].width = 17  # Updated at
+        ws.column_dimensions['I'].width = 12  # Updated Price
+        ws.column_dimensions['J'].width = 17  # Updated at
+        ws.column_dimensions['K'].width = 50  # URL
+
+        # Save to bytes
+        excel_buffer = BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+
+        return excel_buffer.getvalue()
+
+    def _generate_status_excel(self, status_changes: List[Dict]) -> bytes:
+        """
+        Generate Excel file for status changes with the specified format
+
+        Columns: Product Name | SKU | Brand | Category | S-dept | Retail |
+                 New Status | Updated at
+
+        Args:
+            status_changes: List of all products with status changes
+
+        Returns:
+            Excel file as bytes
+        """
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Status Changes"
+
+        # Define headers
+        headers = ['Product Name', 'SKU', 'Brand', 'Category', 'S-dept', 'Retail',
+                   'New Status', 'Updated at', 'URL']
+
+        # Write headers
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Define color fills
+        green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')  # Active
+        red_fill = PatternFill(start_color='FFB6C1', end_color='FFB6C1', fill_type='solid')    # Inactive
+
+        # Write product data
+        for row_num, product in enumerate(status_changes, 2):
+            # Determine new status
+            new_status = product.get('new_status', '')
+            is_active = new_status.lower() == 'active'
+
+            # Format timestamp - use last_updated_at from product
+            updated_time = product.get('last_updated_at') or product.get('detected_at') or product.get('scraped_at')
+            updated_time_str = updated_time.strftime('%d-%m-%Y %H:%M') if updated_time else ''
+
+            # Row data
+            row_data = [
+                product.get('name', ''),
+                product.get('sku', ''),
+                product.get('brand', ''),
+                product.get('category', ''),
+                product.get('watchlist_group', ''),
+                product.get('retailer_name', 'Thaiwatsadu'),
+                new_status,
+                updated_time_str,
+                product.get('link', '')
+            ]
+
+            # Write row
+            for col_num, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_num, column=col_num, value=value)
+
+                # Apply color to status cell (column 7)
+                if col_num == 7:  # New Status
+                    cell.fill = green_fill if is_active else red_fill
+
+        # Adjust column widths
+        ws.column_dimensions['A'].width = 40  # Product Name
+        ws.column_dimensions['B'].width = 15  # SKU
+        ws.column_dimensions['C'].width = 15  # Brand
+        ws.column_dimensions['D'].width = 20  # Category
+        ws.column_dimensions['E'].width = 20  # S-dept
+        ws.column_dimensions['F'].width = 15  # Retail
+        ws.column_dimensions['G'].width = 15  # New Status
+        ws.column_dimensions['H'].width = 17  # Updated at
+        ws.column_dimensions['I'].width = 50  # URL
+
+        # Save to bytes
+        excel_buffer = BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+
+        return excel_buffer.getvalue()

@@ -65,7 +65,15 @@ def _env_bool(key: str, default: bool = False) -> bool:
 WRITE_LOG_FILE = _env_bool('UPDATER_WRITE_LOG', True)
 log_handlers = [logging.StreamHandler()]
 if WRITE_LOG_FILE:
-    log_handlers.append(logging.FileHandler(f'location_price_update_{datetime.now().strftime("%Y%m%d")}.log'))
+    log_handlers.append(logging.FileHandler(f'location_price_update_{datetime.now().strftime("%Y%m%d")}.log', encoding='utf-8'))
+
+# Configure stream handler with UTF-8 encoding for Windows
+if log_handlers[0].__class__.__name__ == 'StreamHandler':
+    import sys
+    if sys.platform == 'win32':
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'replace')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'replace')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -228,8 +236,7 @@ class LocationPriceUpdater:
                 cur.execute("""
                     SELECT DISTINCT
                         wsg.group_id,
-                        wsg.name,
-                        wsg.display_name
+                        wsg.name
                     FROM location_monitored_groups lmg
                     JOIN watchlist_sku_groups wsg ON lmg.group_id = wsg.group_id
                     ORDER BY wsg.group_id
@@ -601,7 +608,7 @@ class LocationPriceUpdater:
 
         logger.info(f"\nMonitored groups: {len(groups)}")
         for g in groups:
-            logger.info(f"  - {g['display_name']} (ID: {g['group_id']})")
+            logger.info(f"  - {g['name']} (ID: {g['group_id']})")
 
         logger.info(f"\nMonitored locations: {len(locations)}")
         for loc in locations:
@@ -610,14 +617,14 @@ class LocationPriceUpdater:
         # Process each group
         for group in groups:
             logger.info(f"\n{'='*60}")
-            logger.info(f"Processing Group: {group['display_name']}")
+            logger.info(f"Processing Group: {group['name']}")
             logger.info(f"{'='*60}")
 
             # Get GlobalHouse products for this group
             products = self.get_gbh_products_for_group(group['group_id'])
 
             if not products:
-                logger.info(f"No GlobalHouse products found for group {group['display_name']}")
+                logger.info(f"No GlobalHouse products found for group {group['name']}")
                 continue
 
             logger.info(f"Found {len(products)} GlobalHouse products in this group")

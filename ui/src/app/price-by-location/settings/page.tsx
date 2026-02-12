@@ -7,12 +7,12 @@ import { MapPin, Package, CheckCircle2, Loader2 } from 'lucide-react';
 
 interface Location {
   location_id: number;
-  location_code: string;
-  name_th: string;
-  name_en: string;
-  province_th: string;
-  province_en: string;
   retailer_id: string;
+  name_th: string;
+  name_en: string | null;
+  url_param: string | null;
+  branch_code: string;
+  branch_name: string | null;
 }
 
 interface SdeptGroup {
@@ -162,9 +162,9 @@ export default function PriceByLocationSettingsPage() {
   const filteredLocations = locations.filter(loc =>
     searchLocation === '' ||
     loc.name_th.toLowerCase().includes(searchLocation.toLowerCase()) ||
-    loc.name_en.toLowerCase().includes(searchLocation.toLowerCase()) ||
-    loc.province_th.toLowerCase().includes(searchLocation.toLowerCase()) ||
-    loc.location_code.toLowerCase().includes(searchLocation.toLowerCase())
+    (loc.name_en && loc.name_en.toLowerCase().includes(searchLocation.toLowerCase())) ||
+    loc.branch_code.toLowerCase().includes(searchLocation.toLowerCase()) ||
+    (loc.branch_name && loc.branch_name.toLowerCase().includes(searchLocation.toLowerCase()))
   );
 
   // Filter groups by search
@@ -342,11 +342,13 @@ export default function PriceByLocationSettingsPage() {
                       <div className="font-medium text-gray-900">
                         {location.name_th}
                       </div>
-                      <div className="text-sm text-gray-600">
-                        {location.name_en}
-                      </div>
+                      {location.name_en && (
+                        <div className="text-sm text-gray-600">
+                          {location.name_en}
+                        </div>
+                      )}
                       <div className="text-xs text-gray-500 mt-1">
-                        {location.province_th} • {location.location_code}
+                        {location.branch_name || location.branch_code}
                       </div>
                     </div>
                   </label>

@@ -1188,11 +1188,8 @@ def get_locations(
             
             cur.execute(query, params)
             locations = cur.fetchall()
-            
-            return {
-                "locations": [dict(loc) for loc in locations],
-                "total": len(locations)
-            }
+
+            return [dict(loc) for loc in locations]
 
 
 @app.post("/api/locations")
@@ -1269,49 +1266,45 @@ def delete_location(location_id: int, user: dict = Depends(get_current_user)):
 
 @app.get("/api/location-watch/available-groups")
 def get_available_groups(user: dict = Depends(get_current_user)):
-    """Get all available S-dept groups (for selection in settings)"""
+    """Get all available SKU groups that have matched GlobalHouse products"""
     with get_db() as conn:
         with conn.cursor() as cur:
+            # Get groups that have Thai Watsadu SKUs with verified GlobalHouse matches
             cur.execute("""
-                SELECT 
+                SELECT
                     wsg.group_id,
-                    wsg.name,
-                    wsg.display_name,
-                    wsg.description,
-                    COUNT(DISTINCT wsgp.sku) as sku_count,
-                    EXISTS(
-                        SELECT 1 FROM location_monitored_groups lmg 
-                        WHERE lmg.group_id = wsg.group_id
-                    ) as is_monitored
+                    wsg.name as sdept,
+                    wsg.name as description,
+                    COUNT(DISTINCT wsgp.sku) as product_count
                 FROM watchlist_sku_groups wsg
-                LEFT JOIN watchlist_sku_group_products wsgp ON wsg.group_id = wsgp.group_id
-                GROUP BY wsg.group_id, wsg.name, wsg.display_name, wsg.description
-                ORDER BY wsg.display_name ASC
+                JOIN watchlist_sku_group_products wsgp ON wsg.group_id = wsgp.group_id
+                JOIN products p_twd ON wsgp.sku = p_twd.sku AND p_twd.retailer_id = 'twd'
+                JOIN product_matches pm ON pm.base_product_id = p_twd.product_id
+                JOIN products p_gbh ON pm.candidate_product_id = p_gbh.product_id AND p_gbh.retailer_id = 'gbh'
+                WHERE pm.verified_by_user = TRUE
+                  AND pm.is_same = TRUE
+                GROUP BY wsg.group_id, wsg.name
+                ORDER BY wsg.name ASC
             """)
-            return {"groups": [dict(row) for row in cur.fetchall()]}
+            return [dict(row) for row in cur.fetchall()]
 
 
 @app.get("/api/location-watch/monitored-groups")
 def get_monitored_groups(user: dict = Depends(get_current_user)):
-    """Get all monitored S-dept groups for location pricing"""
+    """Get all monitored groups for location pricing"""
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT 
+                SELECT
                     lmg.id,
                     lmg.group_id,
                     wsg.name,
-                    wsg.display_name,
-                    wsg.description,
-                    COUNT(DISTINCT wsgp.sku) as sku_count,
                     lmg.created_at
                 FROM location_monitored_groups lmg
                 JOIN watchlist_sku_groups wsg ON lmg.group_id = wsg.group_id
-                LEFT JOIN watchlist_sku_group_products wsgp ON wsg.group_id = wsgp.group_id
-                GROUP BY lmg.id, lmg.group_id, wsg.name, wsg.display_name, wsg.description, lmg.created_at
-                ORDER BY wsg.display_name ASC
+                ORDER BY wsg.name ASC
             """)
-            return {"groups": [dict(row) for row in cur.fetchall()]}
+            return [dict(row) for row in cur.fetchall()]
 
 
 @app.post("/api/location-watch/monitored-groups")
@@ -1344,20 +1337,18 @@ def get_monitored_locations(user: dict = Depends(get_current_user)):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT 
-                    lml.id,
+                SELECT
                     lml.location_id,
                     l.retailer_id,
                     l.name_th,
                     l.name_en,
                     l.branch_code,
-                    l.branch_name,
-                    lml.created_at
+                    l.branch_name
                 FROM location_monitored_locations lml
                 JOIN locations l ON lml.location_id = l.location_id
                 ORDER BY l.name_th ASC
             """)
-            return {"locations": [dict(row) for row in cur.fetchall()]}
+            return [dict(row) for row in cur.fetchall()]
 
 
 @app.post("/api/location-watch/monitored-locations")
@@ -1421,108 +1412,6 @@ def get_location_watch_settings(user: dict = Depends(get_current_user)):
             return {
                 "monitored_groups": monitored_groups,
                 "monitored_locations": monitored_locations
-            }
-
-
-# ============================================================================
-# LOCATION PRICING DATA ENDPOINTS
-# ============================================================================
-
-@app.get("/api/location-prices")
-def get_location_prices(
-    group_id: Optional[int] = None,
-    location_id: Optional[int] = None,
-    user: dict = Depends(get_current_user)
-):
-    """
-    Get location-based prices
-    
-    Query params:
-    - group_id: Filter by S-dept group
-    - location_id: Filter by location
-    """
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            query = """
-                SELECT 
-                    p_twd.product_id as twd_product_id,
-                    p_twd.sku as twd_sku,
-                    p_twd.name as twd_name,
-                    p_twd.brand as twd_brand,
-                    p_twd.current_price as twd_price,
-                    p_gbh.product_id as gbh_product_id,
-                    p_gbh.sku as gbh_sku,
-                    p_gbh.name as gbh_name,
-                    l.location_id,
-                    l.name_th as location_name_th,
-                    l.name_en as location_name_en,
-                    l.branch_code,
-                    plp.price as location_price,
-                    plp.last_updated_at,
-                    wsg.group_id,
-                    wsg.display_name as group_name
-                FROM product_location_prices plp
-                JOIN products p_gbh ON plp.product_id = p_gbh.product_id
-                JOIN locations l ON plp.location_id = l.location_id
-                JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id AND pm.verified_by_user = TRUE AND pm.is_same = TRUE
-                JOIN products p_twd ON pm.base_product_id = p_twd.product_id
-                JOIN watchlist_sku_group_products wsgp ON p_twd.sku = wsgp.sku
-                JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
-                WHERE p_twd.retailer_id = 'twd' AND p_gbh.retailer_id = 'gbh'
-            """
-            
-            params = []
-            
-            if group_id:
-                query += " AND wsg.group_id = %s"
-                params.append(group_id)
-            
-            if location_id:
-                query += " AND l.location_id = %s"
-                params.append(location_id)
-            
-            query += " ORDER BY p_twd.sku ASC, l.name_th ASC"
-            
-            cur.execute(query, params)
-            prices = cur.fetchall()
-            
-            # Group by TWD SKU
-            grouped_data = {}
-            for row in prices:
-                row_dict = dict(row)
-                twd_sku = row_dict['twd_sku']
-                
-                if twd_sku not in grouped_data:
-                    grouped_data[twd_sku] = {
-                        'twd_product': {
-                            'product_id': row_dict['twd_product_id'],
-                            'sku': row_dict['twd_sku'],
-                            'name': row_dict['twd_name'],
-                            'brand': row_dict['twd_brand'],
-                            'price': float(row_dict['twd_price']) if row_dict['twd_price'] else None
-                        },
-                        'gbh_product': {
-                            'product_id': row_dict['gbh_product_id'],
-                            'sku': row_dict['gbh_sku'],
-                            'name': row_dict['gbh_name']
-                        },
-                        'group_id': row_dict['group_id'],
-                        'group_name': row_dict['group_name'],
-                        'locations': []
-                    }
-                
-                grouped_data[twd_sku]['locations'].append({
-                    'location_id': row_dict['location_id'],
-                    'name_th': row_dict['location_name_th'],
-                    'name_en': row_dict['location_name_en'],
-                    'branch_code': row_dict['branch_code'],
-                    'price': float(row_dict['location_price']) if row_dict['location_price'] else None,
-                    'last_updated_at': row_dict['last_updated_at'].isoformat() if row_dict['last_updated_at'] else None
-                })
-            
-            return {
-                "data": list(grouped_data.values()),
-                "total": len(grouped_data)
             }
 
 
@@ -4456,165 +4345,6 @@ def send_test_alert(
 
 
 # ========================================
-# LOCATION PRICING ENDPOINTS
-# ========================================
-
-@app.get("/api/locations")
-def get_locations(
-    retailer_id: str = Query(None, description="Filter by retailer (e.g., 'gbh')"),
-    user: dict = Depends(get_current_user)
-):
-    """Get all locations, optionally filtered by retailer"""
-    from psycopg2.extras import RealDictCursor
-
-    with get_db() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
-        if retailer_id:
-            cursor.execute("""
-                SELECT location_id, location_code, name_th, name_en,
-                       province_th, province_en, retailer_id
-                FROM locations
-                WHERE retailer_id = %s
-                ORDER BY province_th, name_th
-            """, (retailer_id,))
-        else:
-            cursor.execute("""
-                SELECT location_id, location_code, name_th, name_en,
-                       province_th, province_en, retailer_id
-                FROM locations
-                ORDER BY province_th, name_th
-            """)
-
-        locations = cursor.fetchall()
-        return [dict(row) for row in locations]
-
-
-@app.get("/api/location-watch/available-groups")
-def get_available_groups(user: dict = Depends(get_current_user)):
-    """Get all S-dept groups that have matched products"""
-    from psycopg2.extras import RealDictCursor
-
-    with get_db() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
-        cursor.execute("""
-            SELECT
-                pgs.group_id,
-                pgs.sdept,
-                pgs.description,
-                COUNT(DISTINCT pm.product_id) as product_count
-            FROM product_groups_sdept pgs
-            LEFT JOIN product_matches pm ON pgs.sdept = pm.sdept
-            WHERE pm.match_confidence >= 0.5
-            GROUP BY pgs.group_id, pgs.sdept, pgs.description
-            HAVING COUNT(DISTINCT pm.product_id) > 0
-            ORDER BY pgs.sdept
-        """)
-
-        groups = cursor.fetchall()
-        return [dict(row) for row in groups]
-
-
-@app.get("/api/location-watch/monitored-groups")
-def get_monitored_groups(user: dict = Depends(get_current_user)):
-    """Get currently monitored groups"""
-    from psycopg2.extras import RealDictCursor
-
-    with get_db() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
-        cursor.execute("""
-            SELECT lmg.group_id, pgs.sdept, pgs.description
-            FROM location_monitored_groups lmg
-            JOIN product_groups_sdept pgs ON lmg.group_id = pgs.group_id
-            ORDER BY pgs.sdept
-        """)
-
-        groups = cursor.fetchall()
-        return [dict(row) for row in groups]
-
-
-@app.post("/api/location-watch/monitored-groups")
-def set_monitored_groups(
-    data: dict,
-    user: dict = Depends(get_current_user)
-):
-    """Set which groups to monitor"""
-    group_ids = data.get('group_ids', [])
-
-    with get_db() as conn:
-        cursor = conn.cursor()
-
-        try:
-            # Clear existing
-            cursor.execute("DELETE FROM location_monitored_groups")
-
-            # Insert new
-            if group_ids:
-                cursor.executemany(
-                    "INSERT INTO location_monitored_groups (group_id) VALUES (%s)",
-                    [(gid,) for gid in group_ids]
-                )
-
-            conn.commit()
-            return {"success": True, "count": len(group_ids)}
-
-        except Exception as e:
-            conn.rollback()
-            raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/location-watch/monitored-locations")
-def get_monitored_locations(user: dict = Depends(get_current_user)):
-    """Get currently monitored locations"""
-    from psycopg2.extras import RealDictCursor
-
-    with get_db() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
-        cursor.execute("""
-            SELECT lml.location_id, l.location_code, l.name_th, l.name_en,
-                   l.province_th, l.province_en
-            FROM location_monitored_locations lml
-            JOIN locations l ON lml.location_id = l.location_id
-            ORDER BY l.province_th, l.name_th
-        """)
-
-        locations = cursor.fetchall()
-        return [dict(row) for row in locations]
-
-
-@app.post("/api/location-watch/monitored-locations")
-def set_monitored_locations(
-    data: dict,
-    user: dict = Depends(get_current_user)
-):
-    """Set which locations to monitor"""
-    location_ids = data.get('location_ids', [])
-
-    with get_db() as conn:
-        cursor = conn.cursor()
-
-        try:
-            # Clear existing
-            cursor.execute("DELETE FROM location_monitored_locations")
-
-            # Insert new
-            if location_ids:
-                cursor.executemany(
-                    "INSERT INTO location_monitored_locations (location_id) VALUES (%s)",
-                    [(lid,) for lid in location_ids]
-                )
-
-            conn.commit()
-            return {"success": True, "count": len(location_ids)}
-
-        except Exception as e:
-            conn.rollback()
-            raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/location-prices")
 def get_location_prices(
     group_id: int = Query(None, description="Filter by group ID"),
@@ -4627,38 +4357,45 @@ def get_location_prices(
     with get_db() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
+        # Query using correct schema:
+        # - product_matches links base_product_id (TWD) to candidate_product_id (GBH)
+        # - watchlist_sku_group_products links groups to TWD SKUs
         query = """
             SELECT
-                pm.twd_sku,
+                p_twd.sku as twd_sku,
                 p_twd.name as twd_name,
-                pm.gbh_sku,
+                p_gbh.sku as gbh_sku,
                 p_gbh.name as gbh_name,
-                p_gbh.url as gbh_url,
+                p_gbh.link as gbh_url,
                 plp.location_id,
                 l.name_th as location_name_th,
                 l.name_en as location_name_en,
                 plp.price,
-                plp.scraped_at,
-                pgs.group_id,
-                pgs.sdept
+                plp.last_updated_at as scraped_at,
+                wsg.group_id,
+                wsg.name as sdept
             FROM product_location_prices plp
             JOIN locations l ON plp.location_id = l.location_id
             JOIN products p_gbh ON plp.product_id = p_gbh.product_id
-            JOIN product_matches pm ON p_gbh.sku = pm.gbh_sku
-            JOIN products p_twd ON pm.twd_sku = p_twd.sku
-            JOIN product_groups_sdept pgs ON pm.sdept = pgs.sdept
-            WHERE pm.match_confidence >= 0.5
+            JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
+            JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+            JOIN watchlist_sku_group_products wsgp ON wsgp.sku = p_twd.sku
+            JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
+            WHERE pm.verified_by_user = TRUE
+              AND pm.is_same = TRUE
+              AND p_twd.retailer_id = 'twd'
+              AND p_gbh.retailer_id = 'gbh'
         """
 
         params = []
         if group_id:
-            query += " AND pgs.group_id = %s"
+            query += " AND wsg.group_id = %s"
             params.append(group_id)
         if location_id:
             query += " AND plp.location_id = %s"
             params.append(location_id)
 
-        query += " ORDER BY pm.twd_sku, l.name_en"
+        query += " ORDER BY p_twd.sku, l.name_en"
 
         cursor.execute(query, params)
         prices = cursor.fetchall()
@@ -4688,22 +4425,26 @@ def export_location_prices(user: dict = Depends(get_current_user)):
 
         cursor.execute("""
             SELECT
-                pm.twd_sku,
+                p_twd.sku as twd_sku,
                 p_twd.name as twd_name,
-                pm.gbh_sku,
+                p_gbh.sku as gbh_sku,
                 p_gbh.name as gbh_name,
-                pgs.sdept,
+                wsg.name as sdept,
                 l.name_en as location,
                 plp.price,
-                plp.scraped_at
+                plp.last_updated_at as scraped_at
             FROM product_location_prices plp
             JOIN locations l ON plp.location_id = l.location_id
             JOIN products p_gbh ON plp.product_id = p_gbh.product_id
-            JOIN product_matches pm ON p_gbh.sku = pm.gbh_sku
-            JOIN products p_twd ON pm.twd_sku = p_twd.sku
-            JOIN product_groups_sdept pgs ON pm.sdept = pgs.sdept
-            WHERE pm.match_confidence >= 0.5
-            ORDER BY pm.twd_sku, l.name_en
+            JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
+            JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+            JOIN watchlist_sku_group_products wsgp ON wsgp.sku = p_twd.sku
+            JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
+            WHERE pm.verified_by_user = TRUE
+              AND pm.is_same = TRUE
+              AND p_twd.retailer_id = 'twd'
+              AND p_gbh.retailer_id = 'gbh'
+            ORDER BY p_twd.sku, l.name_en
         """)
 
         data = cursor.fetchall()

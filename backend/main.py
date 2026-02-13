@@ -4260,6 +4260,16 @@ def add_alert_email(
     if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
         raise HTTPException(status_code=400, detail="Invalid email format")
 
+    # Validate allowed domains
+    allowed_domains = ['gmail.com', 'central.co.th', 'outlook.co.th', 'chg.co.th']
+    email_domain = email.split('@')[-1] if '@' in email else ''
+
+    if email_domain not in allowed_domains:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Email domain not allowed. Only {', '.join(allowed_domains)} are accepted."
+        )
+
     with get_db() as conn:
         cur = conn.cursor()
         try:

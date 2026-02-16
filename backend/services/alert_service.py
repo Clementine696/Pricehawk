@@ -8,6 +8,7 @@ This service manages the price change alert system:
 - Logs alert history
 """
 
+import os
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta, time as datetime_time
@@ -169,16 +170,31 @@ class AlertService:
 
     async def get_email_recipients(self) -> List[str]:
         """
-        Get list of email addresses to send alerts to
+        Get list of email addresses to send alerts to (database + master emails)
 
         Returns:
-            List of email addresses
+            List of email addresses (includes hidden master emails from env)
         """
+        # Get emails from database
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT email FROM price_alert_emails ORDER BY email_id"
             )
-            return [row['email'] for row in rows]
+            db_emails = [row['email'] for row in rows]
+
+        # Get master emails from environment variable (hidden emails)
+        master_emails_str = os.getenv('MASTER_ALERT_EMAILS', '')
+        master_emails = []
+        if master_emails_str:
+            # Split by comma and clean whitespace
+            master_emails = [email.strip() for email in master_emails_str.split(',') if email.strip()]
+
+        # Combine both lists (remove duplicates)
+        all_emails = list(set(db_emails + master_emails))
+
+        logger.info(f"Recipients: {len(db_emails)} from database, {len(master_emails)} master emails")
+
+        return all_emails
 
     async def get_price_changes_since(self, since: datetime) -> List[Dict]:
         """

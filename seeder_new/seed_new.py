@@ -31,7 +31,7 @@ load_dotenv(Path(__file__).parent / ".env")
 # ============== CONFIGURATION ==============
 # Change these to switch between different data sources
 DATA_FOLDER = "data"           # Folder containing JSON product files
-MATCH_FOLDER = "part3"         # Folder containing Excel match files (part1, part2, etc.)
+MATCH_FOLDER = "part6"         # Folder containing Excel match files (part1, part2, etc.)
 # ==========================================
 
 # Database configuration
@@ -100,7 +100,8 @@ def load_json_data(data_dir: Path) -> Dict[str, Dict[str, dict]]:
     twd_file = data_dir / "thaiwatsadu.json"
     with open(twd_file, encoding="utf-8") as f:
         twd_products = json.load(f)
-        json_data["twd"] = {p["sku"]: p for p in twd_products}
+        # Convert all SKUs to strings for consistent lookup
+        json_data["twd"] = {str(p["sku"]): p for p in twd_products if p.get("sku")}
         print(f"  ✓ Thai Watsadu: {len(json_data['twd'])} products")
     
     # Load competitors
@@ -112,11 +113,12 @@ def load_json_data(data_dir: Path) -> Dict[str, Dict[str, dict]]:
                 # For GlobalHouse, remove leading zeros from SKUs
                 if retailer_code == "gbh":
                     json_data[retailer_code] = {
-                        p["sku"].lstrip("0") if p.get("sku") else None: p 
+                        str(p["sku"]).lstrip("0") if p.get("sku") else None: p
                         for p in products if p.get("sku")
                     }
                 else:
-                    json_data[retailer_code] = {p["sku"]: p for p in products}
+                    # Convert all SKUs to strings for consistent lookup
+                    json_data[retailer_code] = {str(p["sku"]): p for p in products if p.get("sku")}
                 print(f"  ✓ {json_file}: {len(json_data[retailer_code])} products")
         else:
             print(f"  ⚠ {json_file} not found, skipping")
@@ -202,7 +204,23 @@ def upsert_product(conn, product_data: dict, retailer_code: str) -> Optional[int
         return None
 
 
-def insert_match(conn, base_product_id: int, candidate_product_id: int, 
+def get_verified_product_ids(conn) -> set:
+    """Get all TWD product IDs that have verified matches (fetch once for performance)"""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT base_product_id
+                FROM product_matches
+                WHERE verified_result = TRUE
+            """)
+            rows = cur.fetchall()
+            return {row["base_product_id"] for row in rows}
+    except Exception as e:
+        print(f"    ⚠ Error fetching verified product IDs: {e}")
+        return set()
+
+
+def insert_match(conn, base_product_id: int, candidate_product_id: int,
                  retailer_code: str, match_score: float):
     """Insert a product match (skip if already exists)"""
     try:
@@ -212,10 +230,10 @@ def insert_match(conn, base_product_id: int, candidate_product_id: int,
                 SELECT match_id FROM product_matches
                 WHERE base_product_id = %s AND candidate_product_id = %s
             """, (base_product_id, candidate_product_id))
-            
+
             if cur.fetchone():
                 return  # Match already exists
-            
+
             # Insert match
             cur.execute("""
                 INSERT INTO product_matches (
@@ -229,9 +247,9 @@ def insert_match(conn, base_product_id: int, candidate_product_id: int,
                 retailer_code,
                 min(match_score, 1.0),  # Cap at 1.0
             ))
-            
+
             conn.commit()
-            
+
     except Exception as e:
         print(f"    ⚠ Error inserting match: {e}")
         conn.rollback()
@@ -243,29 +261,42 @@ def main():
     match_dir = script_dir / MATCH_FOLDER
     
     print("="*70)
-    print("🚀 Starting Product Seeding (UPSERT TWD + Top 5 Matches)")
+    print("🚀 Starting Product Seeding (Matched TWD Only + Top 5 Matches)")
     print("="*70)
     print(f"📂 Using match files from: {MATCH_FOLDER}/")
     
     # Load data
     json_data = load_json_data(data_dir)
     match_data = load_match_data(match_dir)
-    
+
+    # Extract unique TWD SKUs from all match files
+    twd_skus_in_matches = set()
+    for retailer_code, df in match_data.items():
+        skus = df['TWD_SKU'].dropna().apply(lambda x: str(int(x))).unique()
+        twd_skus_in_matches.update(skus)
+
     print(f"\n📊 Summary:")
-    print(f"  - Thai Watsadu products to upsert: {len(json_data['twd'])}")
+    print(f"  - Thai Watsadu products in match files: {len(twd_skus_in_matches)}")
+    print(f"  - Total TWD products available in JSON: {len(json_data['twd'])}")
     print(f"  - Retailers with match data: {len(match_data)}")
-    
+
     # Connect to database
     with get_db() as conn:
         print("\n" + "="*70)
-        print("📦 STEP 1: UPSERTING Thai Watsadu Products")
+        print("📦 STEP 1: UPSERTING Thai Watsadu Products (Matched Only)")
         print("="*70)
-        
+
         twd_upserted = 0
         twd_failed = 0
+        twd_skipped = 0
         twd_product_ids = {}
-        
+
         for sku, product in json_data["twd"].items():
+            # Only insert TWD products that appear in match files
+            if sku not in twd_skus_in_matches:
+                twd_skipped += 1
+                continue
+
             product_id = upsert_product(conn, product, "twd")
             if product_id:
                 twd_product_ids[sku] = product_id
@@ -274,71 +305,98 @@ def main():
                     print(f"  Progress: {twd_upserted} products upserted...")
             else:
                 twd_failed += 1
-        
+
         print(f"\n✅ Thai Watsadu products:")
         print(f"  - Upserted (inserted/updated): {twd_upserted}")
+        print(f"  - Skipped (not in match files): {twd_skipped}")
         if twd_failed > 0:
             print(f"  - Failed: {twd_failed}")
         
+        # Get all verified product IDs once (performance optimization)
+        print("\n🔍 Fetching verified products...")
+        verified_product_ids = get_verified_product_ids(conn)
+        print(f"  Found {len(verified_product_ids)} TWD products with verified matches")
+
         # Process matches for each retailer
         print("\n" + "="*70)
         print("🔗 STEP 2: Inserting Competitor Products & Matches (Top 5)")
         print("="*70)
-        
+
         total_matches_inserted = 0
         total_products_upserted = 0
-        
+        total_skipped_verified = 0
+
         for retailer_code, df in match_data.items():
             print(f"\n  Processing {retailer_code.upper()} matches...")
-            
+
             retailer_products_upserted = 0
             retailer_matches_inserted = 0
-            retailer_skipped = 0
-            
+            retailer_skipped_null = 0
+            retailer_skipped_twd_not_found = 0
+            retailer_skipped_comp_not_found = 0
+            retailer_skipped_upsert_failed = 0
+            retailer_skipped_verified = 0
+
             for _, row in df.iterrows():
                 # Convert SKUs properly (Excel stores as float like 15447.0)
                 twd_sku = str(int(row['TWD_SKU'])) if pd.notna(row['TWD_SKU']) else None
                 comp_sku = str(int(row['COMPETITOR_SKU'])) if pd.notna(row['COMPETITOR_SKU']) else None
-                
+
                 if not twd_sku or not comp_sku:
-                    retailer_skipped += 1
+                    retailer_skipped_null += 1
                     continue
-                    
+
                 match_score = float(row.get('MATCH_SCORE', 0.8))
-                
+
                 # Get TWD product_id
                 if twd_sku not in twd_product_ids:
-                    retailer_skipped += 1
+                    retailer_skipped_twd_not_found += 1
                     continue
-                
+
                 base_product_id = twd_product_ids[twd_sku]
-                
+
+                # Check if this TWD product already has verified matches (fast set lookup)
+                if base_product_id in verified_product_ids:
+                    retailer_skipped_verified += 1
+                    continue
+
                 # Get competitor product data from JSON
                 if comp_sku not in json_data.get(retailer_code, {}):
-                    retailer_skipped += 1
+                    retailer_skipped_comp_not_found += 1
                     continue
-                
+
                 comp_product = json_data[retailer_code][comp_sku]
-                
+
                 # Upsert competitor product
                 candidate_product_id = upsert_product(conn, comp_product, retailer_code)
                 if not candidate_product_id:
-                    retailer_skipped += 1
+                    retailer_skipped_upsert_failed += 1
                     continue
-                
+
                 retailer_products_upserted += 1
-                
+
                 # Insert match
-                insert_match(conn, base_product_id, candidate_product_id, 
+                insert_match(conn, base_product_id, candidate_product_id,
                            retailer_code, match_score)
                 retailer_matches_inserted += 1
             
             print(f"    ✓ {retailer_code.upper()}: {retailer_products_upserted} products, {retailer_matches_inserted} matches")
-            if retailer_skipped > 0:
-                print(f"      (Skipped {retailer_skipped} - SKU not found in data)")
-            
+
+            # Show detailed skip reasons
+            if retailer_skipped_null > 0:
+                print(f"      (Skipped {retailer_skipped_null} - Null SKU)")
+            if retailer_skipped_twd_not_found > 0:
+                print(f"      (Skipped {retailer_skipped_twd_not_found} - TWD product not inserted)")
+            if retailer_skipped_comp_not_found > 0:
+                print(f"      (Skipped {retailer_skipped_comp_not_found} - Competitor SKU not in JSON)")
+            if retailer_skipped_upsert_failed > 0:
+                print(f"      (Skipped {retailer_skipped_upsert_failed} - Failed to upsert)")
+            if retailer_skipped_verified > 0:
+                print(f"      (Skipped {retailer_skipped_verified} - TWD product has verified matches)")
+
             total_products_upserted += retailer_products_upserted
             total_matches_inserted += retailer_matches_inserted
+            total_skipped_verified += retailer_skipped_verified
         
         print("\n" + "="*70)
         print("✅ SEEDING COMPLETE!")
@@ -347,6 +405,8 @@ def main():
         print(f"  📦 Thai Watsadu products: {twd_upserted} upserted")
         print(f"  📦 Competitor products: {total_products_upserted} upserted")
         print(f"  🔗 Product matches: {total_matches_inserted} created (top 5 per TWD)")
+        if total_skipped_verified > 0:
+            print(f"  ⏭️  Skipped TWD products with verified matches: {total_skipped_verified}")
         print(f"\n{'='*70}\n")
 
 

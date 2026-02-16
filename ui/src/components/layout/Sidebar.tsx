@@ -55,11 +55,11 @@ const menuItems = [
     label: 'Price Alerts',
     icon: Bell,
   },
-  {
-    href: '/price-by-location',
-    label: 'Price by Location',
-    icon: MapPin,
-  },
+  // {
+  //   href: '/price-by-location',
+  //   label: 'Price by Location',
+  //   icon: MapPin,
+  // },
   // {
   //   href: '/comparison',
   //   label: 'Comparison',

@@ -619,8 +619,8 @@ export default function ProductDetailPage() {
         {/* Main Content */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left Side - My Product */}
-          <div className="flex flex-col self-stretch">
-            <div className="bg-white rounded-lg shadow overflow-hidden flex-1 flex flex-col">
+          <div className="flex flex-col">
+            <div className="bg-white rounded-lg shadow overflow-hidden flex flex-col sticky top-6 w-full max-h-[calc(100vh-8rem)] overflow-y-auto">
               {/* Header */}
               <div className="bg-cyan-600 text-white px-4 py-3 flex items-center gap-2 flex-shrink-0">
                 <span className="bg-white text-cyan-600 text-xs font-semibold px-2 py-1 rounded">My Product</span>

@@ -801,7 +801,7 @@ function ProductsContent() {
                       return (
                         <tr
                           key={product.product_id}
-                          onClick={() => router.push(`/products/${product.product_id}`)}
+                          onClick={() => window.open(`/products/${product.product_id}`, '_blank')}
                           className="hover:bg-gray-50 cursor-pointer transition-colors h-10"
                         >
                           <td className="px-4 py-2 text-sm text-gray-500 text-center whitespace-nowrap">

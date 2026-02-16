@@ -3434,6 +3434,84 @@ def cleanup_zombie_browser_processes():
         return 0
 
 
+def cleanup_all_scraper_browsers():
+    """
+    Force kill ALL Chrome/Playwright processes associated with scrapers.
+    This is called AFTER manual add scraping is complete to ensure no browser processes remain.
+
+    More aggressive than cleanup_zombie_browser_processes() - kills ALL scraper browsers,
+    not just zombies/stuck ones.
+
+    IMPORTANT: Only kills browsers launched by Playwright/crawl4ai, NOT user's Chrome.
+    """
+    if not PSUTIL_AVAILABLE:
+        print("  [CLEANUP] psutil not available - skipping browser cleanup")
+        return 0
+
+    try:
+        killed_count = 0
+        print("  [CLEANUP] Checking for scraper browser processes...")
+
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                pinfo = proc.info
+                name = pinfo['name'].lower() if pinfo['name'] else ''
+                cmdline = pinfo['cmdline'] if pinfo['cmdline'] else []
+                cmdline_str = ' '.join(cmdline).lower()
+
+                # Only process Chrome/Chromium
+                if not any(browser in name for browser in ['chrome', 'chromium']):
+                    continue
+
+                # SAFETY CHECK: Only kill if it matches scraper-specific patterns
+                is_scraper_browser = False
+
+                # Check 1: Playwright or crawl4ai in command line
+                if 'playwright' in cmdline_str or 'crawl4ai' in cmdline_str:
+                    is_scraper_browser = True
+
+                # Check 2: Has scraper-specific flags AND is headless
+                elif any(flag in cmdline for flag in [
+                    '--disable-dev-shm-usage',  # Our specific flag
+                    '--no-sandbox'  # Common in automated browsers
+                ]) and '--headless' in cmdline:
+                    # Additional check: user Chrome will have profile flags
+                    has_user_profile = any(
+                        '--profile-directory' in str(arg) or
+                        ('--user-data-dir' in str(arg) and os.path.expanduser('~') in str(arg))
+                        for arg in cmdline
+                    )
+                    if not has_user_profile:
+                        is_scraper_browser = True
+
+                if is_scraper_browser:
+                    try:
+                        proc_obj = psutil.Process(pinfo['pid'])
+                        print(f"  [CLEANUP] Killing scraper browser: PID={pinfo['pid']} {name}")
+                        proc_obj.kill()
+                        killed_count += 1
+                        # Wait a moment for process to die
+                        try:
+                            proc_obj.wait(timeout=2)
+                        except psutil.TimeoutExpired:
+                            # Force kill if still alive
+                            proc_obj.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+
+            except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
+                pass
+
+        if killed_count > 0:
+            print(f"  [CLEANUP] Killed {killed_count} scraper browser processes")
+        else:
+            print(f"  [CLEANUP] No scraper browser processes found")
+        return killed_count
+    except Exception as e:
+        print(f"  [CLEANUP] Error during browser cleanup: {e}")
+        return 0
+
+
 def scrape_single_url(url: str) -> dict:
     """
     Scrape a single URL and return result dict.
@@ -3714,6 +3792,12 @@ def scrape_urls(
     print(f"  Total errors: {len(errors)}")
     if errors:
         print(f"  Errors: {errors}")
+
+    # IMPORTANT: Clean up ALL scraper browser processes after manual add is complete
+    # This prevents thread exhaustion from accumulated browser processes
+    print(f"\n=== Cleaning up scraper browsers after manual add ===")
+    cleanup_all_scraper_browsers()
+
     return response
 
 

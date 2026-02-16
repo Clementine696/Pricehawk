@@ -227,8 +227,16 @@ def load_urls_from_file(file_path: str) -> List[str]:
         raise click.ClickException(f"Failed to load URLs from {file_path}: {e}")
 
 
-async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, console: Console) -> Optional[ProductData]:
-    """Extract product data from a single URL."""
+async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, console: Console, gbh_location: Optional[str] = None) -> Optional[ProductData]:
+    """Extract product data from a single URL.
+
+    Args:
+        url: Product URL to scrape
+        wrapper: Crawl4AI wrapper instance
+        adw_id: ADW ID for tracking
+        console: Rich console for output
+        gbh_location: Optional location name for GlobalHouse price by location
+    """
     # import sys  # Ensure sys is available for error logging
     try:
         # Determine specific wait conditions per retailer
@@ -242,13 +250,17 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
         elif 'homepro.co.th' in url:
             # HomePro needs to wait for price element to load (React SPA)
             wait_for = "() => document.querySelector('[class*=\"price\"]') !== null && document.body.innerText.includes('฿')"
+        elif 'globalhouse.co.th' in url and gbh_location:
+            # GlobalHouse with location selection - wait for location selection JavaScript to complete
+            # Check for SUCCESS or ERROR message in page content
+            wait_for = "() => document.body.innerText.includes('SUCCESS: Location selection complete') || document.body.innerText.includes('[LOCATION ERROR]')"
         else:
-            # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House)
+            # Default wait condition for other retailers (Thai Watsadu, DoHome, MegaHome, Global House without location)
             # Ensure page has meaningful content before scraping
             wait_for = "() => document.readyState === 'complete' && document.body && document.body.innerText.length > 500"
 
-        # Scrape the URL
-        result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+        # Scrape the URL (with optional GlobalHouse location selection)
+        result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for, gbh_location=gbh_location)
         
         # HomePro: Retry once if we get empty page (execution context destroyed)
         if 'homepro.co.th' in url and result.success and result.html and len(result.html) < 100:
@@ -263,8 +275,8 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
             print(f"[SCRAPER] HomePro RETRY: Adding 25s initial delay...", flush=True, file=sys.stderr)
             await asyncio.sleep(25)
             print(f"[SCRAPER] HomePro RETRY: Now attempting scrape...", flush=True, file=sys.stderr)
-            
-            result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+
+            result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for, gbh_location=gbh_location)
             
             if result.success and result.html and len(result.html) > 100:
                 print(f"[SCRAPER] ✓ Retry succeeded! HTML length: {len(result.html)}", flush=True, file=sys.stderr)
@@ -370,7 +382,7 @@ async def extract_product_data(url: str, wrapper: Crawl4AIWrapper, adw_id: str, 
                     
                     # Re-scrape the page
                     print(f"[SCRAPER] RETRY: Re-scraping page (attempt {extraction_attempt + 1})...", flush=True, file=sys.stderr)
-                    result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for)
+                    result = await wrapper.scrape_url(url, css_selector=css_selector, wait_for=wait_for, gbh_location=gbh_location)
                     
                     if result.success and result.html:
                         print(f"[SCRAPER] RETRY: Scrape successful, HTML length: {len(result.html)}", flush=True, file=sys.stderr)
@@ -558,6 +570,12 @@ def generate_summary_stats(products: List[ProductData]) -> Dict[str, Any]:
     is_flag=True,
     help="Run in test mode with minimal output"
 )
+@click.option(
+    "--gbh-location",
+    type=str,
+    default=None,
+    help="GlobalHouse location name for price by location (e.g., 'นครปฐม', 'ขอนแก่น')"
+)
 def main(
     url: Optional[str],
     urls_file: Optional[str],
@@ -574,6 +592,7 @@ def main(
     retry_delay: float,
     use_browser: bool,
     test: bool,
+    gbh_location: Optional[str],
 ):
     """E-commerce product data scraper."""
 
@@ -720,7 +739,7 @@ def main(
                 if len(urls) == 1:
                     # Single product scraping
                     print_status_panel(console, f"Scraping {urls[0]}", adw_id, "scraping", urls[0])
-                    product = await extract_product_data(urls[0], wrapper, adw_id, console)
+                    product = await extract_product_data(urls[0], wrapper, adw_id, console, gbh_location)
                     return [product] if product else []
                 else:
                     # Batch scraping with progress indicator
@@ -736,7 +755,7 @@ def main(
                         async def scrape_with_semaphore(url: str) -> Optional[ProductData]:
                             async with semaphore:
                                 try:
-                                    product = await extract_product_data(url, wrapper, adw_id, console)
+                                    product = await extract_product_data(url, wrapper, adw_id, console, gbh_location)
                                     # Add delay between requests
                                     if delay > 0:
                                         await asyncio.sleep(delay)

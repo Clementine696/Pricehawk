@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Header, Request, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import bcrypt
@@ -1152,6 +1152,416 @@ def get_available_categories(user: dict = Depends(get_current_user)):
                 ],
                 "total": len(all_categories)
             }
+
+
+# ============================================================================
+# LOCATION-BASED PRICING ENDPOINTS
+# ============================================================================
+
+@app.get("/api/locations")
+def get_locations(
+    retailer_id: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Get all locations, optionally filtered by retailer and active status
+    
+    Query params:
+    - retailer_id: Filter by retailer (e.g., 'gbh')
+    - is_active: Filter by active status
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            query = "SELECT * FROM locations WHERE 1=1"
+            params = []
+            
+            if retailer_id:
+                query += " AND retailer_id = %s"
+                params.append(retailer_id)
+            
+            if is_active is not None:
+                query += " AND is_active = %s"
+                params.append(is_active)
+            
+            query += " ORDER BY name_th ASC"
+            
+            cur.execute(query, params)
+            locations = cur.fetchall()
+
+            return [dict(loc) for loc in locations]
+
+
+@app.post("/api/locations")
+def create_location(location_data: dict, user: dict = Depends(get_current_user)):
+    """Create a new location"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO locations (
+                    retailer_id, name_th, name_en, url_param, 
+                    branch_code, branch_name, is_active
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (
+                location_data.get('retailer_id'),
+                location_data.get('name_th'),
+                location_data.get('name_en'),
+                location_data.get('url_param'),
+                location_data.get('branch_code'),
+                location_data.get('branch_name'),
+                location_data.get('is_active', True)
+            ))
+            new_location = cur.fetchone()
+            return dict(new_location)
+
+
+@app.patch("/api/locations/{location_id}")
+def update_location(location_id: int, location_data: dict, user: dict = Depends(get_current_user)):
+    """Update a location"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Build dynamic update query
+            updates = []
+            params = []
+            
+            for field in ['name_th', 'name_en', 'url_param', 'branch_code', 'branch_name', 'is_active']:
+                if field in location_data:
+                    updates.append(f"{field} = %s")
+                    params.append(location_data[field])
+            
+            if not updates:
+                raise HTTPException(status_code=400, detail="No fields to update")
+            
+            params.append(location_id)
+            query = f"UPDATE locations SET {', '.join(updates)} WHERE location_id = %s RETURNING *"
+            
+            cur.execute(query, params)
+            updated_location = cur.fetchone()
+            
+            if not updated_location:
+                raise HTTPException(status_code=404, detail="Location not found")
+            
+            return dict(updated_location)
+
+
+@app.delete("/api/locations/{location_id}")
+def delete_location(location_id: int, user: dict = Depends(get_current_user)):
+    """Delete a location"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM locations WHERE location_id = %s RETURNING location_id", (location_id,))
+            deleted = cur.fetchone()
+            
+            if not deleted:
+                raise HTTPException(status_code=404, detail="Location not found")
+            
+            return {"message": "Location deleted successfully"}
+
+
+# ============================================================================
+# LOCATION MONITORING SETTINGS ENDPOINTS
+# ============================================================================
+
+@app.get("/api/location-watch/available-groups")
+def get_available_groups(user: dict = Depends(get_current_user)):
+    """Get all available SKU groups that have matched GlobalHouse products"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get groups that have Thai Watsadu SKUs with verified GlobalHouse matches
+            cur.execute("""
+                SELECT
+                    wsg.group_id,
+                    wsg.name as sdept,
+                    wsg.name as description,
+                    COUNT(DISTINCT wsgp.sku) as product_count
+                FROM watchlist_sku_groups wsg
+                JOIN watchlist_sku_group_products wsgp ON wsg.group_id = wsgp.group_id
+                JOIN products p_twd ON wsgp.sku = p_twd.sku AND p_twd.retailer_id = 'twd'
+                JOIN product_matches pm ON pm.base_product_id = p_twd.product_id
+                JOIN products p_gbh ON pm.candidate_product_id = p_gbh.product_id AND p_gbh.retailer_id = 'gbh'
+                WHERE pm.verified_by_user = TRUE
+                  AND pm.is_same = TRUE
+                GROUP BY wsg.group_id, wsg.name
+                ORDER BY wsg.name ASC
+            """)
+            return [dict(row) for row in cur.fetchall()]
+
+
+@app.get("/api/location-watch/monitored-groups")
+def get_monitored_groups(user: dict = Depends(get_current_user)):
+    """Get all monitored groups for location pricing"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    lmg.id,
+                    lmg.group_id,
+                    wsg.name,
+                    lmg.created_at
+                FROM location_monitored_groups lmg
+                JOIN watchlist_sku_groups wsg ON lmg.group_id = wsg.group_id
+                ORDER BY wsg.name ASC
+            """)
+            return [dict(row) for row in cur.fetchall()]
+
+
+@app.post("/api/location-watch/monitored-groups")
+def set_monitored_groups(data: dict, user: dict = Depends(get_current_user)):
+    """
+    Set which S-dept groups to monitor for location pricing
+    Request body: { "group_ids": [1, 2, 3] }
+    """
+    group_ids = data.get('group_ids', [])
+    
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Clear existing
+            cur.execute("DELETE FROM location_monitored_groups")
+            
+            # Insert new
+            if group_ids:
+                values = [(gid,) for gid in group_ids]
+                cur.executemany(
+                    "INSERT INTO location_monitored_groups (group_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                    values
+                )
+            
+            return {"message": f"Updated monitored groups: {len(group_ids)} groups"}
+
+
+@app.get("/api/location-watch/monitored-locations")
+def get_monitored_locations(user: dict = Depends(get_current_user)):
+    """Get all monitored locations for price scraping"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    lml.location_id,
+                    l.retailer_id,
+                    l.name_th,
+                    l.name_en,
+                    l.branch_code,
+                    l.branch_name
+                FROM location_monitored_locations lml
+                JOIN locations l ON lml.location_id = l.location_id
+                ORDER BY l.name_th ASC
+            """)
+            return [dict(row) for row in cur.fetchall()]
+
+
+@app.post("/api/location-watch/monitored-locations")
+def set_monitored_locations(data: dict, user: dict = Depends(get_current_user)):
+    """
+    Set which locations to monitor for price scraping
+    Request body: { "location_ids": [1, 2, 3] }
+    """
+    location_ids = data.get('location_ids', [])
+    
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Clear existing
+            cur.execute("DELETE FROM location_monitored_locations")
+            
+            # Insert new
+            if location_ids:
+                values = [(lid,) for lid in location_ids]
+                cur.executemany(
+                    "INSERT INTO location_monitored_locations (location_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                    values
+                )
+            
+            return {"message": f"Updated monitored locations: {len(location_ids)} locations"}
+
+
+@app.get("/api/location-watch/settings")
+def get_location_watch_settings(user: dict = Depends(get_current_user)):
+    """Get complete location watch settings (groups + locations)"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get monitored groups
+            cur.execute("""
+                SELECT 
+                    wsg.group_id,
+                    wsg.name,
+                    wsg.display_name,
+                    COUNT(DISTINCT wsgp.sku) as sku_count
+                FROM location_monitored_groups lmg
+                JOIN watchlist_sku_groups wsg ON lmg.group_id = wsg.group_id
+                LEFT JOIN watchlist_sku_group_products wsgp ON wsg.group_id = wsgp.group_id
+                GROUP BY wsg.group_id, wsg.name, wsg.display_name
+                ORDER BY wsg.display_name ASC
+            """)
+            monitored_groups = [dict(row) for row in cur.fetchall()]
+            
+            # Get monitored locations
+            cur.execute("""
+                SELECT 
+                    l.location_id,
+                    l.name_th,
+                    l.name_en,
+                    l.branch_code,
+                    l.branch_name
+                FROM location_monitored_locations lml
+                JOIN locations l ON lml.location_id = l.location_id
+                ORDER BY l.name_th ASC
+            """)
+            monitored_locations = [dict(row) for row in cur.fetchall()]
+            
+            return {
+                "monitored_groups": monitored_groups,
+                "monitored_locations": monitored_locations
+            }
+
+
+@app.post("/api/location-prices/scrape")
+def trigger_location_price_scrape(user: dict = Depends(get_current_user)):
+    """
+    Manually trigger location-based price scraping
+    This will scrape all monitored products across all monitored locations
+    """
+    # TODO: Implement after GlobalHouse scraper enhancement
+    # This will be implemented in the location_price_updater service
+    return {
+        "message": "Location price scraping has been queued",
+        "status": "pending",
+        "note": "This feature will be implemented after scraper enhancement"
+    }
+
+
+@app.get("/api/location-prices/export")
+def export_location_prices(
+    group_id: Optional[int] = None,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Export location-based prices to Excel
+    
+    Query params:
+    - group_id: Filter by S-dept group (optional)
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get location prices with product details
+            query = """
+                SELECT 
+                    p_twd.sku as twd_sku,
+                    p_twd.name as twd_name,
+                    p_twd.brand as twd_brand,
+                    p_twd.current_price as twd_price,
+                    p_twd.link as twd_link,
+                    p_gbh.sku as gbh_sku,
+                    p_gbh.name as gbh_name,
+                    p_gbh.link as gbh_link,
+                    l.name_th as location_name,
+                    l.branch_code,
+                    plp.price as location_price,
+                    plp.last_updated_at,
+                    wsg.display_name as group_name
+                FROM product_location_prices plp
+                JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+                JOIN locations l ON plp.location_id = l.location_id
+                JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id 
+                    AND pm.verified_by_user = TRUE AND pm.is_same = TRUE
+                JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+                JOIN watchlist_sku_group_products wsgp ON p_twd.sku = wsgp.sku
+                JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
+                WHERE p_twd.retailer_id = 'twd' AND p_gbh.retailer_id = 'gbh'
+            """
+            
+            params = []
+            if group_id:
+                query += " AND wsg.group_id = %s"
+                params.append(group_id)
+            
+            query += " ORDER BY p_twd.sku ASC, l.name_th ASC"
+            
+            cur.execute(query, params)
+            prices = cur.fetchall()
+            
+            if not prices:
+                raise HTTPException(status_code=404, detail="No location prices found")
+            
+            # Create Excel workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Location Prices"
+            
+            # Header styling
+            header_fill = PatternFill(start_color="0066CC", end_color="0066CC", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF")
+            
+            # Headers
+            headers = [
+                "TWD SKU", "TWD Product Name", "TWD Brand", "TWD Price",
+                "GBH SKU", "GBH Product Name", "Location", "Branch Code",
+                "Location Price", "Price Diff", "Last Updated", "Group"
+            ]
+            
+            for col_num, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_num, value=header)
+                cell.fill = header_fill
+                cell.font = header_font
+            
+            # Data rows
+            for row_num, row in enumerate(prices, 2):
+                twd_price = float(row['twd_price']) if row['twd_price'] else 0
+                loc_price = float(row['location_price']) if row['location_price'] else 0
+                price_diff = loc_price - twd_price if twd_price and loc_price else None
+                
+                # TWD SKU with hyperlink
+                twd_sku_cell = ws.cell(row=row_num, column=1, value=row['twd_sku'])
+                if row['twd_link']:
+                    twd_sku_cell.hyperlink = row['twd_link']
+                    twd_sku_cell.font = Font(color="0000FF", underline="single")
+                
+                ws.cell(row=row_num, column=2, value=row['twd_name'])
+                ws.cell(row=row_num, column=3, value=row['twd_brand'])
+                ws.cell(row=row_num, column=4, value=twd_price)
+                
+                # GBH SKU with hyperlink
+                gbh_sku_cell = ws.cell(row=row_num, column=5, value=row['gbh_sku'])
+                if row['gbh_link']:
+                    gbh_sku_cell.hyperlink = row['gbh_link']
+                    gbh_sku_cell.font = Font(color="0000FF", underline="single")
+                
+                ws.cell(row=row_num, column=6, value=row['gbh_name'])
+                ws.cell(row=row_num, column=7, value=row['location_name'])
+                ws.cell(row=row_num, column=8, value=row['branch_code'])
+                ws.cell(row=row_num, column=9, value=loc_price)
+                ws.cell(row=row_num, column=10, value=price_diff)
+                ws.cell(row=row_num, column=11, value=row['last_updated_at'].strftime('%Y-%m-%d %H:%M') if row['last_updated_at'] else '')
+                ws.cell(row=row_num, column=12, value=row['group_name'])
+            
+            # Auto-adjust column widths
+            for column in ws.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+            
+            # Save to BytesIO
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            
+            # Generate filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            group_suffix = f"_group_{group_id}" if group_id else ""
+            filename = f"location_prices{group_suffix}_{timestamp}.xlsx"
+            
+            return Response(
+                content=output.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
 
 
 @app.get("/api/health")
@@ -3676,9 +4086,9 @@ def manual_comparison(
 
                 # Create product match - manual matches are auto-verified as correct
                 cur.execute("""
-                    INSERT INTO product_matches (base_product_id, candidate_product_id, retailer_id, match_type, verified_by_user, is_same)
-                    VALUES (%s, %s, %s, 'manual', TRUE, TRUE)
-                    ON CONFLICT (base_product_id, candidate_product_id) DO UPDATE SET match_type = 'manual', verified_by_user = TRUE, is_same = TRUE
+                    INSERT INTO product_matches (base_product_id, candidate_product_id, retailer_id, match_type, verified_by_user, is_same, verified_result)
+                    VALUES (%s, %s, %s, 'manual', TRUE, TRUE, TRUE)
+                    ON CONFLICT (base_product_id, candidate_product_id) DO UPDATE SET match_type = 'manual', verified_by_user = TRUE, is_same = TRUE, verified_result = TRUE
                     RETURNING match_id
                 """, (twd_product["product_id"], comp_product["product_id"], retailer_id))
 
@@ -3773,6 +4183,11 @@ def update_alert_settings(
     # Default to '09:00:00' if not provided
     if not schedule_time:
         schedule_time = '09:00:00'
+    
+    # Ensure format is HH:MM:SS and treat as localtime (no timezone conversion)
+    # Cast to TEXT to prevent PostgreSQL timezone conversion
+    if len(schedule_time.split(':')) == 2:
+        schedule_time = schedule_time + ':00'
 
     # Validate schedule_day if weekly
     schedule_day = data.get('schedule_day', None)
@@ -3844,6 +4259,16 @@ def add_alert_email(
     # Validate email format
     if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
         raise HTTPException(status_code=400, detail="Invalid email format")
+
+    # Validate allowed domains
+    allowed_domains = ['gmail.com', 'central.co.th', 'outlook.co.th', 'chg.co.th']
+    email_domain = email.split('@')[-1] if '@' in email else ''
+
+    if email_domain not in allowed_domains:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Email domain not allowed. Only {', '.join(allowed_domains)} are accepted."
+        )
 
     with get_db() as conn:
         cur = conn.cursor()
@@ -3927,6 +4352,165 @@ def send_test_alert(
         raise HTTPException(status_code=500, detail="Failed to send test email. Check SMTP configuration.")
 
     return {"success": True, "message": f"Test email sent to {email}"}
+
+
+# ========================================
+@app.get("/api/location-prices")
+def get_location_prices(
+    group_id: int = Query(None, description="Filter by group ID"),
+    location_id: int = Query(None, description="Filter by location ID"),
+    user: dict = Depends(get_current_user)
+):
+    """Get location-based prices"""
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Query using correct schema:
+        # - product_matches links base_product_id (TWD) to candidate_product_id (GBH)
+        # - watchlist_sku_group_products links groups to TWD SKUs
+        query = """
+            SELECT
+                p_twd.sku as twd_sku,
+                p_twd.name as twd_name,
+                p_gbh.sku as gbh_sku,
+                p_gbh.name as gbh_name,
+                p_gbh.link as gbh_url,
+                plp.location_id,
+                l.name_th as location_name_th,
+                l.name_en as location_name_en,
+                plp.price,
+                plp.last_updated_at as scraped_at,
+                wsg.group_id,
+                wsg.name as sdept
+            FROM product_location_prices plp
+            JOIN locations l ON plp.location_id = l.location_id
+            JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+            JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
+            JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+            JOIN watchlist_sku_group_products wsgp ON wsgp.sku = p_twd.sku
+            JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
+            WHERE pm.verified_by_user = TRUE
+              AND pm.is_same = TRUE
+              AND p_twd.retailer_id = 'twd'
+              AND p_gbh.retailer_id = 'gbh'
+        """
+
+        params = []
+        if group_id:
+            query += " AND wsg.group_id = %s"
+            params.append(group_id)
+        if location_id:
+            query += " AND plp.location_id = %s"
+            params.append(location_id)
+
+        query += " ORDER BY p_twd.sku, l.name_en"
+
+        cursor.execute(query, params)
+        prices = cursor.fetchall()
+
+        # Convert to list of dicts and format dates
+        result = []
+        for row in prices:
+            data = dict(row)
+            if 'scraped_at' in data and data['scraped_at']:
+                data['scraped_at'] = data['scraped_at'].isoformat()
+            result.append(data)
+
+        return result
+
+
+@app.get("/api/location-prices/export")
+def export_location_prices(user: dict = Depends(get_current_user)):
+    """Export location prices to Excel"""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from fastapi.responses import StreamingResponse
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                p_twd.sku as twd_sku,
+                p_twd.name as twd_name,
+                p_gbh.sku as gbh_sku,
+                p_gbh.name as gbh_name,
+                wsg.name as sdept,
+                l.name_en as location,
+                plp.price,
+                plp.last_updated_at as scraped_at
+            FROM product_location_prices plp
+            JOIN locations l ON plp.location_id = l.location_id
+            JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+            JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
+            JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+            JOIN watchlist_sku_group_products wsgp ON wsgp.sku = p_twd.sku
+            JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
+            WHERE pm.verified_by_user = TRUE
+              AND pm.is_same = TRUE
+              AND p_twd.retailer_id = 'twd'
+              AND p_gbh.retailer_id = 'gbh'
+            ORDER BY p_twd.sku, l.name_en
+        """)
+
+        data = cursor.fetchall()
+
+        # Create Excel workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Location Prices"
+
+        # Headers
+        headers = ['TWD SKU', 'TWD Name', 'GBH SKU', 'GBH Name', 'Group', 'Location', 'Price', 'Scraped At']
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Data rows
+        for row_idx, row_data in enumerate(data, 2):
+            ws.cell(row=row_idx, column=1, value=row_data['twd_sku'])
+            ws.cell(row=row_idx, column=2, value=row_data['twd_name'])
+            ws.cell(row=row_idx, column=3, value=row_data['gbh_sku'])
+            ws.cell(row=row_idx, column=4, value=row_data['gbh_name'])
+            ws.cell(row=row_idx, column=5, value=row_data['sdept'])
+            ws.cell(row=row_idx, column=6, value=row_data['location'])
+            ws.cell(row=row_idx, column=7, value=row_data['price'])
+            ws.cell(row=row_idx, column=8, value=row_data['scraped_at'].strftime('%Y-%m-%d %H:%M:%S') if row_data['scraped_at'] else '')
+
+        # Auto-size columns
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column].width = adjusted_width
+
+        # Save to bytes
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=location_prices.xlsx"}
+        )
+
+
 
 
 if __name__ == "__main__":

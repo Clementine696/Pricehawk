@@ -196,15 +196,17 @@ class AlertService:
                 product_id,
                 price,
                 scraped_at,
-                LAG(price) OVER (PARTITION BY product_id ORDER BY scraped_at) as old_price
+                LAG(price) OVER (PARTITION BY product_id ORDER BY scraped_at) as old_price,
+                LAG(scraped_at) OVER (PARTITION BY product_id ORDER BY scraped_at) as old_scraped_at
             FROM price_history
         ),
         recent_changes AS (
             SELECT
                 ap.product_id,
                 ap.price as new_price,
-                ap.scraped_at,
+                ap.scraped_at as new_scraped_at,
                 ap.old_price,
+                ap.old_scraped_at,
                 ROW_NUMBER() OVER (PARTITION BY ap.product_id ORDER BY ap.scraped_at DESC) as rn
             FROM all_prices ap
             WHERE ap.scraped_at >= $1
@@ -213,7 +215,8 @@ class AlertService:
             rc.product_id,
             rc.old_price,
             rc.new_price,
-            rc.scraped_at,
+            rc.old_scraped_at,
+            rc.new_scraped_at,
             p.name,
             p.sku,
             p.description,
@@ -234,7 +237,7 @@ class AlertService:
         WHERE rc.rn = 1
           AND rc.old_price IS NOT NULL
           AND rc.old_price != rc.new_price
-        ORDER BY rc.scraped_at DESC;
+        ORDER BY rc.new_scraped_at DESC;
         """
 
         async with self.db_pool.acquire() as conn:
@@ -264,6 +267,7 @@ class AlertService:
             p.link,
             p.scrape_fail_count,
             p.last_alert_status,
+            p.last_updated_at,
             CASE
                 WHEN p.last_alert_status = 'active' AND p.scrape_fail_count >= 3 THEN 'inactive'
                 WHEN p.last_alert_status = 'inactive' AND p.scrape_fail_count < 3 THEN 'active'

@@ -40,11 +40,12 @@ async def get_pool() -> asyncpg.Pool:
         db_name = os.getenv('DB_NAME')
         db_user = os.getenv('DB_USER')
         db_password = os.getenv('DB_PASSWORD')
-        
+        db_sslmode = os.getenv('DB_SSLMODE', 'prefer')  # Default to 'prefer', use 'disable' for local
+
         if not all([db_host, db_name, db_user, db_password]):
             raise ValueError("DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD environment variables must be set")
-        
-        database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}?sslmode=require"
+
+        database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}?sslmode={db_sslmode}"
         logger.info("Constructed DATABASE_URL from separate DB variables")
     
     try:

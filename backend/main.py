@@ -4505,6 +4505,268 @@ def get_location_prices(
         return result
 
 
+@app.get("/api/location-prices/summary")
+def get_location_prices_summary(
+    search: str = Query(None),
+    category: str = Query(None),
+    brand: str = Query(None),
+    price_status: str = Query(None, description="has_cheaper | all_higher | same"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    user: dict = Depends(get_current_user)
+):
+    """Get location prices aggregated per TWD product (min, max, avg, branch count)"""
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Build WHERE filter clauses
+        filters = []
+        params = []
+
+        if search:
+            # Support multiple SKUs separated by comma/space/newline
+            search_normalized = search.replace('\n', ' ').replace('\r', ' ').replace(',', ' ')
+            search_values = [s.strip() for s in search_normalized.split() if s.strip()]
+            if len(search_values) > 1:
+                placeholders = ','.join(['%s'] * len(search_values))
+                filters.append(f"p_twd.sku IN ({placeholders})")
+                params.extend(search_values)
+            else:
+                like = f"%{search}%"
+                filters.append("(p_twd.sku ILIKE %s OR p_twd.name ILIKE %s OR p_twd.brand ILIKE %s)")
+                params.extend([like, like, like])
+
+        category_list = [c.strip() for c in category.split(',') if c.strip()] if category else []
+        brand_list = [b.strip() for b in brand.split(',') if b.strip()] if brand else []
+
+        if category_list:
+            placeholders = ','.join(['%s'] * len(category_list))
+            filters.append(f"p_twd.category IN ({placeholders})")
+            params.extend(category_list)
+
+        if brand_list:
+            placeholders = ','.join(['%s'] * len(brand_list))
+            filters.append(f"p_twd.brand IN ({placeholders})")
+            params.extend(brand_list)
+
+        base_where = """
+            WHERE pm.verified_by_user = TRUE
+              AND pm.is_same = TRUE
+              AND p_twd.retailer_id = 'twd'
+              AND p_gbh.retailer_id = 'gbh'
+        """
+        extra_filters = (" AND " + " AND ".join(filters)) if filters else ""
+
+        base_joins = """
+            FROM product_location_prices plp
+            JOIN locations l ON plp.location_id = l.location_id
+            JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+            JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
+            JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+        """
+
+        # Get filter options (categories + brands) from the full dataset (no filters applied)
+        cursor.execute(f"""
+            SELECT DISTINCT p_twd.category, p_twd.brand
+            {base_joins}
+            {base_where}
+            AND p_twd.category IS NOT NULL AND p_twd.brand IS NOT NULL
+        """)
+        filter_rows = cursor.fetchall()
+        all_categories = sorted(set(r["category"] for r in filter_rows if r["category"]))
+        all_brands = sorted(set(r["brand"] for r in filter_rows if r["brand"]))
+
+        # Build HAVING clause for price_status filter (used in count + main query)
+        having_clause = ""
+        if price_status == "has_cheaper":
+            having_clause = "HAVING MIN(plp.price) < p_twd.current_price"
+        elif price_status == "all_higher":
+            having_clause = "HAVING MIN(plp.price) >= p_twd.current_price AND MAX(plp.price) > p_twd.current_price"
+        elif price_status == "same":
+            having_clause = "HAVING MIN(plp.price) = p_twd.current_price AND MAX(plp.price) = p_twd.current_price"
+
+        # Count total for pagination (wrap in subquery to apply HAVING)
+        cursor.execute(f"""
+            SELECT COUNT(*) as total FROM (
+                SELECT p_twd.product_id
+                {base_joins}
+                {base_where}
+                {extra_filters}
+                GROUP BY p_twd.product_id, p_twd.current_price
+                {having_clause}
+            ) sub
+        """, params)
+        total = cursor.fetchone()["total"]
+
+        # Get total monitored locations count
+        cursor.execute("SELECT COUNT(*) as cnt FROM location_monitored_locations")
+        total_branches_row = cursor.fetchone()
+        total_branches = total_branches_row["cnt"] if total_branches_row else 0
+
+        offset = (page - 1) * page_size
+        query_params = params + [page_size, offset]
+
+        cursor.execute(f"""
+            SELECT
+                p_twd.sku as twd_sku,
+                p_twd.name as twd_name,
+                p_twd.current_price as twd_price,
+                p_twd.brand,
+                p_twd.category,
+                p_gbh.sku as gbh_sku,
+                p_gbh.name as gbh_name,
+                p_gbh.link as gbh_url,
+                MIN(plp.price) as min_price,
+                MAX(plp.price) as max_price,
+                AVG(plp.price) as avg_price,
+                COUNT(DISTINCT plp.location_id) as branch_count
+            {base_joins}
+            {base_where}
+            {extra_filters}
+            GROUP BY p_twd.product_id, p_twd.sku, p_twd.name, p_twd.current_price,
+                     p_twd.brand, p_twd.category,
+                     p_gbh.sku, p_gbh.name, p_gbh.link
+            {having_clause}
+            ORDER BY p_twd.sku
+            LIMIT %s OFFSET %s
+        """, query_params)
+
+        rows = cursor.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            if d.get("avg_price") is not None:
+                d["avg_price"] = round(float(d["avg_price"]), 2)
+            if d.get("min_price") is not None:
+                d["min_price"] = float(d["min_price"])
+            if d.get("max_price") is not None:
+                d["max_price"] = float(d["max_price"])
+            if d.get("twd_price") is not None:
+                d["twd_price"] = float(d["twd_price"])
+            d["total_branches"] = total_branches
+            # Compute status: compare min branch price vs TWD price
+            twd = d.get("twd_price")
+            mn = d.get("min_price")
+            mx = d.get("max_price")
+            if twd and mn is not None:
+                if mn < twd:
+                    d["price_status"] = "has_cheaper"   # at least one branch is cheaper
+                elif mx is not None and mx > twd:
+                    d["price_status"] = "all_higher"    # all branches are higher
+                else:
+                    d["price_status"] = "same"
+            else:
+                d["price_status"] = "unknown"
+            result.append(d)
+
+        return {
+            "products": result,
+            "total": total,
+            "categories": all_categories,
+            "brands": all_brands,
+        }
+
+
+@app.get("/api/location-prices/product/{twd_sku}")
+def get_location_prices_by_sku(
+    twd_sku: str,
+    user: dict = Depends(get_current_user)
+):
+    """Get all branch prices for a specific TWD SKU (for detail page)"""
+    from psycopg2.extras import RealDictCursor
+
+    with get_db() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get product info + all branch prices
+        cursor.execute("""
+            SELECT
+                p_twd.sku as twd_sku,
+                p_twd.name as twd_name,
+                p_twd.current_price as twd_price,
+                p_twd.brand,
+                p_twd.category,
+                p_twd.link as twd_url,
+                p_gbh.sku as gbh_sku,
+                p_gbh.name as gbh_name,
+                p_gbh.link as gbh_url,
+                plp.location_id,
+                l.name_th as branch_name_th,
+                l.name_en as branch_name_en,
+                l.branch_code,
+                plp.price,
+                plp.last_updated_at as scraped_at
+            FROM product_location_prices plp
+            JOIN locations l ON plp.location_id = l.location_id
+            JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+            JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
+            JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+            WHERE pm.verified_by_user = TRUE
+              AND pm.is_same = TRUE
+              AND p_twd.retailer_id = 'twd'
+              AND p_gbh.retailer_id = 'gbh'
+              AND p_twd.sku = %s
+            ORDER BY plp.price ASC
+        """, (twd_sku,))
+
+        rows = cursor.fetchall()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Product not found or no location prices")
+
+        # Get total monitored branches
+        cursor.execute("SELECT COUNT(*) as cnt FROM location_monitored_locations")
+        total_branches = cursor.fetchone()["cnt"]
+
+        first = rows[0]
+        prices = [float(r["price"]) for r in rows if r["price"] is not None]
+
+        product = {
+            "twd_sku": first["twd_sku"],
+            "twd_name": first["twd_name"],
+            "twd_price": float(first["twd_price"]) if first["twd_price"] else None,
+            "brand": first["brand"],
+            "category": first["category"],
+            "twd_url": first["twd_url"],
+            "gbh_sku": first["gbh_sku"],
+            "gbh_name": first["gbh_name"],
+            "gbh_url": first["gbh_url"],
+            "min_price": min(prices) if prices else None,
+            "max_price": max(prices) if prices else None,
+            "avg_price": round(sum(prices) / len(prices), 2) if prices else None,
+            "branch_count": len(rows),
+            "total_branches": total_branches,
+        }
+
+        branches = []
+        for i, row in enumerate(rows):
+            twd_price = product["twd_price"]
+            branch_price = float(row["price"]) if row["price"] else None
+            if twd_price and branch_price:
+                if branch_price < twd_price:
+                    status = "cheaper"
+                elif branch_price > twd_price:
+                    status = "higher"
+                else:
+                    status = "same"
+            else:
+                status = "unknown"
+
+            branches.append({
+                "no": i + 1,
+                "location_id": row["location_id"],
+                "branch_name_th": row["branch_name_th"],
+                "branch_name_en": row["branch_name_en"],
+                "branch_code": row["branch_code"],
+                "price": branch_price,
+                "scraped_at": row["scraped_at"].isoformat() if row["scraped_at"] else None,
+                "status": status,
+            })
+
+        return {"product": product, "branches": branches}
+
+
 @app.get("/api/location-prices/export")
 def export_location_prices(user: dict = Depends(get_current_user)):
     """Export location prices to Excel"""

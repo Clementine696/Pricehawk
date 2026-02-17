@@ -358,7 +358,7 @@ class LocationPriceUpdater:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-                logger.error(f"Timeout scraping {url} with location {location_url_param}")
+                logger.error(f"Timeout scraping {url} with location {location_name_th}")
                 return None
 
             if returncode != 0:

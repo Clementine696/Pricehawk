@@ -101,7 +101,7 @@ export default function PriceByLocationSettingsPage() {
     } else {
       // Select all filtered
       const newIds = filtered.map(l => l.location_id);
-      setSelectedLocations(prev => [...new Set([...prev, ...newIds])]);
+      setSelectedLocations(prev => Array.from(new Set([...prev, ...newIds])));
     }
   };
 
@@ -115,7 +115,7 @@ export default function PriceByLocationSettingsPage() {
     } else {
       // Select all filtered
       const newIds = filtered.map(g => g.group_id);
-      setSelectedGroups(prev => [...new Set([...prev, ...newIds])]);
+      setSelectedGroups(prev => Array.from(new Set([...prev, ...newIds])));
     }
   };
 

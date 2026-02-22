@@ -28,3 +28,6 @@ python services/price_updater.py --parallel 20
 
 python ./backend/scraper-url/adws/adw_ecommerce_product_scraper.py --urls-file test_urls.txt
 python adws/adw_ecommerce_product_scraper.py --urls-file test_urls.txt --output-file ./results/products.json
+
+
+python ./backend/scraper-url/adws/adw_ecommerce_product_scraper.py --urls-file hp_missing.txt

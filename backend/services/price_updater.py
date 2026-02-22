@@ -399,7 +399,7 @@ class PriceUpdater:
     # Maximum consecutive failures before skipping a product
     MAX_SCRAPE_FAILURES = 3
 
-    def get_all_products(self, retailer_id: Optional[str] = None, limit: Optional[int] = None) -> List[Dict]:
+    def get_all_products(self, retailer_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0) -> List[Dict]:
         """
         Get products from database as a flat list, ordered by oldest update first.
 
@@ -453,6 +453,10 @@ class PriceUpdater:
                 if limit:
                     query += " LIMIT %s"
                     params.append(limit)
+
+                if offset:
+                    query += " OFFSET %s"
+                    params.append(offset)
 
                 cur.execute(query, params)
                 return [dict(p) for p in cur.fetchall()]
@@ -979,7 +983,7 @@ class PriceUpdater:
         logger.info(f"\n[{retailer_id}] Completed: {total_updated}/{len(products)} updated")
         return total_updated
 
-    def run(self, retailer_id: Optional[str] = None, limit: Optional[int] = None) -> UpdateStats:
+    def run(self, retailer_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0) -> UpdateStats:
         """
         Run the price update process.
 
@@ -999,6 +1003,8 @@ class PriceUpdater:
         logger.info(f"Memory at start: {percent:.1f}% ({used_mb/1024:.2f}GB used, {available_mb/1024:.2f}GB available)")
         if limit:
             logger.info(f"Limit: {limit} oldest products")
+        if offset:
+            logger.info(f"Offset: skipping {offset} oldest products")
         logger.info("=" * 60)
 
         # Initial cleanup to start with clean slate
@@ -1008,7 +1014,7 @@ class PriceUpdater:
         gc.collect()
 
         # Get products as flat list (oldest first if limit is set)
-        all_products = self.get_all_products(retailer_id, limit)
+        all_products = self.get_all_products(retailer_id, limit, offset)
         total_products = len(all_products)
         self.stats.total_products = total_products
 

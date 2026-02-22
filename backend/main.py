@@ -857,12 +857,15 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
                 # Determine min and max prices
                 min_price = min(all_prices) if all_prices else None
                 max_price = max(all_prices) if all_prices else None
-                
+                all_equal = len(all_prices) > 1 and all(p == all_prices[0] for p in all_prices)
+
                 # Determine status
                 status = ''
                 if base_price:
                     if len(all_prices) == 1:
                         status = 'No Competitor Data'
+                    elif all_equal:
+                        status = 'Same Price'
                     elif base_price == min_price:
                         if all(p == min_price for p in all_prices):
                             status = 'Cheapest (Shared)'
@@ -886,66 +889,41 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
                     cell = ws.cell(row=row_num, column=6, value=base_price)
                     if base_link:
                         cell.hyperlink = base_link
-                    
+
                     # Apply color based on price comparison
-                    if len(all_prices) > 1:
+                    if len(all_prices) > 1 and not all_equal:
                         if base_price == min_price:
-                            # Cheapest
-                            if all(p == min_price for p in all_prices):
-                                # Same as others (light green)
-                                cell.fill = light_green_fill
-                            else:
-                                # Unique cheapest (dark green)
-                                cell.fill = dark_green_fill
-                                cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
+                            # Unique cheapest (dark green)
+                            cell.fill = dark_green_fill
+                            cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
                         elif base_price == max_price:
-                            # Most expensive
-                            if all(p == max_price for p in all_prices):
-                                # Same as others (light red)
-                                cell.fill = light_red_fill
-                            else:
-                                # Unique most expensive (dark red)
-                                cell.fill = dark_red_fill
-                                cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
+                            # Unique most expensive (dark red)
+                            cell.fill = dark_red_fill
+                            cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
                         else:
-                            # Keep default hyperlink font
                             if base_link:
                                 cell.font = link_font
                     elif base_link:
                         cell.font = link_font
-                
+
                 # Retailer prices with hyperlinks and colors
                 for col_offset, retailer_name in enumerate(retailer_order):
                     col_num = 7 + col_offset
                     data = get_retailer_data(retailer_data, retailer_name)
                     if data and data["price"]:
                         cell = ws.cell(row=row_num, column=col_num, value=data["price"])
-                        
+
                         # Apply color based on price comparison
-                        if len(all_prices) > 1:
-                            # Check if same as TWD (grey)
-                            if base_price and data["price"] == base_price:
-                                cell.fill = grey_fill
-                            elif data["price"] == min_price:
-                                # Cheapest
-                                if all(p == min_price for p in all_prices):
-                                    # Same as others (light green)
-                                    cell.fill = light_green_fill
-                                else:
-                                    # Unique cheapest (dark green)
-                                    cell.fill = dark_green_fill
-                                    cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
+                        if len(all_prices) > 1 and not all_equal:
+                            if data["price"] == min_price:
+                                # Unique cheapest (dark green)
+                                cell.fill = dark_green_fill
+                                cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
                             elif data["price"] == max_price:
-                                # Most expensive
-                                if all(p == max_price for p in all_prices):
-                                    # Same as others (light red)
-                                    cell.fill = light_red_fill
-                                else:
-                                    # Unique most expensive (dark red)
-                                    cell.fill = dark_red_fill
-                                    cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
+                                # Unique most expensive (dark red)
+                                cell.fill = dark_red_fill
+                                cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
                             else:
-                                # Middle price - keep default
                                 if data["link"]:
                                     cell.hyperlink = data["link"]
                                     cell.font = link_font
@@ -953,7 +931,7 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
                             if data["link"]:
                                 cell.hyperlink = data["link"]
                                 cell.font = link_font
-                        
+
                         # Set hyperlink if not already set by color logic
                         if data["link"] and not cell.hyperlink:
                             cell.hyperlink = data["link"]
@@ -2179,9 +2157,12 @@ def export_products(
 
                 # Determine status
                 status = ''
+                all_equal = len(all_prices) > 1 and all(p == all_prices[0] for p in all_prices)
                 if base_price:
                     if len(all_prices) == 1:
                         status = 'No Competitor Data'
+                    elif all_equal:
+                        status = 'Same Price'
                     elif base_price == min_price:
                         if all(p == min_price for p in all_prices):
                             status = 'Cheapest (Shared)'
@@ -2205,29 +2186,18 @@ def export_products(
                     cell = ws.cell(row=row_num, column=6, value=base_price)
                     if base_link:
                         cell.hyperlink = base_link
-                    
+
                     # Apply color based on price comparison
-                    if len(all_prices) > 1:
+                    if len(all_prices) > 1 and not all_equal:
                         if base_price == min_price:
-                            # Cheapest
-                            if all(p == min_price for p in all_prices):
-                                # Same as others (light green)
-                                cell.fill = light_green_fill
-                            else:
-                                # Unique cheapest (dark green)
-                                cell.fill = dark_green_fill
-                                cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
+                            # Unique cheapest (dark green)
+                            cell.fill = dark_green_fill
+                            cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
                         elif base_price == max_price:
-                            # Most expensive
-                            if all(p == max_price for p in all_prices):
-                                # Same as others (light red)
-                                cell.fill = light_red_fill
-                            else:
-                                # Unique most expensive (dark red)
-                                cell.fill = dark_red_fill
-                                cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
+                            # Unique most expensive (dark red)
+                            cell.fill = dark_red_fill
+                            cell.font = Font(color="FFFFFF", underline="single") if base_link else Font(color="FFFFFF")
                         else:
-                            # Keep default hyperlink font
                             if base_link:
                                 cell.font = link_font
                     elif base_link:
@@ -2239,32 +2209,18 @@ def export_products(
                     data = get_retailer_data(retailer_data, retailer_name)
                     if data and data["price"]:
                         cell = ws.cell(row=row_num, column=col_num, value=data["price"])
-                        
+
                         # Apply color based on price comparison
-                        if len(all_prices) > 1:
-                            # Check if same as TWD (grey)
-                            if base_price and data["price"] == base_price:
-                                cell.fill = grey_fill
-                            elif data["price"] == min_price:
-                                # Cheapest
-                                if all(p == min_price for p in all_prices):
-                                    # Same as others (light green)
-                                    cell.fill = light_green_fill
-                                else:
-                                    # Unique cheapest (dark green)
-                                    cell.fill = dark_green_fill
-                                    cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
+                        if len(all_prices) > 1 and not all_equal:
+                            if data["price"] == min_price:
+                                # Unique cheapest (dark green)
+                                cell.fill = dark_green_fill
+                                cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
                             elif data["price"] == max_price:
-                                # Most expensive
-                                if all(p == max_price for p in all_prices):
-                                    # Same as others (light red)
-                                    cell.fill = light_red_fill
-                                else:
-                                    # Unique most expensive (dark red)
-                                    cell.fill = dark_red_fill
-                                    cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
+                                # Unique most expensive (dark red)
+                                cell.fill = dark_red_fill
+                                cell.font = Font(color="FFFFFF", underline="single") if data["link"] else Font(color="FFFFFF")
                             else:
-                                # Middle price - keep default
                                 if data["link"]:
                                     cell.hyperlink = data["link"]
                                     cell.font = link_font
@@ -2272,7 +2228,7 @@ def export_products(
                             if data["link"]:
                                 cell.hyperlink = data["link"]
                                 cell.font = link_font
-                        
+
                         # Set hyperlink if not already set by color logic
                         if data["link"] and not cell.hyperlink:
                             cell.hyperlink = data["link"]
@@ -2549,9 +2505,12 @@ def export_price_history(
 
                 # Determine status
                 status = ''
+                all_equal = len(all_prices) > 1 and all(p == all_prices[0] for p in all_prices)
                 if base_price:
                     if len(all_prices) == 1:
                         status = 'No Competitor Data'
+                    elif all_equal:
+                        status = 'Same Price'
                     elif base_price == min_price:
                         if all(p == min_price for p in all_prices):
                             status = 'Cheapest (Shared)'
@@ -2573,19 +2532,13 @@ def export_price_history(
                 # Write base product price with color (column 6)
                 if base_price:
                     cell = ws.cell(row=row_num, column=6, value=base_price)
-                    if len(all_prices) > 1:
+                    if len(all_prices) > 1 and not all_equal:
                         if base_price == min_price:
-                            if all(p == min_price for p in all_prices):
-                                cell.fill = light_green_fill
-                            else:
-                                cell.fill = dark_green_fill
-                                cell.font = white_font
+                            cell.fill = dark_green_fill
+                            cell.font = white_font
                         elif base_price == max_price:
-                            if all(p == max_price for p in all_prices):
-                                cell.fill = light_red_fill
-                            else:
-                                cell.fill = dark_red_fill
-                                cell.font = white_font
+                            cell.fill = dark_red_fill
+                            cell.font = white_font
                 else:
                     ws.cell(row=row_num, column=6, value='')
 
@@ -2595,21 +2548,13 @@ def export_price_history(
                     retailer_price = retailer_prices.get(retailer)
                     if retailer_price:
                         cell = ws.cell(row=row_num, column=col_num, value=retailer_price)
-                        if len(all_prices) > 1:
-                            if base_price and retailer_price == base_price:
-                                cell.fill = grey_fill
-                            elif retailer_price == min_price:
-                                if all(p == min_price for p in all_prices):
-                                    cell.fill = light_green_fill
-                                else:
-                                    cell.fill = dark_green_fill
-                                    cell.font = white_font
+                        if len(all_prices) > 1 and not all_equal:
+                            if retailer_price == min_price:
+                                cell.fill = dark_green_fill
+                                cell.font = white_font
                             elif retailer_price == max_price:
-                                if all(p == max_price for p in all_prices):
-                                    cell.fill = light_red_fill
-                                else:
-                                    cell.fill = dark_red_fill
-                                    cell.font = white_font
+                                cell.fill = dark_red_fill
+                                cell.font = white_font
                     else:
                         ws.cell(row=row_num, column=col_num, value='')
 

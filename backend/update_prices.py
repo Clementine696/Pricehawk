@@ -16,6 +16,7 @@ Environment Variables:
 - UPDATE_PARALLEL: Number of parallel workers (default: 1)
 - UPDATE_RETAILER: Optional specific retailer to update (twd, hp, dh, etc.)
 - UPDATE_LIMIT: Optional limit on number of products to update (oldest first)
+- UPDATE_OFFSET: Optional number of oldest products to skip (default: 0, use to split across multiple cron jobs)
 """
 
 import os
@@ -44,6 +45,8 @@ def main():
     retailer = os.environ.get('UPDATE_RETAILER')  # Optional: specific retailer
     limit_str = os.environ.get('UPDATE_LIMIT')  # Optional: limit number of products
     limit = int(limit_str) if limit_str else None
+    offset_str = os.environ.get('UPDATE_OFFSET')  # Optional: skip N oldest products
+    offset = int(offset_str) if offset_str else 0
 
     logger.info(f"Configuration:")
     logger.info(f"  Batch Size: {batch_size}")
@@ -51,6 +54,7 @@ def main():
     logger.info(f"  Parallel Workers: {parallel_workers}")
     logger.info(f"  Retailer Filter: {retailer or 'ALL'}")
     logger.info(f"  Product Limit: {limit or 'NONE (all products)'}")
+    logger.info(f"  Offset: {offset} (skipping {offset} oldest products)")
 
     # Initialize and run
     updater = PriceUpdater(
@@ -63,7 +67,7 @@ def main():
     )
 
     try:
-        stats = updater.run(retailer_id=retailer, limit=limit)
+        stats = updater.run(retailer_id=retailer, limit=limit, offset=offset)
 
         # Save run summary
         summary = {
@@ -74,7 +78,8 @@ def main():
                 'delay': delay,
                 'parallel_workers': parallel_workers,
                 'retailer': retailer,
-                'limit': limit
+                'limit': limit,
+                'offset': offset
             }
         }
 

@@ -186,7 +186,7 @@ export default function PriceByLocationSettingsPage() {
 
   return (
     <MainLayout>
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-6">
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -262,7 +262,7 @@ export default function PriceByLocationSettingsPage() {
             />
 
             {/* Groups List */}
-            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            <div className="space-y-2 max-h-[calc(100vh-380px)] overflow-y-auto">
               {filteredGroups.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">No groups found</p>
               ) : (
@@ -323,7 +323,7 @@ export default function PriceByLocationSettingsPage() {
             />
 
             {/* Locations List */}
-            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            <div className="space-y-2 max-h-[calc(100vh-380px)] overflow-y-auto">
               {filteredLocations.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">No locations found</p>
               ) : (

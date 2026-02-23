@@ -1620,30 +1620,20 @@ class HomeProExtractor(ProductExtractor):
             # HomePro specific price patterns - prioritized from most specific to general
             # Focus on patterns that identify MAIN product price, not related products
             homepro_price_patterns = [
-                # 1. obcon-price-info container (MOST RELIABLE for HomePro main product)
-                # Pattern: <span class="obcon-price-info">...<span class="currency">฿</span>...<span class="amount">1,190</span>
+                # 1. discount-price container — the actual displayed sale/online price (e.g. 59)
+                # MUST come before GTM which returns the member card price (e.g. 79)
+                r'<div[^>]*class="[^"]*discount-price[^"]*"[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
+                # 2. obcon-price-info container (MOST RELIABLE for HomePro main product)
                 r'obcon-price-info[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 2. Price div with specific class pattern for main product (not cards/tiles)
+                # 3. Price div with specific class pattern for main product (not cards/tiles)
                 r'<div[^>]*class="[^"]*price[^"]*"[^>]*>\s*(?:<[^>]*>)*\s*฿\s*([\d,]+)</div>',
-                # 3. Amount class with currency sibling (main product pattern)
+                # 4. Amount class with currency sibling (main product pattern)
                 r'<span[^>]*class="[^"]*currency[^"]*"[^>]*>฿</span>\s*(?:<[^>]*>)*\s*<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 4. Price meta tag
+                # 5. Price meta tag
                 r'<meta[^>]*property=["\']product:price:amount["\'][^>]*content=["\']([\d.]+)["\']',
             ]
 
-            # First, try SKU-specific GTM input (most reliable if available)
-            if product.sku:
-                sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
-                sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
-                if sku_matches:
-                    try:
-                        price = float(sku_matches[0])
-                        if 1 <= price <= 500000:
-                            product.current_price = price
-                    except ValueError:
-                        pass
-
-            # If SKU-specific GTM didn't work, try other patterns
+            # Try HTML price patterns first (discount-price is most accurate)
             if not product.current_price:
                 import sys
                 print(f"[HomePro EXTRACT] GTM price not found, trying {len(homepro_price_patterns)} HTML patterns...", flush=True, file=sys.stderr)
@@ -1670,6 +1660,19 @@ class HomeProExtractor(ProductExtractor):
                                 continue
                     if product.current_price:
                         break
+
+            # Last resort: SKU-specific GTM input (may be member price, not online price)
+            if not product.current_price and product.sku:
+                sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
+                sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
+                if sku_matches:
+                    try:
+                        price = float(sku_matches[0])
+                        if 1 <= price <= 500000:
+                            product.current_price = price
+                            print(f"[HomePro EXTRACT] GTM fallback price: {price}", flush=True, file=sys.stderr)
+                    except ValueError:
+                        pass
 
         # 3. Extract original price from HTML (for discount calculation)
         # HomePro HTML: <div class="original-price">...<span class="amount">235</span>

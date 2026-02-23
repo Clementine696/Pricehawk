@@ -1408,140 +1408,6 @@ def trigger_location_price_scrape(user: dict = Depends(get_current_user)):
     }
 
 
-@app.get("/api/location-prices/export")
-def export_location_prices(
-    group_id: Optional[int] = None,
-    user: dict = Depends(get_current_user)
-):
-    """
-    Export location-based prices to Excel
-    
-    Query params:
-    - group_id: Filter by S-dept group (optional)
-    """
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # Get location prices with product details
-            query = """
-                SELECT 
-                    p_twd.sku as twd_sku,
-                    p_twd.name as twd_name,
-                    p_twd.brand as twd_brand,
-                    p_twd.current_price as twd_price,
-                    p_twd.link as twd_link,
-                    p_gbh.sku as gbh_sku,
-                    p_gbh.name as gbh_name,
-                    p_gbh.link as gbh_link,
-                    l.name_th as location_name,
-                    l.branch_code,
-                    plp.price as location_price,
-                    plp.last_updated_at,
-                    wsg.display_name as group_name
-                FROM product_location_prices plp
-                JOIN products p_gbh ON plp.product_id = p_gbh.product_id
-                JOIN locations l ON plp.location_id = l.location_id
-                JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id 
-                    AND pm.verified_by_user = TRUE AND pm.is_same = TRUE
-                JOIN products p_twd ON pm.base_product_id = p_twd.product_id
-                JOIN watchlist_sku_group_products wsgp ON p_twd.sku = wsgp.sku
-                JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
-                WHERE p_twd.retailer_id = 'twd' AND p_gbh.retailer_id = 'gbh'
-            """
-            
-            params = []
-            if group_id:
-                query += " AND wsg.group_id = %s"
-                params.append(group_id)
-            
-            query += " ORDER BY p_twd.sku ASC, l.name_th ASC"
-            
-            cur.execute(query, params)
-            prices = cur.fetchall()
-            
-            if not prices:
-                raise HTTPException(status_code=404, detail="No location prices found")
-            
-            # Create Excel workbook
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Location Prices"
-            
-            # Header styling
-            header_fill = PatternFill(start_color="0066CC", end_color="0066CC", fill_type="solid")
-            header_font = Font(bold=True, color="FFFFFF")
-            
-            # Headers
-            headers = [
-                "TWD SKU", "TWD Product Name", "TWD Brand", "TWD Price",
-                "GBH SKU", "GBH Product Name", "Location", "Branch Code",
-                "Location Price", "Price Diff", "Last Updated", "Group"
-            ]
-            
-            for col_num, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col_num, value=header)
-                cell.fill = header_fill
-                cell.font = header_font
-            
-            # Data rows
-            for row_num, row in enumerate(prices, 2):
-                twd_price = float(row['twd_price']) if row['twd_price'] else 0
-                loc_price = float(row['location_price']) if row['location_price'] else 0
-                price_diff = loc_price - twd_price if twd_price and loc_price else None
-                
-                # TWD SKU with hyperlink
-                twd_sku_cell = ws.cell(row=row_num, column=1, value=row['twd_sku'])
-                if row['twd_link']:
-                    twd_sku_cell.hyperlink = row['twd_link']
-                    twd_sku_cell.font = Font(color="0000FF", underline="single")
-                
-                ws.cell(row=row_num, column=2, value=row['twd_name'])
-                ws.cell(row=row_num, column=3, value=row['twd_brand'])
-                ws.cell(row=row_num, column=4, value=twd_price)
-                
-                # GBH SKU with hyperlink
-                gbh_sku_cell = ws.cell(row=row_num, column=5, value=row['gbh_sku'])
-                if row['gbh_link']:
-                    gbh_sku_cell.hyperlink = row['gbh_link']
-                    gbh_sku_cell.font = Font(color="0000FF", underline="single")
-                
-                ws.cell(row=row_num, column=6, value=row['gbh_name'])
-                ws.cell(row=row_num, column=7, value=row['location_name'])
-                ws.cell(row=row_num, column=8, value=row['branch_code'])
-                ws.cell(row=row_num, column=9, value=loc_price)
-                ws.cell(row=row_num, column=10, value=price_diff)
-                ws.cell(row=row_num, column=11, value=row['last_updated_at'].strftime('%Y-%m-%d %H:%M') if row['last_updated_at'] else '')
-                ws.cell(row=row_num, column=12, value=row['group_name'])
-            
-            # Auto-adjust column widths
-            for column in ws.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min(max_length + 2, 50)
-                ws.column_dimensions[column_letter].width = adjusted_width
-            
-            # Save to BytesIO
-            output = io.BytesIO()
-            wb.save(output)
-            output.seek(0)
-            
-            # Generate filename
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            group_suffix = f"_group_{group_id}" if group_id else ""
-            filename = f"location_prices{group_suffix}_{timestamp}.xlsx"
-            
-            return Response(
-                content=output.getvalue(),
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": f"attachment; filename={filename}"}
-            )
-
-
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
@@ -4713,93 +4579,275 @@ def get_location_prices_by_sku(
 
 
 @app.get("/api/location-prices/export")
-def export_location_prices(user: dict = Depends(get_current_user)):
-    """Export location prices to Excel"""
+def export_location_prices_template(
+    search: str = Query(None),
+    category: str = Query(None),
+    brand: str = Query(None),
+    price_status: str = Query(None),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Export location prices to Excel in template format:
+    Row 1: Section headers (TWD | GlobalHouse branches | Diff columns)
+    Row 2: Column headers (SKU, Name, Brand, S-dept, Base price, branch names x2)
+    Data: One row per TWD product, branch prices as columns, diff = TWD - branch
+    """
     import io
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
-    from fastapi.responses import StreamingResponse
-    from psycopg2.extras import RealDictCursor
 
     with get_db() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with conn.cursor() as cur:
+            # 1. Get all monitored locations ordered by name_th
+            cur.execute("""
+                SELECT l.location_id, l.name_th, l.branch_code
+                FROM location_monitored_locations lml
+                JOIN locations l ON lml.location_id = l.location_id
+                ORDER BY l.name_th
+            """)
+            locations = cur.fetchall()
+            location_ids = [r['location_id'] for r in locations]
+            location_names = [r['name_th'] for r in locations]
 
-        cursor.execute("""
-            SELECT
-                p_twd.sku as twd_sku,
-                p_twd.name as twd_name,
-                p_gbh.sku as gbh_sku,
-                p_gbh.name as gbh_name,
-                wsg.name as sdept,
-                l.name_en as location,
-                plp.price,
-                plp.last_updated_at as scraped_at
-            FROM product_location_prices plp
-            JOIN locations l ON plp.location_id = l.location_id
-            JOIN products p_gbh ON plp.product_id = p_gbh.product_id
-            JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
-            JOIN products p_twd ON pm.base_product_id = p_twd.product_id
-            JOIN watchlist_sku_group_products wsgp ON wsgp.sku = p_twd.sku
-            JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
-            WHERE pm.verified_by_user = TRUE
-              AND pm.is_same = TRUE
-              AND p_twd.retailer_id = 'twd'
-              AND p_gbh.retailer_id = 'gbh'
-            ORDER BY p_twd.sku, l.name_en
-        """)
+            if not location_ids:
+                raise HTTPException(status_code=404, detail="No monitored locations configured")
 
-        data = cursor.fetchall()
+            # 2. Build filter conditions (same logic as summary endpoint)
+            filters = []
+            params = []
 
-        # Create Excel workbook
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Location Prices"
+            if search:
+                search_normalized = search.replace('\n', ' ').replace('\r', ' ').replace(',', ' ')
+                search_values = [s.strip() for s in search_normalized.split() if s.strip()]
+                if len(search_values) > 1:
+                    placeholders = ','.join(['%s'] * len(search_values))
+                    filters.append(f"p_twd.sku IN ({placeholders})")
+                    params.extend(search_values)
+                else:
+                    like = f"%{search}%"
+                    filters.append("(p_twd.sku ILIKE %s OR p_twd.name ILIKE %s OR p_twd.brand ILIKE %s)")
+                    params.extend([like, like, like])
 
-        # Headers
-        headers = ['TWD SKU', 'TWD Name', 'GBH SKU', 'GBH Name', 'Group', 'Location', 'Price', 'Scraped At']
-        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-        header_font = Font(color="FFFFFF", bold=True)
+            category_list = [c.strip() for c in category.split(',') if c.strip()] if category else []
+            brand_list = [b.strip() for b in brand.split(',') if b.strip()] if brand else []
 
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if category_list:
+                placeholders = ','.join(['%s'] * len(category_list))
+                filters.append(f"p_twd.category IN ({placeholders})")
+                params.extend(category_list)
 
-        # Data rows
-        for row_idx, row_data in enumerate(data, 2):
-            ws.cell(row=row_idx, column=1, value=row_data['twd_sku'])
-            ws.cell(row=row_idx, column=2, value=row_data['twd_name'])
-            ws.cell(row=row_idx, column=3, value=row_data['gbh_sku'])
-            ws.cell(row=row_idx, column=4, value=row_data['gbh_name'])
-            ws.cell(row=row_idx, column=5, value=row_data['sdept'])
-            ws.cell(row=row_idx, column=6, value=row_data['location'])
-            ws.cell(row=row_idx, column=7, value=row_data['price'])
-            ws.cell(row=row_idx, column=8, value=row_data['scraped_at'].strftime('%Y-%m-%d %H:%M:%S') if row_data['scraped_at'] else '')
+            if brand_list:
+                placeholders = ','.join(['%s'] * len(brand_list))
+                filters.append(f"p_twd.brand IN ({placeholders})")
+                params.extend(brand_list)
 
-        # Auto-size columns
-        for col in ws.columns:
-            max_length = 0
-            column = col[0].column_letter
-            for cell in col:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column].width = adjusted_width
+            extra_filters = (" AND " + " AND ".join(filters)) if filters else ""
 
-        # Save to bytes
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
+            having_clause = ""
+            if price_status == "has_cheaper":
+                having_clause = "HAVING MIN(plp.price) < p_twd.current_price"
+            elif price_status == "all_higher":
+                having_clause = "HAVING MIN(plp.price) >= p_twd.current_price AND MAX(plp.price) > p_twd.current_price"
+            elif price_status == "same":
+                having_clause = "HAVING MIN(plp.price) = p_twd.current_price AND MAX(plp.price) = p_twd.current_price"
 
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=location_prices.xlsx"}
-        )
+            # 3. Get filtered SKUs (applying HAVING for price_status)
+            if having_clause:
+                cur.execute(f"""
+                    SELECT p_twd.sku
+                    FROM product_location_prices plp
+                    JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+                    JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
+                        AND pm.verified_result = TRUE
+                    JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+                    WHERE p_twd.retailer_id = 'twd'
+                      AND p_gbh.retailer_id = 'gbh'
+                      AND plp.location_id = ANY(%s)
+                      {extra_filters}
+                    GROUP BY p_twd.sku, p_twd.current_price
+                    {having_clause}
+                """, [location_ids] + params)
+                filtered_skus = [r['sku'] for r in cur.fetchall()]
+                if not filtered_skus:
+                    filtered_skus = ['__no_match__']
+                sku_filter = f"AND p_twd.sku = ANY(ARRAY{filtered_skus!r})"
+                data_params = [location_ids]
+            else:
+                sku_filter = ""
+                data_params = [location_ids] + params
+
+            # 4. Get products with their location prices
+            cur.execute(f"""
+                SELECT
+                    p_twd.sku as twd_sku,
+                    p_twd.name as twd_name,
+                    p_twd.brand,
+                    p_twd.category as sdept,
+                    p_twd.current_price as twd_price,
+                    plp.location_id,
+                    plp.price as branch_price
+                FROM product_location_prices plp
+                JOIN products p_gbh ON plp.product_id = p_gbh.product_id
+                JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
+                    AND pm.verified_result = TRUE
+                JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+                WHERE p_twd.retailer_id = 'twd'
+                  AND p_gbh.retailer_id = 'gbh'
+                  AND plp.location_id = ANY(%s)
+                  {extra_filters if not having_clause else ''}
+                  {sku_filter}
+                ORDER BY p_twd.sku
+            """, data_params)
+            rows = cur.fetchall()
+
+    # 3. Pivot data: {sku -> {location_id -> price}}
+    from collections import OrderedDict
+    products = OrderedDict()  # sku -> product info dict
+    for row in rows:
+        twd_sku = row['twd_sku']
+        twd_name = row['twd_name']
+        brand = row['brand']
+        sdept = row['sdept']
+        twd_price = row['twd_price']
+        location_id = row['location_id']
+        branch_price = row['branch_price']
+        if twd_sku not in products:
+            products[twd_sku] = {
+                'name': twd_name,
+                'brand': brand or '',
+                'sdept': sdept or '',
+                'twd_price': float(twd_price) if twd_price else None,
+                'branch_prices': {}
+            }
+        products[twd_sku]['branch_prices'][location_id] = float(branch_price) if branch_price else None
+
+    # 4. Build Excel
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "price by location"
+
+    n = len(location_ids)  # number of branches
+    # Column layout:
+    # A-D: SKU, Name, Brand, S-dept  (cols 1-4)
+    # E:   TWD Base price             (col 5)
+    # F..: GBH branch prices          (cols 6 to 5+n)
+    # next n cols: Diff (TWD - branch) (cols 6+n to 5+2n)
+
+    twd_col = 5
+    gbh_start = 6
+    gbh_end = 5 + n
+    diff_start = 6 + n
+    diff_end = 5 + 2 * n
+
+    # Styles
+    red_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+    green_fill = PatternFill(start_color="00B050", end_color="00B050", fill_type="solid")
+    purple_fill = PatternFill(start_color="A982C5", end_color="A982C5", fill_type="solid")
+    diff_pos_fill = PatternFill(start_color="FFA7A4", end_color="FFA7A4", fill_type="solid")  # light red — TWD more expensive
+    diff_neg_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")  # light green — TWD cheaper
+    white_font = Font(color="FFFFFF", bold=True)
+    black_bold = Font(color="000000", bold=True)
+    black_normal = Font(color="000000")
+    diff_pos_font = Font(color="C00000", bold=True)
+    diff_neg_font = Font(color="375623", bold=True)
+    center = Alignment(horizontal="center", vertical="center")
+
+    from openpyxl.styles import Border, Side
+    thin = Side(style='thin')
+    thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # ROW 1: Section headers
+    # A1:D1 empty merged
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+    # E1:E2 merged: TWD (red, white font)
+    ws.merge_cells(start_row=1, start_column=twd_col, end_row=2, end_column=twd_col)
+    c = ws.cell(1, twd_col, "TWD")
+    c.fill = red_fill; c.font = white_font; c.alignment = center
+    # F1:gbh_end merged: GlobalHouse (green, white font)
+    ws.merge_cells(start_row=1, start_column=gbh_start, end_row=1, end_column=gbh_end)
+    c = ws.cell(1, gbh_start, "GlobalHouse")
+    c.fill = green_fill; c.font = white_font; c.alignment = center
+    # diff_start:diff_end merged: My price compared to GlobalHouse (purple, black font)
+    ws.merge_cells(start_row=1, start_column=diff_start, end_row=1, end_column=diff_end)
+    c = ws.cell(1, diff_start, "My price compared to GlobalHouse")
+    c.fill = purple_fill; c.font = black_bold; c.alignment = center
+
+    # ROW 2: Column headers
+    for col, header in enumerate(['SKU', 'Product Name', 'Brand', 'S-dept'], 1):
+        c = ws.cell(2, col, header)
+        c.font = black_bold; c.alignment = center
+    # E2 is part of the E1:E2 merge — no separate header needed
+    for i, name in enumerate(location_names):
+        # GBH price header (green, white font)
+        c = ws.cell(2, gbh_start + i, name)
+        c.fill = green_fill; c.font = white_font; c.alignment = center
+        # Diff header (purple, black font)
+        c = ws.cell(2, diff_start + i, name)
+        c.fill = purple_fill; c.font = black_bold; c.alignment = center
+
+    # DATA ROWS
+    total_cols = diff_end
+    data_row = 3
+    for twd_sku, prod in products.items():
+        twd_price = prod['twd_price']
+        for col in range(1, total_cols + 1):
+            ws.cell(data_row, col).border = thin_border
+
+        c = ws.cell(data_row, 1, twd_sku); c.alignment = center; c.font = black_normal
+        c = ws.cell(data_row, 2, prod['name']); c.font = black_normal
+        c = ws.cell(data_row, 3, prod['brand']); c.alignment = center; c.font = black_normal
+        c = ws.cell(data_row, 4, prod['sdept']); c.alignment = center; c.font = black_normal
+        c = ws.cell(data_row, twd_col, twd_price); c.alignment = center; c.font = black_normal
+
+        for i, loc_id in enumerate(location_ids):
+            branch_price = prod['branch_prices'].get(loc_id)
+
+            # GBH branch price
+            c = ws.cell(data_row, gbh_start + i, branch_price)
+            c.alignment = center; c.font = black_normal
+
+            # Diff = TWD - branch (positive = TWD more expensive, negative = TWD cheaper)
+            if twd_price is not None and branch_price is not None:
+                diff = round(twd_price - branch_price, 2)
+                c_diff = ws.cell(data_row, diff_start + i, diff)
+                c_diff.alignment = center
+                if diff > 0:
+                    c_diff.fill = diff_pos_fill
+                    c_diff.font = diff_pos_font
+                elif diff < 0:
+                    c_diff.fill = diff_neg_fill
+                    c_diff.font = diff_neg_font
+                else:
+                    c_diff.font = black_normal
+            else:
+                ws.cell(data_row, diff_start + i, None).font = black_normal
+
+        data_row += 1
+
+    # Column widths
+    ws.column_dimensions['A'].width = 14  # SKU
+    ws.column_dimensions['B'].width = 45  # Name
+    ws.column_dimensions['C'].width = 16  # Brand
+    ws.column_dimensions['D'].width = 16  # S-dept
+    ws.column_dimensions['E'].width = 12  # Base price
+    from openpyxl.utils import get_column_letter
+    for i in range(n):
+        ws.column_dimensions[get_column_letter(gbh_start + i)].width = 16
+        ws.column_dimensions[get_column_letter(diff_start + i)].width = 16
+
+    # Freeze row 2 so headers stay visible
+    ws.freeze_panes = "A3"
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"price_by_location_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 

@@ -371,7 +371,27 @@ function PriceByLocationContent() {
               <RotateCcw className="w-4 h-4" />
               Refresh
             </button>
-            <button className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
+            <button
+              onClick={async () => {
+                const params = new URLSearchParams();
+                if (search) params.set('search', search);
+                if (selectedCategories.length > 0) params.set('category', selectedCategories.join(','));
+                if (selectedBrands.length > 0) params.set('brand', selectedBrands.join(','));
+                if (priceStatus) params.set('price_status', priceStatus);
+                const qs = params.toString();
+                const res = await apiFetch(`/api/location-prices/export${qs ? `?${qs}` : ''}`);
+                if (res.ok) {
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `price_by_location_${new Date().toISOString().slice(0,10)}.xlsx`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
               <Download className="w-4 h-4" />
               Export
             </button>

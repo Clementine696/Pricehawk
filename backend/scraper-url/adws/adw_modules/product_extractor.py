@@ -2209,15 +2209,35 @@ class MegaHomeExtractor(ProductExtractor):
             except ValueError:
                 pass
 
-        # Pattern 2: Scale price (bulk pricing) - get the first/lowest price
-        # Format: <span class="scale-price">...<span class="amount">199</span> บาท - <span class="amount">209</span> บาท
+        # Pattern 2: Scale price (bulk pricing) - must get the single-unit (1 ea) price, not the bulk price
+        # Case A: Swiper carousel with per-quantity slides — find the "1 ea" slide
+        # Format: <div class="swiper-slide" onclick="setItemScaling('1');">...1 ea...<span class="amount">50</span>
+        # Case B: Simple scale-price range — get the LAST amount (highest = single unit price)
+        # Format: <span class="scale-price">...<span class="amount">47</span> - <span class="amount">50</span>
         if not product.current_price:
-            scale_price_match = re.search(r'<span class="scale-price">.*?<span class="amount">([0-9,.]+)</span>', html_content, re.DOTALL)
-            if scale_price_match:
+            # Case A: Try swiper carousel first - find slide with onclick="setItemScaling('1')"
+            # Note: quotes in HTML are encoded as &#39; not '
+            swiper_1ea = re.search(
+                r'onclick="setItemScaling\((?:\'|&#39;)1(?:\'|&#39;)\);".*?<span class="amount">([0-9,.]+)</span>',
+                html_content, re.DOTALL
+            )
+            if swiper_1ea:
                 try:
-                    product.current_price = float(scale_price_match.group(1).replace(',', ''))
+                    product.current_price = float(swiper_1ea.group(1).replace(',', ''))
                 except ValueError:
                     pass
+
+            # Case B: Fallback - scale-price range, take the LAST amount (single unit = highest price)
+            if not product.current_price:
+                scale_price_match = re.search(r'<span class="scale-price">(.*?)</span>\s*</div>', html_content, re.DOTALL)
+                if scale_price_match:
+                    amounts = re.findall(r'<span class="amount">([0-9,.]+)</span>', scale_price_match.group(1))
+                    if amounts:
+                        try:
+                            # Last amount is the single-unit price (highest in range)
+                            product.current_price = float(amounts[-1].replace(',', ''))
+                        except ValueError:
+                            pass
 
         # Fallback to hidden gtmPrice input
         if not product.current_price:

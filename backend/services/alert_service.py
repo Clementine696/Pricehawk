@@ -245,11 +245,15 @@ class AlertService:
             CASE
                 WHEN p.retailer_id = 'twd' THEN p.product_id
                 ELSE COALESCE(pm.base_product_id, p.product_id)
-            END as twd_product_id
+            END as twd_product_id,
+            wsg.name as watchlist_group
         FROM recent_changes rc
         JOIN products p ON rc.product_id = p.product_id
         JOIN retailers r ON p.retailer_id = r.retailer_id
         LEFT JOIN product_matches pm ON p.product_id = pm.candidate_product_id AND pm.verified_result = true
+        LEFT JOIN products p_twd ON pm.base_product_id = p_twd.product_id AND p_twd.retailer_id = 'twd'
+        LEFT JOIN watchlist_sku_group_products wsgp ON COALESCE(p_twd.sku, p.sku) = wsgp.sku
+        LEFT JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
         WHERE rc.rn = 1
           AND rc.old_price IS NOT NULL
           AND rc.old_price != rc.new_price
@@ -293,10 +297,14 @@ class AlertService:
             CASE
                 WHEN p.retailer_id = 'twd' THEN p.product_id
                 ELSE COALESCE(pm.base_product_id, p.product_id)
-            END as twd_product_id
+            END as twd_product_id,
+            wsg.name as watchlist_group
         FROM products p
         JOIN retailers r ON p.retailer_id = r.retailer_id
         LEFT JOIN product_matches pm ON p.product_id = pm.candidate_product_id AND pm.verified_result = true
+        LEFT JOIN products p_twd ON pm.base_product_id = p_twd.product_id AND p_twd.retailer_id = 'twd'
+        LEFT JOIN watchlist_sku_group_products wsgp ON COALESCE(p_twd.sku, p.sku) = wsgp.sku
+        LEFT JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
         WHERE
             (p.last_alert_status = 'active' AND p.scrape_fail_count >= 3)
             OR (p.last_alert_status = 'inactive' AND p.scrape_fail_count < 3)

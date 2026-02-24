@@ -788,14 +788,21 @@ View all products on your dashboard
             ]
 
             # Write row
+            link = product.get('link', '')
             for col_num, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_num, column=col_num, value=value)
 
                 # Apply color to price cells (columns 7 and 9)
                 if col_num == 7:  # Old Price
                     cell.fill = red_fill if price_increased else green_fill
+                    if link:
+                        cell.hyperlink = link
+                        cell.font = Font(color='0000FF', underline='single')
                 elif col_num == 9:  # Updated Price (New Price)
                     cell.fill = green_fill if price_increased else red_fill
+                    if link:
+                        cell.hyperlink = link
+                        cell.font = Font(color='0000FF', underline='single')
 
         # Adjust column widths
         ws.column_dimensions['A'].width = 40  # Product Name

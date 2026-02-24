@@ -997,7 +997,9 @@ class ThaiWatsaduExtractor(ProductExtractor):
 
         # CASE 1: Pack/Multiple pricing - Find "1 ชิ้น" (1 piece) price
         # Look for the container with "1 ชิ้น" text and extract adjacent price
-        pack_price_pattern = r'<div[^>]*class="[^"]*whitespace-nowrap[^"]*font-semibold[^"]*"[^>]*>1\s*(?:<!--|&nbsp;|<!--\s*-->)\s*ชิ้น</div>(?:(?!</div>).)*?<div[^>]*class="[^"]*text-center[^"]*text-primary[^"]*text-\[24px\][^"]*font-price[^"]*"[^>]*>([\d,]+)</div>'
+        # The 1-piece card uses text-[40px] (large/highlighted), pack cards use text-[24px] (smaller)
+        # Both are captured here since we anchor on the "1 ชิ้น" label
+        pack_price_pattern = r'<div[^>]*class="[^"]*whitespace-nowrap[^"]*font-semibold[^"]*"[^>]*>1\s*(?:<!--|&nbsp;|<!--\s*-->)\s*ชิ้น</div>(?:(?!</div>).)*?<div[^>]*class="[^"]*text-primary[^"]*text-\[(?:24|40)px\][^"]*font-price[^"]*"[^>]*>([\d,]+(?:\.\d+)?)</div>'
         pack_match = re.search(pack_price_pattern, html_content, re.DOTALL | re.IGNORECASE)
         if pack_match:
             try:
@@ -1009,10 +1011,11 @@ class ThaiWatsaduExtractor(ProductExtractor):
         # CASE 2 & 3: Normal and Coupon case - Red price with text-redPrice class
         # This covers both discount and coupon scenarios
         if not html_current_price:
-            # Look for: <span class="... font-price ... text-redPrice ...">7,740</span>
-            # Use sequential pattern: classes must appear in this order in the HTML
-            # Removed text-2xl requirement since Thai Watsadu now uses responsive sizes like text-sm sm:text-lg
-            red_price_pattern = r'<span[^>]*class="[^"]*font-price[^"]*text-redPrice[^"]*"[^>]*>([\d,]+)</span>'
+            # Look for: <span class="text-redPrice ...">฿</span><span class="... font-price ... text-redPrice ...">363.75</span>
+            # Anchor on the ฿ symbol in a <span> immediately before the price span.
+            # Main product price area always has <span ...>฿</span> before the price span.
+            # Suggested product cards use <div ...>฿</div> + <div ... font-price ...> — excluded by this pattern.
+            red_price_pattern = r'<span[^>]*class="[^"]*text-redPrice[^"]*"[^>]*>฿</span>\s*<span[^>]*class="[^"]*font-price[^"]*text-redPrice[^"]*"[^>]*>([\d,]+(?:\.\d+)?)</span>'
             red_match = re.search(red_price_pattern, html_content, re.IGNORECASE)
             if red_match:
                 try:

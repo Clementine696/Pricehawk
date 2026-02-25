@@ -177,7 +177,7 @@ export default function PriceChangePage() {
 
   return (
     <MainLayout>
-      <div className="p-6 w-full">
+      <div className="w-full">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">

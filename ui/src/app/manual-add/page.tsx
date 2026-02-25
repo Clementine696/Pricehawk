@@ -686,13 +686,6 @@ function ManualAddContent() {
   return (
     <MainLayout>
       <div className="space-y-6">
-        {/* Breadcrumb */}
-        <nav className="text-sm text-gray-500">
-          <span>Home</span>
-          <span className="mx-2">/</span>
-          <span className="font-medium text-gray-900">Manual Comparison</span>
-        </nav>
-
         {/* Page Header */}
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Manual Comparison</h1>

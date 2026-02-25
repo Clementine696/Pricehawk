@@ -186,7 +186,7 @@ export default function PriceByLocationSettingsPage() {
 
   return (
     <MainLayout>
-      <div className="p-6">
+      <div>
         {/* Header with Action Buttons */}
         <div className="mb-6 flex items-start justify-between">
           <div>

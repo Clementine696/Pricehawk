@@ -4319,9 +4319,9 @@ def get_location_prices(
 @app.get("/api/location-prices/summary")
 def get_location_prices_summary(
     search: str = Query(None),
-    category: str = Query(None),
+    watchlist_group: str = Query(None),
     brand: str = Query(None),
-    price_status: str = Query(None, description="has_cheaper | all_higher | same"),
+    price_status: str = Query(None, description="cheapest | same | higher"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     user: dict = Depends(get_current_user)
@@ -4349,13 +4349,13 @@ def get_location_prices_summary(
                 filters.append("(p_twd.sku ILIKE %s OR p_twd.name ILIKE %s OR p_twd.brand ILIKE %s)")
                 params.extend([like, like, like])
 
-        category_list = [c.strip() for c in category.split(',') if c.strip()] if category else []
+        watchlist_list = [w.strip() for w in watchlist_group.split(',') if w.strip()] if watchlist_group else []
         brand_list = [b.strip() for b in brand.split(',') if b.strip()] if brand else []
 
-        if category_list:
-            placeholders = ','.join(['%s'] * len(category_list))
-            filters.append(f"p_twd.category IN ({placeholders})")
-            params.extend(category_list)
+        if watchlist_list:
+            placeholders = ','.join(['%s'] * len(watchlist_list))
+            filters.append(f"wsg.name IN ({placeholders})")
+            params.extend(watchlist_list)
 
         if brand_list:
             placeholders = ','.join(['%s'] * len(brand_list))
@@ -4376,25 +4376,27 @@ def get_location_prices_summary(
             JOIN products p_gbh ON plp.product_id = p_gbh.product_id
             JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
             JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+            LEFT JOIN watchlist_sku_group_products wsgp ON p_twd.sku = wsgp.sku
+            LEFT JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
         """
 
-        # Get filter options (categories + brands) from the full dataset (no filters applied)
+        # Get filter options (watchlist groups + brands) from the full dataset
         cursor.execute(f"""
-            SELECT DISTINCT p_twd.category, p_twd.brand
+            SELECT DISTINCT wsg.name as watchlist_group, p_twd.brand
             {base_joins}
             {base_where}
-            AND p_twd.category IS NOT NULL AND p_twd.brand IS NOT NULL
+            AND wsg.name IS NOT NULL AND p_twd.brand IS NOT NULL
         """)
         filter_rows = cursor.fetchall()
-        all_categories = sorted(set(r["category"] for r in filter_rows if r["category"]))
+        all_watchlist_groups = sorted(set(r["watchlist_group"] for r in filter_rows if r["watchlist_group"]))
         all_brands = sorted(set(r["brand"] for r in filter_rows if r["brand"]))
 
         # Build HAVING clause for price_status filter (used in count + main query)
         having_clause = ""
-        if price_status == "has_cheaper":
+        if price_status == "higher":
             having_clause = "HAVING MIN(plp.price) < p_twd.current_price"
-        elif price_status == "all_higher":
-            having_clause = "HAVING MIN(plp.price) >= p_twd.current_price AND MAX(plp.price) > p_twd.current_price"
+        elif price_status == "cheapest":
+            having_clause = "HAVING p_twd.current_price <= MIN(plp.price)"
         elif price_status == "same":
             having_clause = "HAVING MIN(plp.price) = p_twd.current_price AND MAX(plp.price) = p_twd.current_price"
 
@@ -4461,13 +4463,18 @@ def get_location_prices_summary(
             twd = d.get("twd_price")
             mn = d.get("min_price")
             mx = d.get("max_price")
-            if twd and mn is not None:
-                if mn < twd:
-                    d["price_status"] = "has_cheaper"   # at least one branch is cheaper
-                elif mx is not None and mx > twd:
-                    d["price_status"] = "all_higher"    # all branches are higher
-                else:
+            if twd and mn is not None and mx is not None:
+                # If all prices are the same
+                if twd == mn and twd == mx:
                     d["price_status"] = "same"
+                # If TWD is cheapest (equal to or less than minimum)
+                elif twd <= mn:
+                    d["price_status"] = "cheapest"
+                # If TWD is higher than minimum
+                elif mn < twd:
+                    d["price_status"] = "higher"
+                else:
+                    d["price_status"] = "unknown"
             else:
                 d["price_status"] = "unknown"
             result.append(d)
@@ -4475,7 +4482,7 @@ def get_location_prices_summary(
         return {
             "products": result,
             "total": total,
-            "categories": all_categories,
+            "watchlist_groups": all_watchlist_groups,
             "brands": all_brands,
         }
 
@@ -4497,6 +4504,7 @@ def get_location_prices_by_sku(
                 p_twd.sku as twd_sku,
                 p_twd.name as twd_name,
                 p_twd.current_price as twd_price,
+                p_twd.last_updated_at as twd_updated_at,
                 p_twd.brand,
                 p_twd.category,
                 p_twd.link as twd_url,
@@ -4537,6 +4545,7 @@ def get_location_prices_by_sku(
             "twd_sku": first["twd_sku"],
             "twd_name": first["twd_name"],
             "twd_price": float(first["twd_price"]) if first["twd_price"] else None,
+            "twd_updated_at": first["twd_updated_at"].isoformat() if first["twd_updated_at"] else None,
             "brand": first["brand"],
             "category": first["category"],
             "twd_url": first["twd_url"],
@@ -4581,7 +4590,7 @@ def get_location_prices_by_sku(
 @app.get("/api/location-prices/export")
 def export_location_prices_template(
     search: str = Query(None),
-    category: str = Query(None),
+    watchlist_group: str = Query(None),
     brand: str = Query(None),
     price_status: str = Query(None),
     user: dict = Depends(get_current_user)
@@ -4628,13 +4637,13 @@ def export_location_prices_template(
                     filters.append("(p_twd.sku ILIKE %s OR p_twd.name ILIKE %s OR p_twd.brand ILIKE %s)")
                     params.extend([like, like, like])
 
-            category_list = [c.strip() for c in category.split(',') if c.strip()] if category else []
+            watchlist_list = [w.strip() for w in watchlist_group.split(',') if w.strip()] if watchlist_group else []
             brand_list = [b.strip() for b in brand.split(',') if b.strip()] if brand else []
 
-            if category_list:
-                placeholders = ','.join(['%s'] * len(category_list))
-                filters.append(f"p_twd.category IN ({placeholders})")
-                params.extend(category_list)
+            if watchlist_list:
+                placeholders = ','.join(['%s'] * len(watchlist_list))
+                filters.append(f"wsg.name IN ({placeholders})")
+                params.extend(watchlist_list)
 
             if brand_list:
                 placeholders = ','.join(['%s'] * len(brand_list))
@@ -4644,10 +4653,10 @@ def export_location_prices_template(
             extra_filters = (" AND " + " AND ".join(filters)) if filters else ""
 
             having_clause = ""
-            if price_status == "has_cheaper":
+            if price_status == "higher":
                 having_clause = "HAVING MIN(plp.price) < p_twd.current_price"
-            elif price_status == "all_higher":
-                having_clause = "HAVING MIN(plp.price) >= p_twd.current_price AND MAX(plp.price) > p_twd.current_price"
+            elif price_status == "cheapest":
+                having_clause = "HAVING p_twd.current_price <= MIN(plp.price)"
             elif price_status == "same":
                 having_clause = "HAVING MIN(plp.price) = p_twd.current_price AND MAX(plp.price) = p_twd.current_price"
 
@@ -4660,6 +4669,8 @@ def export_location_prices_template(
                     JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
                         AND pm.verified_result = TRUE
                     JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+                    LEFT JOIN watchlist_sku_group_products wsgp ON p_twd.sku = wsgp.sku
+                    LEFT JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
                     WHERE p_twd.retailer_id = 'twd'
                       AND p_gbh.retailer_id = 'gbh'
                       AND plp.location_id = ANY(%s)
@@ -4691,6 +4702,8 @@ def export_location_prices_template(
                 JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
                     AND pm.verified_result = TRUE
                 JOIN products p_twd ON pm.base_product_id = p_twd.product_id
+                LEFT JOIN watchlist_sku_group_products wsgp ON p_twd.sku = wsgp.sku
+                LEFT JOIN watchlist_sku_groups wsg ON wsgp.group_id = wsg.group_id
                 WHERE p_twd.retailer_id = 'twd'
                   AND p_gbh.retailer_id = 'gbh'
                   AND plp.location_id = ANY(%s)

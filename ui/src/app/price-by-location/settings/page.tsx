@@ -186,15 +186,35 @@ export default function PriceByLocationSettingsPage() {
 
   return (
     <MainLayout>
-      <div className="p-6 max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Price by Location Settings
-          </h1>
-          <p className="text-gray-600">
-            Configure which product groups and locations to monitor for location-based pricing
-          </p>
+      <div>
+        {/* Header with Action Buttons */}
+        <div className="mb-6 flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              Price by Location Settings
+            </h1>
+            <p className="text-gray-600">
+              Configure which product groups and locations to monitor for location-based pricing
+            </p>
+          </div>
+          
+          {/* Action Buttons */}
+          <div className="flex gap-3">
+            <button
+              onClick={() => window.location.href = '/price-by-location'}
+              className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isSaving || (selectedGroups.length === 0 && selectedLocations.length === 0)}
+              className="px-6 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            >
+              {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isSaving ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
         </div>
 
         {/* Error/Success Messages */}
@@ -212,23 +232,27 @@ export default function PriceByLocationSettingsPage() {
         )}
 
         {/* Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <Package className="h-8 w-8 text-cyan-600" />
-              <div>
-                <p className="text-sm text-gray-600">Selected Groups</p>
-                <p className="text-2xl font-bold text-cyan-600">{selectedGroups.length}</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="bg-cyan-500 p-3 rounded-lg">
+                <Package className="h-6 w-6 text-white" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-500">Selected Groups</p>
+                <p className="text-2xl font-bold text-gray-900">{selectedGroups.length}</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <MapPin className="h-8 w-8 text-blue-600" />
-              <div>
-                <p className="text-sm text-gray-600">Selected Locations</p>
-                <p className="text-2xl font-bold text-blue-600">{selectedLocations.length}</p>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="bg-blue-500 p-3 rounded-lg">
+                <MapPin className="h-6 w-6 text-white" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-500">Selected Locations</p>
+                <p className="text-2xl font-bold text-gray-900">{selectedLocations.length}</p>
               </div>
             </div>
           </div>
@@ -236,7 +260,7 @@ export default function PriceByLocationSettingsPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Product Groups Section */}
-          <section className="bg-white border border-gray-200 rounded-lg p-6">
+          <section className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
                 <Package className="h-5 w-5 text-cyan-600" />
@@ -262,7 +286,7 @@ export default function PriceByLocationSettingsPage() {
             />
 
             {/* Groups List */}
-            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            <div className="space-y-2 max-h-[calc(100vh-380px)] overflow-y-auto">
               {filteredGroups.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">No groups found</p>
               ) : (
@@ -297,7 +321,7 @@ export default function PriceByLocationSettingsPage() {
           </section>
 
           {/* Locations Section */}
-          <section className="bg-white border border-gray-200 rounded-lg p-6">
+          <section className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
                 <MapPin className="h-5 w-5 text-blue-600" />
@@ -323,7 +347,7 @@ export default function PriceByLocationSettingsPage() {
             />
 
             {/* Locations List */}
-            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            <div className="space-y-2 max-h-[calc(100vh-380px)] overflow-y-auto">
               {filteredLocations.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">No locations found</p>
               ) : (
@@ -356,24 +380,6 @@ export default function PriceByLocationSettingsPage() {
               )}
             </div>
           </section>
-        </div>
-
-        {/* Save Button */}
-        <div className="mt-6 flex justify-end gap-4">
-          <button
-            onClick={() => window.location.href = '/price-by-location'}
-            className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={isSaving || (selectedGroups.length === 0 && selectedLocations.length === 0)}
-            className="px-6 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-          >
-            {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isSaving ? 'Saving...' : 'Save Settings'}
-          </button>
         </div>
       </div>
     </MainLayout>

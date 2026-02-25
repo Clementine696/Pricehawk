@@ -11,6 +11,7 @@ interface ProductDetail {
   twd_sku: string;
   twd_name: string;
   twd_price: number | null;
+  twd_updated_at: string | null;
   brand: string | null;
   category: string | null;
   twd_url: string | null;
@@ -161,22 +162,50 @@ export default function PriceByLocationDetailPage() {
         </div>
 
         {/* Stats cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-cyan-500">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">TWD Price</p>
-            <p className="text-2xl font-bold text-cyan-600">{formatPrice(product.twd_price)}</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="bg-cyan-500 p-3 rounded-lg">
+                <MapPin className="h-6 w-6 text-white" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-500">TWD Price</p>
+                <p className="text-2xl font-bold text-gray-900">{formatPrice(product.twd_price)}</p>
+              </div>
+            </div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-green-500">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Min Branch Price</p>
-            <p className="text-2xl font-bold text-green-600">{formatPrice(product.min_price)}</p>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="bg-green-500 p-3 rounded-lg">
+                <MapPin className="h-6 w-6 text-white" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-500">Min Branch Price</p>
+                <p className="text-2xl font-bold text-gray-900">{formatPrice(product.min_price)}</p>
+              </div>
+            </div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-red-400">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Max Branch Price</p>
-            <p className="text-2xl font-bold text-red-500">{formatPrice(product.max_price)}</p>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="bg-red-500 p-3 rounded-lg">
+                <MapPin className="h-6 w-6 text-white" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-500">Max Branch Price</p>
+                <p className="text-2xl font-bold text-gray-900">{formatPrice(product.max_price)}</p>
+              </div>
+            </div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-gray-300">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Branches with Data</p>
-            <p className="text-2xl font-bold text-gray-800">{product.branch_count}/{product.total_branches}</p>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="bg-gray-500 p-3 rounded-lg">
+                <MapPin className="h-6 w-6 text-white" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-500">Branches with Data</p>
+                <p className="text-2xl font-bold text-gray-900">{product.branch_count}/{product.total_branches}</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -208,39 +237,46 @@ export default function PriceByLocationDetailPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
-                  <th className="w-[50px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No.</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Branch</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Branch (EN)</th>
-                  <th className="w-[120px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
-                  <th className="w-[120px] px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                  <th className="w-[160px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="w-[140px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
+                  <th className="w-[50px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">No.</th>
+                  <th className="w-[120px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Retailer</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Branch (TH)</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Branch (EN)</th>
+                  <th className="w-[120px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Code</th>
+                  <th className="w-[120px] px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Price</th>
+                  <th className="w-[160px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Status</th>
+                  <th className="w-[140px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Updated</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {/* TWD base price row */}
                 <tr className="bg-cyan-50">
                   <td className="px-4 py-3 text-sm text-gray-400">—</td>
+                  <td className="px-4 py-3 text-sm font-medium text-cyan-700">Thai Watsadu</td>
                   <td className="px-4 py-3 text-sm font-medium text-cyan-700 flex items-center gap-2">
                     <MapPin className="w-4 h-4" />
-                    Thai Watsadu
+                    เทพารักษ์
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">Base Price</td>
-                  <td className="px-4 py-3 text-sm text-gray-400">—</td>
+                  <td className="px-4 py-3 text-sm text-gray-500">Thepharak</td>
+                  <td className="px-4 py-3 text-sm text-gray-400"></td>
                   <td className="px-4 py-3 text-sm font-semibold text-cyan-700 text-right">{formatPrice(product.twd_price)}</td>
                   <td className="px-4 py-3">
-                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-cyan-100 text-cyan-700">Reference</span>
+                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-cyan-100 text-cyan-700">My Price</span>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-400">—</td>
+                  <td className="px-4 py-3 text-xs text-gray-400">
+                    {product.twd_updated_at
+                      ? new Date(product.twd_updated_at).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+                      : '—'}
+                  </td>
                 </tr>
 
                 {filteredBranches.map((branch) => (
                   <tr key={branch.location_id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 text-sm text-gray-500 text-center">{branch.no}</td>
+                    <td className="px-4 py-3 text-sm text-gray-900">Global House</td>
                     <td className="px-4 py-3 text-sm text-gray-900 flex items-center gap-2">
                       <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
                       {branch.branch_name_th}
@@ -267,7 +303,7 @@ export default function PriceByLocationDetailPage() {
 
                 {filteredBranches.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                       No branches found
                     </td>
                   </tr>

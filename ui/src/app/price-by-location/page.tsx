@@ -264,8 +264,8 @@ function PriceByLocationContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [selectedCategories, setSelectedCategories] = useState<string[]>(
-    searchParams.get('category') ? searchParams.get('category')!.split(',') : []
+  const [selectedWatchlistGroups, setSelectedWatchlistGroups] = useState<string[]>(
+    searchParams.get('watchlist_group') ? searchParams.get('watchlist_group')!.split(',') : []
   );
   const [selectedBrands, setSelectedBrands] = useState<string[]>(
     searchParams.get('brand') ? searchParams.get('brand')!.split(',') : []
@@ -274,17 +274,17 @@ function PriceByLocationContent() {
   const [page, setPage] = useState(Number(searchParams.get('page') || 1));
   const [pageSize] = useState(50);
   const [total, setTotal] = useState(0);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [watchlistGroups, setWatchlistGroups] = useState<string[]>([]);
   const [brands, setBrands] = useState<string[]>([]);
 
   useEffect(() => {
     fetchData();
-  }, [page, selectedCategories, selectedBrands, priceStatus]);
+  }, [page, selectedWatchlistGroups, selectedBrands, priceStatus]);
 
   const buildParams = () => {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (search) params.set('search', search);
-    if (selectedCategories.length > 0) params.set('category', selectedCategories.join(','));
+    if (selectedWatchlistGroups.length > 0) params.set('watchlist_group', selectedWatchlistGroups.join(','));
     if (selectedBrands.length > 0) params.set('brand', selectedBrands.join(','));
     if (priceStatus) params.set('price_status', priceStatus);
     return params;
@@ -299,7 +299,7 @@ function PriceByLocationContent() {
       const result = await response.json();
       setProducts(result.products);
       setTotal(result.total);
-      if (result.categories) setCategories(result.categories);
+      if (result.watchlist_groups) setWatchlistGroups(result.watchlist_groups);
       if (result.brands) setBrands(result.brands);
     } catch (err: any) {
       setError(err.message);
@@ -315,15 +315,15 @@ function PriceByLocationContent() {
 
   const handleReset = () => {
     setSearch('');
-    setSelectedCategories([]);
+    setSelectedWatchlistGroups([]);
     setSelectedBrands([]);
     setPriceStatus('');
     setPage(1);
     router.push('/price-by-location');
   };
 
-  const handleCategoryChange = (vals: string[]) => {
-    setSelectedCategories(vals);
+  const handleWatchlistGroupChange = (vals: string[]) => {
+    setSelectedWatchlistGroups(vals);
     setPage(1);
   };
 
@@ -341,17 +341,50 @@ function PriceByLocationContent() {
     return `฿${price.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
-  const getPriceStatusBadge = (status: LocationProduct['price_status']) => {
-    switch (status) {
-      case 'has_cheaper':
-        return <span className="px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-700">Has Cheaper</span>;
-      case 'all_higher':
-        return <span className="px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-600">All Higher</span>;
-      case 'same':
-        return <span className="px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600">Same</span>;
-      default:
-        return <span className="text-gray-400">-</span>;
+  // Compare TWD price to GlobalHouse min/max prices
+  const getPriceCategory = (twdPrice: number | null, minPrice: number | null, maxPrice: number | null): 'cheapest' | 'same' | 'higher' | null => {
+    if (twdPrice === null) return null;
+    if (minPrice === null || maxPrice === null) return null;
+
+    // If all prices are the same
+    if (twdPrice === minPrice && twdPrice === maxPrice) return 'same';
+    
+    // If TWD is cheapest (equal to or less than minimum)
+    if (twdPrice <= minPrice) return 'cheapest';
+    
+    // If TWD is higher than minimum
+    if (twdPrice > minPrice) return 'higher';
+    
+    return null;
+  };
+
+  const getPriceStatusBadge = (twdPrice: number | null, minPrice: number | null, maxPrice: number | null) => {
+    const category = getPriceCategory(twdPrice, minPrice, maxPrice);
+    
+    if (category === null) {
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium bg-gray-200 text-gray-600">
+          No Data
+        </span>
+      );
     }
+
+    const styles: Record<string, string> = {
+      cheapest: 'bg-emerald-500 text-white',
+      same: 'bg-gray-400 text-white',
+      higher: 'bg-amber-500 text-white',
+    };
+    const labels: Record<string, string> = {
+      cheapest: 'Cheapest',
+      same: 'Same',
+      higher: 'Higher',
+    };
+
+    return (
+      <span className={`px-2 py-1 rounded text-xs font-medium ${styles[category]}`}>
+        {labels[category]}
+      </span>
+    );
   };
 
   return (
@@ -361,7 +394,7 @@ function PriceByLocationContent() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Price by Location</h1>
-            <p className="text-gray-600 mt-1">Compare GlobalHouse branch prices against Thai Watsadu</p>
+            <p className="text-gray-600 mt-1">Compare price by location branch</p>
           </div>
           <div className="flex gap-3">
             <button
@@ -370,10 +403,6 @@ function PriceByLocationContent() {
             >
               <RotateCcw className="w-4 h-4" />
               Refresh
-            </button>
-            <button className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
-              <Download className="w-4 h-4" />
-              Export
             </button>
             <Link
               href="/price-by-location/settings"
@@ -403,10 +432,10 @@ function PriceByLocationContent() {
             </div>
 
             <MultiSelect
-              options={categories}
-              selected={selectedCategories}
-              onChange={handleCategoryChange}
-              placeholder="All Categories"
+              options={watchlistGroups}
+              selected={selectedWatchlistGroups}
+              onChange={handleWatchlistGroupChange}
+              placeholder="All Watchlists"
               className="w-[200px]"
             />
 
@@ -420,9 +449,9 @@ function PriceByLocationContent() {
 
             <SingleSelect
               options={[
-                { value: 'has_cheaper', label: 'Has Cheaper' },
-                { value: 'all_higher', label: 'All Higher' },
+                { value: 'cheapest', label: 'Cheapest' },
                 { value: 'same', label: 'Same' },
+                { value: 'higher', label: 'Higher' },
               ]}
               value={priceStatus}
               onChange={(val) => { setPriceStatus(val); setPage(1); }}
@@ -431,18 +460,36 @@ function PriceByLocationContent() {
             />
 
             <button
-              onClick={handleSearch}
-              className="px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors"
-            >
-              Search
-            </button>
-
-            <button
               onClick={handleReset}
               className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               <RotateCcw className="w-4 h-4" />
               Reset
+            </button>
+
+            <button
+              onClick={async () => {
+                const params = new URLSearchParams();
+                if (search) params.set('search', search);
+                if (selectedWatchlistGroups.length > 0) params.set('watchlist_group', selectedWatchlistGroups.join(','));
+                if (selectedBrands.length > 0) params.set('brand', selectedBrands.join(','));
+                if (priceStatus) params.set('price_status', priceStatus);
+                const qs = params.toString();
+                const res = await apiFetch(`/api/location-prices/export${qs ? `?${qs}` : ''}`);
+                if (res.ok) {
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `price_by_location_${new Date().toISOString().slice(0,10)}.xlsx`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Export
             </button>
           </div>
         </div>
@@ -486,7 +533,7 @@ function PriceByLocationContent() {
                       <th className="w-[260px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
                       <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</th>
                       <th className="w-[120px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                      <th className="w-[110px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">TWD Price</th>
+                      <th className="w-[110px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">My Price</th>
                       <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Min</th>
                       <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max</th>
                       <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg</th>
@@ -532,7 +579,7 @@ function PriceByLocationContent() {
                           {product.branch_count}/{product.total_branches}
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap">
-                          {getPriceStatusBadge(product.price_status)}
+                          {getPriceStatusBadge(product.twd_price, product.min_price, product.max_price)}
                         </td>
                       </tr>
                     ))}

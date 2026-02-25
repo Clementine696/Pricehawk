@@ -997,7 +997,9 @@ class ThaiWatsaduExtractor(ProductExtractor):
 
         # CASE 1: Pack/Multiple pricing - Find "1 ชิ้น" (1 piece) price
         # Look for the container with "1 ชิ้น" text and extract adjacent price
-        pack_price_pattern = r'<div[^>]*class="[^"]*whitespace-nowrap[^"]*font-semibold[^"]*"[^>]*>1\s*(?:<!--|&nbsp;|<!--\s*-->)\s*ชิ้น</div>(?:(?!</div>).)*?<div[^>]*class="[^"]*text-center[^"]*text-primary[^"]*text-\[24px\][^"]*font-price[^"]*"[^>]*>([\d,]+)</div>'
+        # The 1-piece card uses text-[40px] (large/highlighted), pack cards use text-[24px] (smaller)
+        # Both are captured here since we anchor on the "1 ชิ้น" label
+        pack_price_pattern = r'<div[^>]*class="[^"]*whitespace-nowrap[^"]*font-semibold[^"]*"[^>]*>1\s*(?:<!--|&nbsp;|<!--\s*-->)\s*ชิ้น</div>(?:(?!</div>).)*?<div[^>]*class="[^"]*text-primary[^"]*text-\[(?:24|40)px\][^"]*font-price[^"]*"[^>]*>([\d,]+(?:\.\d+)?)</div>'
         pack_match = re.search(pack_price_pattern, html_content, re.DOTALL | re.IGNORECASE)
         if pack_match:
             try:
@@ -1009,10 +1011,11 @@ class ThaiWatsaduExtractor(ProductExtractor):
         # CASE 2 & 3: Normal and Coupon case - Red price with text-redPrice class
         # This covers both discount and coupon scenarios
         if not html_current_price:
-            # Look for: <span class="... font-price ... text-redPrice ...">7,740</span>
-            # Use sequential pattern: classes must appear in this order in the HTML
-            # Removed text-2xl requirement since Thai Watsadu now uses responsive sizes like text-sm sm:text-lg
-            red_price_pattern = r'<span[^>]*class="[^"]*font-price[^"]*text-redPrice[^"]*"[^>]*>([\d,]+)</span>'
+            # Look for: <span class="text-redPrice ...">฿</span><span class="... font-price ... text-redPrice ...">363.75</span>
+            # Anchor on the ฿ symbol in a <span> immediately before the price span.
+            # Main product price area always has <span ...>฿</span> before the price span.
+            # Suggested product cards use <div ...>฿</div> + <div ... font-price ...> — excluded by this pattern.
+            red_price_pattern = r'<span[^>]*class="[^"]*text-redPrice[^"]*"[^>]*>฿</span>\s*<span[^>]*class="[^"]*font-price[^"]*text-redPrice[^"]*"[^>]*>([\d,]+(?:\.\d+)?)</span>'
             red_match = re.search(red_price_pattern, html_content, re.IGNORECASE)
             if red_match:
                 try:
@@ -1620,30 +1623,20 @@ class HomeProExtractor(ProductExtractor):
             # HomePro specific price patterns - prioritized from most specific to general
             # Focus on patterns that identify MAIN product price, not related products
             homepro_price_patterns = [
-                # 1. obcon-price-info container (MOST RELIABLE for HomePro main product)
-                # Pattern: <span class="obcon-price-info">...<span class="currency">฿</span>...<span class="amount">1,190</span>
+                # 1. discount-price container — the actual displayed sale/online price (e.g. 59)
+                # MUST come before GTM which returns the member card price (e.g. 79)
+                r'<div[^>]*class="[^"]*discount-price[^"]*"[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
+                # 2. obcon-price-info container (MOST RELIABLE for HomePro main product)
                 r'obcon-price-info[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 2. Price div with specific class pattern for main product (not cards/tiles)
+                # 3. Price div with specific class pattern for main product (not cards/tiles)
                 r'<div[^>]*class="[^"]*price[^"]*"[^>]*>\s*(?:<[^>]*>)*\s*฿\s*([\d,]+)</div>',
-                # 3. Amount class with currency sibling (main product pattern)
+                # 4. Amount class with currency sibling (main product pattern)
                 r'<span[^>]*class="[^"]*currency[^"]*"[^>]*>฿</span>\s*(?:<[^>]*>)*\s*<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 4. Price meta tag
+                # 5. Price meta tag
                 r'<meta[^>]*property=["\']product:price:amount["\'][^>]*content=["\']([\d.]+)["\']',
             ]
 
-            # First, try SKU-specific GTM input (most reliable if available)
-            if product.sku:
-                sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
-                sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
-                if sku_matches:
-                    try:
-                        price = float(sku_matches[0])
-                        if 1 <= price <= 500000:
-                            product.current_price = price
-                    except ValueError:
-                        pass
-
-            # If SKU-specific GTM didn't work, try other patterns
+            # Try HTML price patterns first (discount-price is most accurate)
             if not product.current_price:
                 import sys
                 print(f"[HomePro EXTRACT] GTM price not found, trying {len(homepro_price_patterns)} HTML patterns...", flush=True, file=sys.stderr)
@@ -1670,6 +1663,19 @@ class HomeProExtractor(ProductExtractor):
                                 continue
                     if product.current_price:
                         break
+
+            # Last resort: SKU-specific GTM input (may be member price, not online price)
+            if not product.current_price and product.sku:
+                sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
+                sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
+                if sku_matches:
+                    try:
+                        price = float(sku_matches[0])
+                        if 1 <= price <= 500000:
+                            product.current_price = price
+                            print(f"[HomePro EXTRACT] GTM fallback price: {price}", flush=True, file=sys.stderr)
+                    except ValueError:
+                        pass
 
         # 3. Extract original price from HTML (for discount calculation)
         # HomePro HTML: <div class="original-price">...<span class="amount">235</span>
@@ -2209,15 +2215,35 @@ class MegaHomeExtractor(ProductExtractor):
             except ValueError:
                 pass
 
-        # Pattern 2: Scale price (bulk pricing) - get the first/lowest price
-        # Format: <span class="scale-price">...<span class="amount">199</span> บาท - <span class="amount">209</span> บาท
+        # Pattern 2: Scale price (bulk pricing) - must get the single-unit (1 ea) price, not the bulk price
+        # Case A: Swiper carousel with per-quantity slides — find the "1 ea" slide
+        # Format: <div class="swiper-slide" onclick="setItemScaling('1');">...1 ea...<span class="amount">50</span>
+        # Case B: Simple scale-price range — get the LAST amount (highest = single unit price)
+        # Format: <span class="scale-price">...<span class="amount">47</span> - <span class="amount">50</span>
         if not product.current_price:
-            scale_price_match = re.search(r'<span class="scale-price">.*?<span class="amount">([0-9,.]+)</span>', html_content, re.DOTALL)
-            if scale_price_match:
+            # Case A: Try swiper carousel first - find slide with onclick="setItemScaling('1')"
+            # Note: quotes in HTML are encoded as &#39; not '
+            swiper_1ea = re.search(
+                r'onclick="setItemScaling\((?:\'|&#39;)1(?:\'|&#39;)\);".*?<span class="amount">([0-9,.]+)</span>',
+                html_content, re.DOTALL
+            )
+            if swiper_1ea:
                 try:
-                    product.current_price = float(scale_price_match.group(1).replace(',', ''))
+                    product.current_price = float(swiper_1ea.group(1).replace(',', ''))
                 except ValueError:
                     pass
+
+            # Case B: Fallback - scale-price range, take the LAST amount (single unit = highest price)
+            if not product.current_price:
+                scale_price_match = re.search(r'<span class="scale-price">(.*?)</span>\s*</div>', html_content, re.DOTALL)
+                if scale_price_match:
+                    amounts = re.findall(r'<span class="amount">([0-9,.]+)</span>', scale_price_match.group(1))
+                    if amounts:
+                        try:
+                            # Last amount is the single-unit price (highest in range)
+                            product.current_price = float(amounts[-1].replace(',', ''))
+                        except ValueError:
+                            pass
 
         # Fallback to hidden gtmPrice input
         if not product.current_price:

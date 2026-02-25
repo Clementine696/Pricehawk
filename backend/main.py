@@ -4498,7 +4498,7 @@ def get_location_prices_by_sku(
     with get_db() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Get product info + all branch prices
+        # Get product info + all branch prices (only monitored locations)
         cursor.execute("""
             SELECT
                 p_twd.sku as twd_sku,
@@ -4519,6 +4519,7 @@ def get_location_prices_by_sku(
                 plp.last_updated_at as scraped_at
             FROM product_location_prices plp
             JOIN locations l ON plp.location_id = l.location_id
+            JOIN location_monitored_locations lml ON lml.location_id = l.location_id
             JOIN products p_gbh ON plp.product_id = p_gbh.product_id
             JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
             JOIN products p_twd ON pm.base_product_id = p_twd.product_id

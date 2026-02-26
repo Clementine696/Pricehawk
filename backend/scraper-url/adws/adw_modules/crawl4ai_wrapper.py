@@ -822,6 +822,18 @@ class Crawl4AIWrapper:
             }
         }
 
+        // GlobalHouse specific - click "ข้อมูลจำเพาะ" (Specifications) tab
+        if (window.location.hostname.includes('globalhouse.co.th')) {
+            const gbhTabs = document.querySelectorAll('button[role="tab"]');
+            for (const btn of gbhTabs) {
+                if (btn.textContent && btn.textContent.trim() === 'ข้อมูลจำเพาะ') {
+                    btn.click();
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    break;
+                }
+            }
+        }
+
         // Generic read more buttons
         const selectors = [
             'button[class*="read-more"]',

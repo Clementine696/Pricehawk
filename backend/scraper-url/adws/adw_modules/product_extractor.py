@@ -1615,43 +1615,64 @@ class HomeProExtractor(ProductExtractor):
                         product.images = [image]
 
         # 2b. If JSON-LD price not found, try HomePro-specific HTML price patterns
-        # NOTE: HomePro renders main product price in 'obcon-price-info' section
-        # The DOM structure places this AFTER some related product sections, so we can't cut by marker
         print(f"[HomePro EXTRACT] After JSON-LD - Price: {product.current_price}, Name: {product.name}", flush=True, file=sys.stderr)
         if not product.current_price:
             print(f"[HomePro EXTRACT] Attempting HTML price extraction...", flush=True, file=sys.stderr)
-            # HomePro specific price patterns - prioritized from most specific to general
-            # Focus on patterns that identify MAIN product price, not related products
+
+            # FIRST: SKU-specific gtmPrice — anchored to this product's SKU, can never match a related product
+            if product.sku:
+                sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
+                sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
+                if sku_matches:
+                    try:
+                        price = float(sku_matches[0])
+                        if 1 <= price <= 500000:
+                            product.current_price = price
+                            print(f"[HomePro EXTRACT] gtmPrice-{product.sku}: {price}", flush=True, file=sys.stderr)
+                    except ValueError:
+                        pass
+
+            # SECOND: SKU-anchored JS analytics price (Facebook Pixel / GTM event)
+            # Pattern: contents:[{id:"271155",...,item_price:"2399",...}]
+            if not product.current_price and product.sku:
+                js_price_pattern = rf'id\s*:\s*["\']?{re.escape(product.sku)}["\']?.{{0,300}}?item_price\s*:\s*["\'](\d+)["\']'
+                js_match = re.search(js_price_pattern, html_content, re.IGNORECASE | re.DOTALL)
+                if js_match:
+                    try:
+                        price = float(js_match.group(1))
+                        if 1 <= price <= 500000:
+                            product.current_price = price
+                            print(f"[HomePro EXTRACT] JS item_price for {product.sku}: {price}", flush=True, file=sys.stderr)
+                    except ValueError:
+                        pass
+
+            # THIRD: Generic HTML patterns (only if both SKU-anchored methods failed)
+            # These can match related/comparison product prices — use as last resort only
+            # These can match related/comparison product prices — use as last resort only
             homepro_price_patterns = [
-                # 1. discount-price container — the actual displayed sale/online price (e.g. 59)
-                # MUST come before GTM which returns the member card price (e.g. 79)
+                # 1. discount-price container — the actual displayed sale/online price
                 r'<div[^>]*class="[^"]*discount-price[^"]*"[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 2. obcon-price-info container (MOST RELIABLE for HomePro main product)
+                # 2. obcon-price-info container
                 r'obcon-price-info[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 3. Price div with specific class pattern for main product (not cards/tiles)
+                # 3. Price div with ฿ (can match comparison/related product prices — only used if SKU-anchored sources fail)
                 r'<div[^>]*class="[^"]*price[^"]*"[^>]*>\s*(?:<[^>]*>)*\s*฿\s*([\d,]+)</div>',
-                # 4. Amount class with currency sibling (main product pattern)
-                r'<span[^>]*class="[^"]*currency[^"]*"[^>]*>฿</span>\s*(?:<[^>]*>)*\s*<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 5. Price meta tag
+                # 4. Price meta tag
                 r'<meta[^>]*property=["\']product:price:amount["\'][^>]*content=["\']([\d.]+)["\']',
+                # NOTE: currency+amount span pattern removed — proven to match installation fees / service prices
             ]
 
-            # Try HTML price patterns first (discount-price is most accurate)
             if not product.current_price:
-                import sys
-                print(f"[HomePro EXTRACT] GTM price not found, trying {len(homepro_price_patterns)} HTML patterns...", flush=True, file=sys.stderr)
+                print(f"[HomePro EXTRACT] gtmPrice not found, trying {len(homepro_price_patterns)} HTML patterns...", flush=True, file=sys.stderr)
                 pattern_num = 0
                 for pattern in homepro_price_patterns:
                     pattern_num += 1
                     matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
                     print(f"[HomePro EXTRACT] Pattern #{pattern_num}: found {len(matches)} matches", flush=True, file=sys.stderr)
                     if matches:
-                        # Filter to reasonable price range - HomePro main products are usually > 50 THB
                         for price_str in matches:
                             try:
                                 price = float(price_str.replace(',', ''))
                                 print(f"[HomePro EXTRACT]   Candidate price: {price}", flush=True, file=sys.stderr)
-                                # Use higher minimum (50) to avoid matching small related product prices
                                 if 50 <= price <= 500000:
                                     product.current_price = price
                                     print(f"[HomePro EXTRACT]   ✓ Price accepted: {price}", flush=True, file=sys.stderr)
@@ -1664,7 +1685,7 @@ class HomeProExtractor(ProductExtractor):
                     if product.current_price:
                         break
 
-            # Last resort: SKU-specific GTM input (may be member price, not online price)
+            # Kept for compatibility — now handled above as first attempt
             if not product.current_price and product.sku:
                 sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
                 sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
@@ -2711,9 +2732,53 @@ class GlobalHouseExtractor(ProductExtractor):
                         product.original_price = price
                         break
 
+        # 5b. Extract specs from table-cell pairs (available after clicking "ข้อมูลจำเพาะ" tab)
+        # Pattern: <td data-slot="table-cell" ...>KEY</td><td data-slot="table-cell" ...>VALUE</td>
+        spec_pairs = re.findall(
+            r'data-slot="table-cell"[^>]*>([^<]+)</td>\s*<td[^>]*data-slot="table-cell"[^>]*>(.*?)</td>',
+            html_content,
+            re.DOTALL
+        )
+        if spec_pairs:
+            width_val = depth_val = height_val = None
+            for key, val in spec_pairs:
+                key = key.strip()
+                val = self._clean_text(val)
+                if not val:
+                    continue
+                if key == 'รุ่น' and not product.model:
+                    product.model = val
+                elif key == 'แบรนด์' and not product.brand:
+                    product.brand = self._sanitize_brand_field(val)
+                elif 'กว้าง' in key:
+                    m = re.search(r'([\d.]+)', val)
+                    if m:
+                        width_val = m.group(1)
+                elif 'ยาว' in key:
+                    m = re.search(r'([\d.]+)', val)
+                    if m:
+                        depth_val = m.group(1)
+                elif 'สูง' in key:
+                    m = re.search(r'([\d.]+)', val)
+                    if m:
+                        height_val = m.group(1)
+            if not product.dimensions:
+                dims = [d for d in [width_val, depth_val, height_val] if d]
+                if dims:
+                    product.dimensions = ' x '.join(dims) + ' cm'
+
         # 6. Extract brand from HTML or product name if not found
         if not product.brand:
-            # Try HTML patterns first
+            # Try GlobalHouse header brand pattern first: สินค้าแบรนด์ : <a>BRAND</a>
+            brand_header = re.search(
+                r'สินค้าแบรนด์[^<]*</span>\s*<a[^>]*>([^<]+)</a>',
+                html_content, re.IGNORECASE
+            )
+            if brand_header:
+                product.brand = self._sanitize_brand_field(brand_header.group(1).strip())
+
+        if not product.brand:
+            # Try HTML patterns
             brand_patterns = [
                 r'<span[^>]*class="[^"]*brand[^"]*"[^>]*>(.*?)</span>',
                 r'<a[^>]*class="[^"]*brand[^"]*"[^>]*>(.*?)</a>',

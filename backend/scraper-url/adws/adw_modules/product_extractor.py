@@ -1619,18 +1619,41 @@ class HomeProExtractor(ProductExtractor):
         if not product.current_price:
             print(f"[HomePro EXTRACT] Attempting HTML price extraction...", flush=True, file=sys.stderr)
 
-            # FIRST: SKU-specific gtmPrice — anchored to this product's SKU, can never match a related product
+            # FIRST: SKU-specific gtm price — anchored to this product's SKU, can never match a related product
+            # If gtmIsNetPrice=true, use gtmNetPrice (actual payable price after online discount)
+            # e.g. shelf price gtmPrice=659, but gtmNetPrice=649 after ฿10 "buy online extra discount"
             if product.sku:
-                sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
-                sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
-                if sku_matches:
-                    try:
-                        price = float(sku_matches[0])
-                        if 1 <= price <= 500000:
-                            product.current_price = price
-                            print(f"[HomePro EXTRACT] gtmPrice-{product.sku}: {price}", flush=True, file=sys.stderr)
-                    except ValueError:
-                        pass
+                is_net = re.search(
+                    rf'gtmIsNetPrice-{re.escape(product.sku)}[^>]*value=["\']true["\']',
+                    html_content, re.IGNORECASE
+                )
+                if is_net:
+                    net_matches = re.findall(
+                        rf'<input[^>]*id=["\']gtmNetPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']',
+                        html_content, re.IGNORECASE
+                    )
+                    if net_matches:
+                        try:
+                            price = float(net_matches[0])
+                            if 1 <= price <= 500000:
+                                product.current_price = price
+                                print(f"[HomePro EXTRACT] gtmNetPrice-{product.sku}: {price}", flush=True, file=sys.stderr)
+                        except ValueError:
+                            pass
+
+                if not product.current_price:
+                    sku_matches = re.findall(
+                        rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']',
+                        html_content, re.IGNORECASE
+                    )
+                    if sku_matches:
+                        try:
+                            price = float(sku_matches[0])
+                            if 1 <= price <= 500000:
+                                product.current_price = price
+                                print(f"[HomePro EXTRACT] gtmPrice-{product.sku}: {price}", flush=True, file=sys.stderr)
+                        except ValueError:
+                            pass
 
             # SECOND: SKU-anchored JS analytics price (Facebook Pixel / GTM event)
             # Pattern: contents:[{id:"271155",...,item_price:"2399",...}]

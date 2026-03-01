@@ -794,12 +794,12 @@ View all products on your dashboard
 
                 # Apply color to price cells (columns 7 and 9)
                 if col_num == 7:  # Old Price
-                    cell.fill = red_fill if price_increased else green_fill
+                    cell.fill = green_fill if price_increased else red_fill
                     if link:
                         cell.hyperlink = link
                         cell.font = Font(color='0000FF', underline='single')
                 elif col_num == 9:  # Updated Price (New Price)
-                    cell.fill = green_fill if price_increased else red_fill
+                    cell.fill = red_fill if price_increased else green_fill
                     if link:
                         cell.hyperlink = link
                         cell.font = Font(color='0000FF', underline='single')

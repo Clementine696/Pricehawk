@@ -10,9 +10,8 @@ interface Location {
   retailer_id: string;
   name_th: string;
   name_en: string | null;
-  url_param: string | null;
   branch_code: string;
-  branch_name: string | null;
+  postal_code: string | null;
 }
 
 interface SdeptGroup {
@@ -164,7 +163,7 @@ export default function PriceByLocationSettingsPage() {
     loc.name_th.toLowerCase().includes(searchLocation.toLowerCase()) ||
     (loc.name_en && loc.name_en.toLowerCase().includes(searchLocation.toLowerCase())) ||
     loc.branch_code.toLowerCase().includes(searchLocation.toLowerCase()) ||
-    (loc.branch_name && loc.branch_name.toLowerCase().includes(searchLocation.toLowerCase()))
+    (loc.postal_code && loc.postal_code.includes(searchLocation))
   );
 
   // Filter groups by search
@@ -372,7 +371,7 @@ export default function PriceByLocationSettingsPage() {
                         </div>
                       )}
                       <div className="text-xs text-gray-500 mt-1">
-                        {location.branch_name || location.branch_code}
+                        {location.branch_code}{location.postal_code ? ` · ${location.postal_code}` : ''}
                       </div>
                     </div>
                   </label>

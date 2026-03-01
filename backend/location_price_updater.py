@@ -253,11 +253,9 @@ class LocationPriceUpdater:
                         l.retailer_id,
                         l.name_th,
                         l.name_en,
-                        l.url_param,
                         l.branch_code
                     FROM location_monitored_locations lml
                     JOIN locations l ON lml.location_id = l.location_id
-                    WHERE l.is_active = TRUE
                     ORDER BY l.location_id
                 """)
                 return [dict(row) for row in cur.fetchall()]

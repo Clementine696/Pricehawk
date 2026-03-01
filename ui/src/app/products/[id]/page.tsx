@@ -178,11 +178,11 @@ function ProductImage({ src, alt, className }: { src: string | null; alt: string
 
 // All competitor retailers configuration
 const COMPETITORS = [
-  { id: 'hp', name: 'HomePro', nameTh: 'โฮมโปร', color: '#1E88E5', bgClass: 'bg-blue-500', logo: '/logos/homepro.png' },
+  { id: 'hp', name: 'HomePro', nameTh: 'โฮมโปร', color: '#1565C0', bgClass: 'bg-blue-800', logo: '/logos/homepro.png' },
   { id: 'mgh', name: 'MegaHome', nameTh: 'เมกาโฮม', color: '#43A047', bgClass: 'bg-green-500', logo: '/logos/megahome.png' },
-  { id: 'btv', name: 'Boonthavorn', nameTh: 'บุญถาวร', color: '#7B1FA2', bgClass: 'bg-purple-500', logo: '/logos/boonthavorn.png' },
-  { id: 'gbh', name: 'Global House', nameTh: 'โกลบอลเฮ้าส์', color: '#F57C00', bgClass: 'bg-orange-500', logo: '/logos/globalhouse.png' },
-  { id: 'dh', name: 'Do Home', nameTh: 'ดูโฮม', color: '#E64A19', bgClass: 'bg-red-500', logo: '/logos/dohome.png' },
+  { id: 'btv', name: 'Boonthavorn', nameTh: 'บุญถาวร', color: '#283593', bgClass: 'bg-indigo-900', logo: '/logos/boonthavorn.png' },
+  { id: 'gbh', name: 'Global House', nameTh: 'โกลบอลเฮ้าส์', color: '#00897B', bgClass: 'bg-teal-600', logo: '/logos/globalhouse.png' },
+  { id: 'dh', name: 'Do Home', nameTh: 'ดูโฮม', color: '#F9A825', bgClass: 'bg-yellow-500', logo: '/logos/dohome.png' },
 ];
 
 
@@ -1280,7 +1280,7 @@ export default function ProductDetailPage() {
                     <Line
                       type="monotone"
                       dataKey={priceHistory.base_product.retailer}
-                      stroke="#06b6d4"
+                      stroke="#E53935"
                       strokeWidth={3}
                       dot={false}
                       connectNulls
@@ -1288,19 +1288,19 @@ export default function ProductDetailPage() {
                     {priceHistory.matched_products.map((mp, index) => {
                       // Map retailer names to their brand colors
                       const retailerColors: Record<string, string> = {
-                        'HomePro': '#3b82f6',      // Blue
-                        'Home Pro': '#3b82f6',      // Blue
-                        'MegaHome': '#10b981',      // Green
-                        'Mega Home': '#10b981',     // Green
-                        'Boonthavorn': '#9333ea',   // Purple
-                        'Global House': '#f97316',  // Orange
-                        'GlobalHouse': '#f97316',   // Orange
-                        'Do Home': '#ef4444',       // Red
-                        'DoHome': '#ef4444',        // Red
+                        'HomePro': '#1565C0',       // Dark blue
+                        'Home Pro': '#1565C0',       // Dark blue
+                        'MegaHome': '#43A047',       // Green
+                        'Mega Home': '#43A047',      // Green
+                        'Boonthavorn': '#283593',    // Dark navy
+                        'Global House': '#00897B',   // Teal
+                        'GlobalHouse': '#00897B',    // Teal
+                        'Do Home': '#F9A825',        // Yellow/gold
+                        'DoHome': '#F9A825',         // Yellow/gold
                       };
 
                       // Get color by retailer name, fallback to default colors
-                      const defaultColors = ['#3b82f6', '#10b981', '#9333ea', '#f97316', '#ef4444'];
+                      const defaultColors = ['#1565C0', '#43A047', '#283593', '#00897B', '#F9A825'];
                       const color = retailerColors[mp.retailer] || defaultColors[index % defaultColors.length];
 
                       return (

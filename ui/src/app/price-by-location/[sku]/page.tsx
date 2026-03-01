@@ -31,6 +31,7 @@ interface Branch {
   branch_name_th: string;
   branch_name_en: string;
   branch_code: string | null;
+  postal_code: string | null;
   price: number | null;
   scraped_at: string | null;
   status: 'cheaper' | 'higher' | 'same' | 'unknown';
@@ -169,7 +170,7 @@ export default function PriceByLocationDetailPage() {
                 <MapPin className="h-6 w-6 text-white" />
               </div>
               <div className="ml-4">
-                <p className="text-sm text-gray-500">TWD Price</p>
+                <p className="text-sm text-gray-500">My Price</p>
                 <p className="text-2xl font-bold text-gray-900">{formatPrice(product.twd_price)}</p>
               </div>
             </div>
@@ -241,29 +242,31 @@ export default function PriceByLocationDetailPage() {
             <table className="w-full">
               <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
-                  <th className="w-[50px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">No.</th>
-                  <th className="w-[120px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Retailer</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Branch (TH)</th>
+                  <th className="w-[48px] px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">No.</th>
+                  <th className="w-[130px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Retailer</th>
+                  <th className="w-[200px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Branch (TH)</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Branch (EN)</th>
-                  <th className="w-[120px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Code</th>
-                  <th className="w-[120px] px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Price</th>
-                  <th className="w-[160px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Status</th>
-                  <th className="w-[140px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Updated</th>
+                  <th className="w-[100px] px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Postal Code</th>
+                  <th className="w-[110px] px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Price</th>
+                  <th className="w-[120px] px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Status</th>
+                  <th className="w-[150px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Updated</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {/* TWD base price row */}
                 <tr className="bg-cyan-50">
-                  <td className="px-4 py-3 text-sm text-gray-400">—</td>
+                  <td className="px-3 py-3 text-sm text-gray-400 text-center"></td>
                   <td className="px-4 py-3 text-sm font-medium text-cyan-700">Thai Watsadu</td>
-                  <td className="px-4 py-3 text-sm font-medium text-cyan-700 flex items-center gap-2">
-                    <MapPin className="w-4 h-4" />
-                    เทพารักษ์
+                  <td className="px-4 py-3 text-sm font-medium text-cyan-700">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 shrink-0" />
+                      <span>เทพารักษ์</span>
+                    </div>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">Thepharak</td>
-                  <td className="px-4 py-3 text-sm text-gray-400"></td>
+                  <td className="px-4 py-3 text-sm text-gray-500">THEPHARAK</td>
+                  <td className="px-4 py-3 text-sm text-gray-400 text-center"></td>
                   <td className="px-4 py-3 text-sm font-semibold text-cyan-700 text-right">{formatPrice(product.twd_price)}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-center">
                     <span className="px-2 py-1 rounded-full text-xs font-medium bg-cyan-100 text-cyan-700">My Price</span>
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-400">
@@ -275,14 +278,16 @@ export default function PriceByLocationDetailPage() {
 
                 {filteredBranches.map((branch) => (
                   <tr key={branch.location_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-sm text-gray-500 text-center">{branch.no}</td>
+                    <td className="px-3 py-3 text-sm text-gray-500 text-center">{branch.no}</td>
                     <td className="px-4 py-3 text-sm text-gray-900">Global House</td>
-                    <td className="px-4 py-3 text-sm text-gray-900 flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
-                      {branch.branch_name_th}
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
+                        <span>{branch.branch_name_th}</span>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">{branch.branch_name_en}</td>
-                    <td className="px-4 py-3 text-sm text-gray-500">{branch.branch_code || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500 text-center">{branch.postal_code || '—'}</td>
                     <td className={`px-4 py-3 text-sm font-semibold text-right ${
                       branch.status === 'cheaper' ? 'text-green-600' :
                       branch.status === 'higher' ? 'text-red-600' :
@@ -290,7 +295,7 @@ export default function PriceByLocationDetailPage() {
                     }`}>
                       {formatPrice(branch.price)}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 text-center">
                       {getStatusBadge(branch.status, branch.price, product.twd_price)}
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-400">

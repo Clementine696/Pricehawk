@@ -1139,31 +1139,25 @@ def get_available_categories(user: dict = Depends(get_current_user)):
 @app.get("/api/locations")
 def get_locations(
     retailer_id: Optional[str] = None,
-    is_active: Optional[bool] = None,
     user: dict = Depends(get_current_user)
 ):
     """
-    Get all locations, optionally filtered by retailer and active status
-    
+    Get all locations, optionally filtered by retailer
+
     Query params:
     - retailer_id: Filter by retailer (e.g., 'gbh')
-    - is_active: Filter by active status
     """
     with get_db() as conn:
         with conn.cursor() as cur:
             query = "SELECT * FROM locations WHERE 1=1"
             params = []
-            
+
             if retailer_id:
                 query += " AND retailer_id = %s"
                 params.append(retailer_id)
-            
-            if is_active is not None:
-                query += " AND is_active = %s"
-                params.append(is_active)
-            
+
             query += " ORDER BY name_th ASC"
-            
+
             cur.execute(query, params)
             locations = cur.fetchall()
 
@@ -1177,19 +1171,17 @@ def create_location(location_data: dict, user: dict = Depends(get_current_user))
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO locations (
-                    retailer_id, name_th, name_en, url_param, 
-                    branch_code, branch_name, is_active
+                    retailer_id, name_th, name_en,
+                    branch_code, postal_code
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING *
             """, (
                 location_data.get('retailer_id'),
                 location_data.get('name_th'),
                 location_data.get('name_en'),
-                location_data.get('url_param'),
                 location_data.get('branch_code'),
-                location_data.get('branch_name'),
-                location_data.get('is_active', True)
+                location_data.get('postal_code'),
             ))
             new_location = cur.fetchone()
             return dict(new_location)
@@ -1204,7 +1196,7 @@ def update_location(location_id: int, location_data: dict, user: dict = Depends(
             updates = []
             params = []
             
-            for field in ['name_th', 'name_en', 'url_param', 'branch_code', 'branch_name', 'is_active']:
+            for field in ['name_th', 'name_en', 'branch_code', 'postal_code']:
                 if field in location_data:
                     updates.append(f"{field} = %s")
                     params.append(location_data[field])
@@ -1321,7 +1313,7 @@ def get_monitored_locations(user: dict = Depends(get_current_user)):
                     l.name_th,
                     l.name_en,
                     l.branch_code,
-                    l.branch_name
+                    l.postal_code
                 FROM location_monitored_locations lml
                 JOIN locations l ON lml.location_id = l.location_id
                 ORDER BY l.name_th ASC
@@ -1375,12 +1367,12 @@ def get_location_watch_settings(user: dict = Depends(get_current_user)):
             
             # Get monitored locations
             cur.execute("""
-                SELECT 
+                SELECT
                     l.location_id,
                     l.name_th,
                     l.name_en,
                     l.branch_code,
-                    l.branch_name
+                    l.postal_code
                 FROM location_monitored_locations lml
                 JOIN locations l ON lml.location_id = l.location_id
                 ORDER BY l.name_th ASC
@@ -4515,6 +4507,7 @@ def get_location_prices_by_sku(
                 l.name_th as branch_name_th,
                 l.name_en as branch_name_en,
                 l.branch_code,
+                l.postal_code,
                 plp.price,
                 plp.last_updated_at as scraped_at
             FROM product_location_prices plp
@@ -4580,6 +4573,7 @@ def get_location_prices_by_sku(
                 "branch_name_th": row["branch_name_th"],
                 "branch_name_en": row["branch_name_en"],
                 "branch_code": row["branch_code"],
+                "postal_code": row["postal_code"],
                 "price": branch_price,
                 "scraped_at": row["scraped_at"].isoformat() if row["scraped_at"] else None,
                 "status": status,

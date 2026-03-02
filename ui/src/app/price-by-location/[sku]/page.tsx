@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { ArrowLeft, MapPin, RotateCcw, Loader2, ExternalLink } from 'lucide-react';
+import { ArrowLeft, MapPin, RotateCcw, Loader2, ExternalLink, ChevronDown, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
 interface ProductDetail {
@@ -20,6 +20,8 @@ interface ProductDetail {
   gbh_url: string | null;
   min_price: number | null;
   max_price: number | null;
+  min_branch_name: string | null;
+  max_branch_name: string | null;
   avg_price: number | null;
   branch_count: number;
   total_branches: number;
@@ -46,10 +48,25 @@ export default function PriceByLocationDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [locationFilter, setLocationFilter] = useState<'all' | 'cheaper' | 'higher' | 'same'>('all');
+  const [selectedLocations, setSelectedLocations] = useState<number[]>([]);
+  const [showLocationDropdown, setShowLocationDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchData();
   }, [sku]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowLocationDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -95,11 +112,38 @@ export default function PriceByLocationDetailPage() {
     return <span className="text-gray-400">-</span>;
   };
 
-  const filteredBranches = branches.filter(b =>
-    !search ||
-    b.branch_name_th.toLowerCase().includes(search.toLowerCase()) ||
-    b.branch_name_en.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredBranches = branches.filter(b => {
+    // Search filter
+    const matchesSearch = !search ||
+      b.branch_name_th.toLowerCase().includes(search.toLowerCase()) ||
+      b.branch_name_en.toLowerCase().includes(search.toLowerCase());
+    
+    // Status filter
+    const matchesStatusFilter = 
+      locationFilter === 'all' ||
+      (locationFilter === 'cheaper' && b.status === 'cheaper') ||
+      (locationFilter === 'higher' && b.status === 'higher') ||
+      (locationFilter === 'same' && b.status === 'same');
+    
+    // Location filter (selected branches)
+    const matchesLocationFilter = 
+      selectedLocations.length === 0 ||
+      selectedLocations.includes(b.location_id);
+    
+    return matchesSearch && matchesStatusFilter && matchesLocationFilter;
+  });
+
+  const toggleLocation = (locationId: number) => {
+    setSelectedLocations(prev =>
+      prev.includes(locationId)
+        ? prev.filter(id => id !== locationId)
+        : [...prev, locationId]
+    );
+  };
+
+  const clearLocationFilter = () => {
+    setSelectedLocations([]);
+  };
 
   if (isLoading) {
     return (
@@ -183,6 +227,9 @@ export default function PriceByLocationDetailPage() {
               <div className="ml-4">
                 <p className="text-sm text-gray-500">Min Branch Price</p>
                 <p className="text-2xl font-bold text-gray-900">{formatPrice(product.min_price)}</p>
+                {product.min_branch_name && (
+                  <p className="text-xs text-gray-500 mt-0.5">{product.min_branch_name}</p>
+                )}
               </div>
             </div>
           </div>
@@ -194,6 +241,9 @@ export default function PriceByLocationDetailPage() {
               <div className="ml-4">
                 <p className="text-sm text-gray-500">Max Branch Price</p>
                 <p className="text-2xl font-bold text-gray-900">{formatPrice(product.max_price)}</p>
+                {product.max_branch_name && (
+                  <p className="text-xs text-gray-500 mt-0.5">{product.max_branch_name}</p>
+                )}
               </div>
             </div>
           </div>
@@ -218,6 +268,113 @@ export default function PriceByLocationDetailPage() {
               <p className="text-sm text-gray-500 mt-0.5">{product.total_branches} branches</p>
             </div>
             <div className="flex items-center gap-3">
+              {/* Location Filter Buttons */}
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => setLocationFilter('all')}
+                  className={`px-4 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap w-[90px] ${
+                    locationFilter === 'all'
+                      ? 'bg-blue-100 text-blue-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100 border border-gray-300'
+                  }`}
+                >
+                  All ({branches.length})
+                </button>
+                <button
+                  onClick={() => setLocationFilter('cheaper')}
+                  className={`px-4 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap w-[90px] ${
+                    locationFilter === 'cheaper'
+                      ? 'bg-green-100 text-green-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100 border border-gray-300'
+                  }`}
+                >
+                  Cheaper ({branches.filter(b => b.status === 'cheaper').length})
+                </button>
+                <button
+                  onClick={() => setLocationFilter('higher')}
+                  className={`px-4 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap w-[90px] ${
+                    locationFilter === 'higher'
+                      ? 'bg-red-100 text-red-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100 border border-gray-300'
+                  }`}
+                >
+                  Higher ({branches.filter(b => b.status === 'higher').length})
+                </button>
+                <button
+                  onClick={() => setLocationFilter('same')}
+                  className={`px-4 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap w-[90px] ${
+                    locationFilter === 'same'
+                      ? 'bg-gray-200 text-gray-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100 border border-gray-300'
+                  }`}
+                >
+                  Same ({branches.filter(b => b.status === 'same').length})
+                </button>
+              </div>
+              {/* Location Selector */}
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setShowLocationDropdown(!showLocationDropdown)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-colors ${
+                    selectedLocations.length > 0
+                      ? 'bg-blue-50 border-blue-300 text-blue-700'
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <MapPin className="w-3.5 h-3.5" />
+                  Locations
+                  {selectedLocations.length > 0 && (
+                    <span className="px-1.5 py-0.5 bg-blue-600 text-white text-xs rounded-full">
+                      {selectedLocations.length}
+                    </span>
+                  )}
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+                
+                {showLocationDropdown && (
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-20 max-h-96 overflow-hidden flex flex-col">
+                    <div className="p-3 border-b border-gray-200 flex items-center justify-between">
+                      <span className="text-sm font-semibold text-gray-900">Filter by Branch</span>
+                      {selectedLocations.length > 0 && (
+                        <button
+                          onClick={clearLocationFilter}
+                          className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          Clear ({selectedLocations.length})
+                        </button>
+                      )}
+                    </div>
+                    <div className="overflow-y-auto flex-1">
+                      {branches.map((branch) => (
+                        <label
+                          key={branch.location_id}
+                          className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedLocations.includes(branch.location_id)}
+                            onChange={() => toggleLocation(branch.location_id)}
+                            className="h-4 w-4 accent-blue-600 rounded flex-shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-gray-900 truncate">{branch.branch_name_th}</div>
+                            <div className="text-xs text-gray-500 truncate">{branch.branch_name_en}</div>
+                          </div>
+                          {branch.price && (
+                            <div className={`text-xs font-medium flex-shrink-0 ${
+                              branch.status === 'cheaper' ? 'text-green-600' :
+                              branch.status === 'higher' ? 'text-red-600' :
+                              'text-gray-600'
+                            }`}>
+                              ฿{branch.price.toLocaleString()}
+                            </div>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
               {/* Search */}
               <div className="relative">
                 <input
@@ -242,20 +399,20 @@ export default function PriceByLocationDetailPage() {
             <table className="w-full">
               <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
-                  <th className="w-[48px] px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">No.</th>
+                  <th className="w-[60px] px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">No.</th>
                   <th className="w-[130px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Retailer</th>
                   <th className="w-[200px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Branch (TH)</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Branch (EN)</th>
+                  <th className="w-[180px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Branch (EN)</th>
                   <th className="w-[100px] px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Postal Code</th>
-                  <th className="w-[110px] px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Price</th>
-                  <th className="w-[120px] px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Status</th>
-                  <th className="w-[150px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Updated</th>
+                  <th className="w-[120px] px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Price</th>
+                  <th className="w-[140px] px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Status</th>
+                  <th className="w-[140px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Updated</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {/* TWD base price row */}
                 <tr className="bg-cyan-50">
-                  <td className="px-3 py-3 text-sm text-gray-400 text-center"></td>
+                  <td className="px-4 py-3 text-sm text-gray-400 text-center"></td>
                   <td className="px-4 py-3 text-sm font-medium text-cyan-700">Thai Watsadu</td>
                   <td className="px-4 py-3 text-sm font-medium text-cyan-700">
                     <div className="flex items-center gap-2">
@@ -278,7 +435,7 @@ export default function PriceByLocationDetailPage() {
 
                 {filteredBranches.map((branch) => (
                   <tr key={branch.location_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-3 py-3 text-sm text-gray-500 text-center">{branch.no}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500 text-center">{branch.no}</td>
                     <td className="px-4 py-3 text-sm text-gray-900">Global House</td>
                     <td className="px-4 py-3 text-sm text-gray-900">
                       <div className="flex items-center gap-2">

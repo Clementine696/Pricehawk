@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { apiFetch } from '@/lib/api';
-import { MapPin, Package, CheckCircle2, Loader2 } from 'lucide-react';
+import { MapPin, Package, CheckCircle2, Loader2, ArrowLeft } from 'lucide-react';
 
 interface Location {
   location_id: number;
@@ -33,6 +34,8 @@ export default function PriceByLocationSettingsPage() {
   const [success, setSuccess] = useState('');
   const [searchLocation, setSearchLocation] = useState('');
   const [searchGroup, setSearchGroup] = useState('');
+  const [groupFilter, setGroupFilter] = useState<'all' | 'selected'>('all');
+  const [locationFilter, setLocationFilter] = useState<'all' | 'selected'>('all');
 
   // Fetch data on mount
   useEffect(() => {
@@ -157,21 +160,29 @@ export default function PriceByLocationSettingsPage() {
     }
   };
 
-  // Filter locations by search
-  const filteredLocations = locations.filter(loc =>
-    searchLocation === '' ||
-    loc.name_th.toLowerCase().includes(searchLocation.toLowerCase()) ||
-    (loc.name_en && loc.name_en.toLowerCase().includes(searchLocation.toLowerCase())) ||
-    loc.branch_code.toLowerCase().includes(searchLocation.toLowerCase()) ||
-    (loc.postal_code && loc.postal_code.includes(searchLocation))
-  );
+  // Filter locations by search and selected filter
+  const filteredLocations = locations.filter(loc => {
+    const matchesSearch = searchLocation === '' ||
+      loc.name_th.toLowerCase().includes(searchLocation.toLowerCase()) ||
+      (loc.name_en && loc.name_en.toLowerCase().includes(searchLocation.toLowerCase())) ||
+      loc.branch_code.toLowerCase().includes(searchLocation.toLowerCase()) ||
+      (loc.branch_name && loc.branch_name.toLowerCase().includes(searchLocation.toLowerCase()));
+    
+    const matchesFilter = locationFilter === 'all' || selectedLocations.includes(loc.location_id);
+    
+    return matchesSearch && matchesFilter;
+  });
 
-  // Filter groups by search
-  const filteredGroups = groups.filter(group =>
-    searchGroup === '' ||
-    group.sdept.toLowerCase().includes(searchGroup.toLowerCase()) ||
-    (group.description && group.description.toLowerCase().includes(searchGroup.toLowerCase()))
-  );
+  // Filter groups by search and selected filter
+  const filteredGroups = groups.filter(group => {
+    const matchesSearch = searchGroup === '' ||
+      group.sdept.toLowerCase().includes(searchGroup.toLowerCase()) ||
+      (group.description && group.description.toLowerCase().includes(searchGroup.toLowerCase()));
+    
+    const matchesFilter = groupFilter === 'all' || selectedGroups.includes(group.group_id);
+    
+    return matchesSearch && matchesFilter;
+  });
 
   if (isLoading) {
     return (
@@ -185,9 +196,15 @@ export default function PriceByLocationSettingsPage() {
 
   return (
     <MainLayout>
-      <div>
-        {/* Header with Action Buttons */}
-        <div className="mb-6 flex items-start justify-between">
+      <div className="space-y-6">
+        {/* Back link */}
+        <Link href="/price-by-location" className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900">
+          <ArrowLeft className="w-4 h-4" />
+          Back to Price by Location
+        </Link>
+
+        {/* Header with Action Button */}
+        <div className="flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
               Price by Location Settings
@@ -197,23 +214,15 @@ export default function PriceByLocationSettingsPage() {
             </p>
           </div>
           
-          {/* Action Buttons */}
-          <div className="flex gap-3">
-            <button
-              onClick={() => window.location.href = '/price-by-location'}
-              className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving || (selectedGroups.length === 0 && selectedLocations.length === 0)}
-              className="px-6 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-            >
-              {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isSaving ? 'Saving...' : 'Save Settings'}
-            </button>
-          </div>
+          {/* Action Button */}
+          <button
+            onClick={handleSave}
+            disabled={isSaving || (selectedGroups.length === 0 && selectedLocations.length === 0)}
+            className="px-6 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          >
+            {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isSaving ? 'Saving...' : 'Save Settings'}
+          </button>
         </div>
 
         {/* Error/Success Messages */}
@@ -262,12 +271,12 @@ export default function PriceByLocationSettingsPage() {
           <section className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                <Package className="h-5 w-5 text-cyan-600" />
+                <Package className="h-5 w-5 text-blue-600" />
                 Product Groups
               </h2>
               <button
                 onClick={handleSelectAllGroups}
-                className="text-sm text-cyan-600 hover:text-cyan-700 font-medium"
+                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
               >
                 {filteredGroups.every(g => selectedGroups.includes(g.group_id))
                   ? 'Deselect All'
@@ -275,14 +284,38 @@ export default function PriceByLocationSettingsPage() {
               </button>
             </div>
 
-            {/* Search */}
-            <input
-              type="text"
-              placeholder="Search groups..."
-              value={searchGroup}
-              onChange={(e) => setSearchGroup(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            />
+            {/* Search and Filter */}
+            <div className="flex items-center gap-3 mb-4">
+              <input
+                type="text"
+                placeholder="Search groups..."
+                value={searchGroup}
+                onChange={(e) => setSearchGroup(e.target.value)}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setGroupFilter('all')}
+                  className={`px-3 py-2 text-sm rounded-lg transition-colors whitespace-nowrap ${
+                    groupFilter === 'all'
+                      ? 'bg-blue-100 text-blue-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  All ({groups.length})
+                </button>
+                <button
+                  onClick={() => setGroupFilter('selected')}
+                  className={`px-3 py-2 text-sm rounded-lg transition-colors whitespace-nowrap ${
+                    groupFilter === 'selected'
+                      ? 'bg-blue-100 text-blue-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  Selected ({selectedGroups.length})
+                </button>
+              </div>
+            </div>
 
             {/* Groups List */}
             <div className="space-y-2 max-h-[calc(100vh-380px)] overflow-y-auto">
@@ -298,7 +331,7 @@ export default function PriceByLocationSettingsPage() {
                       type="checkbox"
                       checked={selectedGroups.includes(group.group_id)}
                       onChange={() => handleGroupToggle(group.group_id)}
-                      className="mt-1 h-4 w-4 text-cyan-600 rounded focus:ring-cyan-500"
+                      className="mt-1 h-4 w-4 accent-blue-600 rounded focus:ring-blue-500"
                     />
                     <div className="flex-1">
                       <div className="font-medium text-gray-900">
@@ -336,48 +369,106 @@ export default function PriceByLocationSettingsPage() {
               </button>
             </div>
 
-            {/* Search */}
-            <input
-              type="text"
-              placeholder="Search locations..."
-              value={searchLocation}
-              onChange={(e) => setSearchLocation(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            {/* Search and Filter */}
+            <div className="flex items-center gap-3 mb-4">
+              <input
+                type="text"
+                placeholder="Search locations..."
+                value={searchLocation}
+                onChange={(e) => setSearchLocation(e.target.value)}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setLocationFilter('all')}
+                  className={`px-3 py-2 text-sm rounded-lg transition-colors whitespace-nowrap ${
+                    locationFilter === 'all'
+                      ? 'bg-blue-100 text-blue-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  All ({locations.length})
+                </button>
+                <button
+                  onClick={() => setLocationFilter('selected')}
+                  className={`px-3 py-2 text-sm rounded-lg transition-colors whitespace-nowrap ${
+                    locationFilter === 'selected'
+                      ? 'bg-blue-100 text-blue-700 font-medium'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  Selected ({selectedLocations.length})
+                </button>
+              </div>
+            </div>
 
             {/* Locations List */}
-            <div className="space-y-2 max-h-[calc(100vh-380px)] overflow-y-auto">
-              {filteredLocations.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">No locations found</p>
-              ) : (
-                filteredLocations.map((location) => (
-                  <label
-                    key={location.location_id}
-                    className="flex items-start gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedLocations.includes(location.location_id)}
-                      onChange={() => handleLocationToggle(location.location_id)}
-                      className="mt-1 h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                    />
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900">
-                        {location.name_th}
+            {locationFilter === 'selected' ? (
+              /* Compact 2-column grid for Selected view */
+              <div className="grid grid-cols-2 gap-3 max-h-[calc(100vh-380px)] overflow-y-auto">
+                {filteredLocations.length === 0 ? (
+                  <p className="text-gray-500 text-center py-8 col-span-2">No locations found</p>
+                ) : (
+                  filteredLocations.map((location) => (
+                    <label
+                      key={location.location_id}
+                      className="flex items-center gap-2 p-2 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedLocations.includes(location.location_id)}
+                        onChange={() => handleLocationToggle(location.location_id)}
+                        className="h-4 w-4 accent-blue-600 rounded focus:ring-blue-500 flex-shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-900 truncate">
+                          {location.name_th}
+                        </div>
                       </div>
-                      {location.name_en && (
-                        <div className="text-sm text-gray-600">
-                          {location.name_en}
+                      {location.postal_code && (
+                        <div className="text-xs text-gray-500 flex-shrink-0">
+                          {location.postal_code}
                         </div>
                       )}
-                      <div className="text-xs text-gray-500 mt-1">
-                        {location.branch_code}{location.postal_code ? ` · ${location.postal_code}` : ''}
+                    </label>
+                  ))
+                )}
+              </div>
+            ) : (
+              /* Regular list view for All */
+              <div className="space-y-2 max-h-[calc(100vh-380px)] overflow-y-auto">
+                {filteredLocations.length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">No locations found</p>
+                ) : (
+                  filteredLocations.map((location) => (
+                    <label
+                      key={location.location_id}
+                      className="flex items-start gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedLocations.includes(location.location_id)}
+                        onChange={() => handleLocationToggle(location.location_id)}
+                        className="mt-1 h-4 w-4 accent-blue-600 rounded focus:ring-blue-500"
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">
+                          {location.name_th}
+                        </div>
+                        {location.name_en && (
+                          <div className="text-sm text-gray-600">
+                            {location.name_en}
+                          </div>
+                        )}
+                        <div className="text-xs text-gray-500 mt-1">
+                          {location.branch_code}{location.postal_code ? ` · ${location.postal_code}` : ''}
+                        </div>
                       </div>
-                    </div>
-                  </label>
-                ))
-              )}
-            </div>
+                    </label>
+                  ))
+                )}
+              </div>
+            )}
           </section>
         </div>
       </div>

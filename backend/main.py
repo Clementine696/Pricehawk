@@ -4365,6 +4365,7 @@ def get_location_prices_summary(
         base_joins = """
             FROM product_location_prices plp
             JOIN locations l ON plp.location_id = l.location_id
+            JOIN location_monitored_locations lml ON lml.location_id = l.location_id
             JOIN products p_gbh ON plp.product_id = p_gbh.product_id
             JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
             JOIN products p_twd ON pm.base_product_id = p_twd.product_id
@@ -4534,6 +4535,20 @@ def get_location_prices_by_sku(
 
         first = rows[0]
         prices = [float(r["price"]) for r in rows if r["price"] is not None]
+        
+        # Find min and max branch names
+        min_branch_name = None
+        max_branch_name = None
+        if prices:
+            min_val = min(prices)
+            max_val = max(prices)
+            for r in rows:
+                if r["price"] is not None:
+                    p = float(r["price"])
+                    if p == min_val and min_branch_name is None:
+                        min_branch_name = r["branch_name_th"]
+                    if p == max_val and max_branch_name is None:
+                        max_branch_name = r["branch_name_th"]
 
         product = {
             "twd_sku": first["twd_sku"],
@@ -4548,6 +4563,8 @@ def get_location_prices_by_sku(
             "gbh_url": first["gbh_url"],
             "min_price": min(prices) if prices else None,
             "max_price": max(prices) if prices else None,
+            "min_branch_name": min_branch_name,
+            "max_branch_name": max_branch_name,
             "avg_price": round(sum(prices) / len(prices), 2) if prices else None,
             "branch_count": len(rows),
             "total_branches": total_branches,

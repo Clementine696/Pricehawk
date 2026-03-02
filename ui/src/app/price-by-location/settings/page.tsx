@@ -166,7 +166,7 @@ export default function PriceByLocationSettingsPage() {
       loc.name_th.toLowerCase().includes(searchLocation.toLowerCase()) ||
       (loc.name_en && loc.name_en.toLowerCase().includes(searchLocation.toLowerCase())) ||
       loc.branch_code.toLowerCase().includes(searchLocation.toLowerCase()) ||
-      (loc.branch_name && loc.branch_name.toLowerCase().includes(searchLocation.toLowerCase()));
+      (loc.postal_code && loc.postal_code.toLowerCase().includes(searchLocation.toLowerCase()));
     
     const matchesFilter = locationFilter === 'all' || selectedLocations.includes(loc.location_id);
     

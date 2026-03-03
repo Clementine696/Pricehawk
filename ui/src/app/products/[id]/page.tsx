@@ -178,11 +178,11 @@ function ProductImage({ src, alt, className }: { src: string | null; alt: string
 
 // All competitor retailers configuration
 const COMPETITORS = [
-  { id: 'hp', name: 'HomePro', nameTh: 'โฮมโปร', color: '#1565C0', bgClass: 'bg-blue-800', logo: '/logos/homepro.png' },
-  { id: 'mgh', name: 'MegaHome', nameTh: 'เมกาโฮม', color: '#43A047', bgClass: 'bg-green-500', logo: '/logos/megahome.png' },
-  { id: 'btv', name: 'Boonthavorn', nameTh: 'บุญถาวร', color: '#283593', bgClass: 'bg-indigo-900', logo: '/logos/boonthavorn.png' },
-  { id: 'gbh', name: 'Global House', nameTh: 'โกลบอลเฮ้าส์', color: '#00897B', bgClass: 'bg-teal-600', logo: '/logos/globalhouse.png' },
-  { id: 'dh', name: 'Do Home', nameTh: 'ดูโฮม', color: '#F9A825', bgClass: 'bg-yellow-500', logo: '/logos/dohome.png' },
+  { id: 'hp', name: 'HomePro', nameTh: 'โฮมโปร', color: '#0566B3', bgClass: 'bg-blue-800', logo: '/logos/homepro.png' },
+  { id: 'mgh', name: 'MegaHome', nameTh: 'เมกาโฮม', color: '#4BB35D', bgClass: 'bg-green-500', logo: '/logos/megahome.png' },
+  { id: 'btv', name: 'Boonthavorn', nameTh: 'บุญถาวร', color: '#FA4757', bgClass: 'bg-indigo-900', logo: '/logos/boonthavorn.png' },
+  { id: 'gbh', name: 'Global House', nameTh: 'โกลบอลเฮ้าส์', color: '#2B543D', bgClass: 'bg-teal-600', logo: '/logos/globalhouse.png' },
+  { id: 'dh', name: 'Do Home', nameTh: 'ดูโฮม', color: '#F2672C', bgClass: 'bg-yellow-500', logo: '/logos/dohome.png' },
 ];
 
 
@@ -622,8 +622,8 @@ export default function ProductDetailPage() {
           <div className="flex flex-col">
             <div className="bg-white rounded-lg shadow overflow-hidden flex flex-col sticky top-6 w-full max-h-[calc(100vh-8rem)] overflow-y-auto">
               {/* Header */}
-              <div className="bg-cyan-600 text-white px-4 py-3 flex items-center gap-2 flex-shrink-0">
-                <span className="bg-white text-cyan-600 text-xs font-semibold px-2 py-1 rounded">My Product</span>
+              <div className="text-white px-4 py-3 flex items-center gap-2 flex-shrink-0" style={{ backgroundColor: '#C42D31' }}>
+                <span className="bg-white text-xs font-semibold px-2 py-1 rounded" style={{ color: '#C42D31' }}>My Product</span>
                 <span className="font-medium">{product.retailer_name}</span>
               </div>
 
@@ -697,7 +697,7 @@ export default function ProductDetailPage() {
               </div>
 
               <div className="mt-4 pt-4 border-t border-gray-200">
-                <div className="text-2xl font-bold text-cyan-600">
+                <div className="text-2xl font-bold text-gray-900">
                   {formatPrice(product.current_price)}
                 </div>
                 {product.original_price && product.original_price > (product.current_price || 0) && (
@@ -714,7 +714,7 @@ export default function ProductDetailPage() {
                     href={product.link}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-cyan-500 hover:text-cyan-600"
+                    className="flex items-center gap-2 text-cyan-600 hover:text-cyan-700 hover:underline"
                   >
                     <ExternalLink className="w-4 h-4" />
                     View on {product.retailer_name}
@@ -1252,10 +1252,25 @@ export default function ProductDetailPage() {
                       tickFormatter={(value: number) => `฿${value.toLocaleString()}`}
                     />
                     <Tooltip
-                      formatter={(value: number) => [`฿${value?.toLocaleString() ?? '-'}`, '']}
-                      labelFormatter={(label: string) => {
-                        const date = new Date(label);
-                        return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+                      content={({ active, payload, label }: any) => {
+                        if (active && payload && payload.length) {
+                          const date = new Date(label);
+                          return (
+                            <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
+                              <p className="text-sm font-medium text-gray-700 mb-2">
+                                {date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              </p>
+                              {payload.map((entry: any, index: number) => (
+                                entry.value !== null && (
+                                  <p key={`item-${index}`} className="text-sm" style={{ color: entry.stroke }}>
+                                    {entry.dataKey}: ฿{entry.value?.toLocaleString()}
+                                  </p>
+                                )
+                              ))}
+                            </div>
+                          );
+                        }
+                        return null;
                       }}
                     />
                     <Legend
@@ -1280,7 +1295,7 @@ export default function ProductDetailPage() {
                     <Line
                       type="monotone"
                       dataKey={priceHistory.base_product.retailer}
-                      stroke="#E53935"
+                      stroke="#C42D31"
                       strokeWidth={3}
                       dot={false}
                       connectNulls
@@ -1288,19 +1303,19 @@ export default function ProductDetailPage() {
                     {priceHistory.matched_products.map((mp, index) => {
                       // Map retailer names to their brand colors
                       const retailerColors: Record<string, string> = {
-                        'HomePro': '#1565C0',       // Dark blue
-                        'Home Pro': '#1565C0',       // Dark blue
-                        'MegaHome': '#43A047',       // Green
-                        'Mega Home': '#43A047',      // Green
-                        'Boonthavorn': '#283593',    // Dark navy
-                        'Global House': '#00897B',   // Teal
-                        'GlobalHouse': '#00897B',    // Teal
-                        'Do Home': '#F9A825',        // Yellow/gold
-                        'DoHome': '#F9A825',         // Yellow/gold
+                        'HomePro': '#0566B3',
+                        'Home Pro': '#0566B3',
+                        'MegaHome': '#4BB35D',
+                        'Mega Home': '#4BB35D',
+                        'Boonthavorn': '#FA4757',
+                        'Global House': '#2B543D',
+                        'GlobalHouse': '#2B543D',
+                        'Do Home': '#F2672C',
+                        'DoHome': '#F2672C',
                       };
 
                       // Get color by retailer name, fallback to default colors
-                      const defaultColors = ['#1565C0', '#43A047', '#283593', '#00897B', '#F9A825'];
+                      const defaultColors = ['#0566B3', '#4BB35D', '#FA4757', '#2B543D', '#F2672C'];
                       const color = retailerColors[mp.retailer] || defaultColors[index % defaultColors.length];
 
                       return (

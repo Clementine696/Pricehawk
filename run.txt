@@ -23,6 +23,11 @@ seed_product.py > all product
 seed_products_matched.py > only product that interst
 upload_matches.py > upload product pair
 
+# Price Update Scripts
+python update_prices.py                          # Update all retailers
+python update_globalhouse_prices.py              # Update GlobalHouse only (from เทพารักษ์ branch)
+python location_price_updater.py                 # Update GlobalHouse branch prices
+
 # or up to 20 workers
 python services/price_updater.py --parallel 20
 

@@ -2678,8 +2678,8 @@ def rescrape_product(product_id: int, user: dict = Depends(get_current_user)):
                     })
                     continue
 
-                # Scrape the URL
-                scrape_result = scrape_single_url(url)
+                # Scrape the URL (pass retailer_id for GlobalHouse location handling)
+                scrape_result = scrape_single_url(url, retailer_id=product["retailer_id"])
 
                 if scrape_result.get("success"):
                     scraped_data = scrape_result.get("data", {})
@@ -3315,21 +3315,32 @@ def cleanup_all_scraper_browsers():
         return 0
 
 
-def scrape_single_url(url: str) -> dict:
+def scrape_single_url(url: str, retailer_id: str = None) -> dict:
     """
     Scrape a single URL and return result dict.
     Returns {"success": True, "data": {...}} or {"success": False, "error": "..."}
+    
+    Args:
+        url: Product URL to scrape
+        retailer_id: Optional retailer ID (gbh, hp, etc.) for special handling
     """
     process = None
     try:
         # Generate unique output file for this scrape
         output_file = os.path.join(RESULTS_DIR, f"scrape_{uuid.uuid4().hex}.json")
 
+        # Detect retailer from URL if not provided
+        if not retailer_id:
+            if "globalhouse" in url.lower():
+                retailer_id = "gbh"
+            elif "homepro.co.th" in url.lower():
+                retailer_id = "hp"
+
         # Run the scraper script
         # HomePro gets 120 second timeout (vs 30 default) due to slower page loads in production
         # Increased from 60s to allow React page transition from home-page to product-page state
         # HomePro also gets max_concurrent=1 for sequential scraping to avoid browser conflicts
-        timeout_seconds = "120" if "homepro.co.th" in url.lower() else "30"
+        timeout_seconds = "120" if retailer_id == "hp" or "homepro.co.th" in url.lower() else "30"
         
         cmd = [
             "python",
@@ -3339,8 +3350,12 @@ def scrape_single_url(url: str) -> dict:
             "--timeout", timeout_seconds
         ]
         
+        # Add GlobalHouse location parameter (use เทพารักษ์ branch as default)
+        if retailer_id == "gbh" or "globalhouse" in url.lower():
+            cmd.extend(["--gbh-location", "เทพารักษ์"])
+        
         # Add max-concurrent=1 for HomePro to prevent browser state pollution
-        if "homepro.co.th" in url.lower():
+        if retailer_id == "hp" or "homepro.co.th" in url.lower():
             cmd.extend(["--max-concurrent", "1"])
 
         timeout_indicator = " (120s timeout)" if "homepro.co.th" in url.lower() else ""
@@ -4365,6 +4380,7 @@ def get_location_prices_summary(
         base_joins = """
             FROM product_location_prices plp
             JOIN locations l ON plp.location_id = l.location_id
+            JOIN location_monitored_locations lml ON lml.location_id = l.location_id
             JOIN products p_gbh ON plp.product_id = p_gbh.product_id
             JOIN product_matches pm ON pm.candidate_product_id = p_gbh.product_id
             JOIN products p_twd ON pm.base_product_id = p_twd.product_id
@@ -4534,6 +4550,20 @@ def get_location_prices_by_sku(
 
         first = rows[0]
         prices = [float(r["price"]) for r in rows if r["price"] is not None]
+        
+        # Find min and max branch names
+        min_branch_name = None
+        max_branch_name = None
+        if prices:
+            min_val = min(prices)
+            max_val = max(prices)
+            for r in rows:
+                if r["price"] is not None:
+                    p = float(r["price"])
+                    if p == min_val and min_branch_name is None:
+                        min_branch_name = r["branch_name_th"]
+                    if p == max_val and max_branch_name is None:
+                        max_branch_name = r["branch_name_th"]
 
         product = {
             "twd_sku": first["twd_sku"],
@@ -4548,6 +4578,8 @@ def get_location_prices_by_sku(
             "gbh_url": first["gbh_url"],
             "min_price": min(prices) if prices else None,
             "max_price": max(prices) if prices else None,
+            "min_branch_name": min_branch_name,
+            "max_branch_name": max_branch_name,
             "avg_price": round(sum(prices) / len(prices), 2) if prices else None,
             "branch_count": len(rows),
             "total_branches": total_branches,

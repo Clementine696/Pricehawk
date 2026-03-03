@@ -3,6 +3,7 @@
 Daily Price Update Cron Job
 
 Entry point for Railway cron job to update all product prices.
+Excludes GlobalHouse (use update_globalhouse_prices.py instead).
 
 Railway Cron Setup:
 1. Create new service in Railway
@@ -14,9 +15,11 @@ Environment Variables:
 - UPDATE_BATCH_SIZE: Products per batch (default: 50)
 - UPDATE_DELAY: Delay between products in seconds (default: 1.0)
 - UPDATE_PARALLEL: Number of parallel workers (default: 1)
-- UPDATE_RETAILER: Optional specific retailer to update (twd, hp, dh, etc.)
+- UPDATE_RETAILER: Optional specific retailer to update (twd, hp, dh, btv, mgh - not gbh)
 - UPDATE_LIMIT: Optional limit on number of products to update (oldest first)
 - UPDATE_OFFSET: Optional number of oldest products to skip (default: 0, use to split across multiple cron jobs)
+
+Note: GlobalHouse (gbh) is excluded and handled separately by update_globalhouse_prices.py
 """
 
 import os
@@ -52,7 +55,7 @@ def main():
     logger.info(f"  Batch Size: {batch_size}")
     logger.info(f"  Delay: {delay}s")
     logger.info(f"  Parallel Workers: {parallel_workers}")
-    logger.info(f"  Retailer Filter: {retailer or 'ALL'}")
+    logger.info(f"  Retailer Filter: {retailer or 'ALL (excluding GlobalHouse)'}")
     logger.info(f"  Product Limit: {limit or 'NONE (all products)'}")
     logger.info(f"  Offset: {offset} (skipping {offset} oldest products)")
 

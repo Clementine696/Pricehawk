@@ -1253,10 +1253,25 @@ export default function ProductDetailPage() {
                       tickFormatter={(value: number) => `฿${value.toLocaleString()}`}
                     />
                     <Tooltip
-                      formatter={(value: number) => [`฿${value?.toLocaleString() ?? '-'}`, '']}
-                      labelFormatter={(label: string) => {
-                        const date = new Date(label);
-                        return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+                      content={({ active, payload, label }: any) => {
+                        if (active && payload && payload.length) {
+                          const date = new Date(label);
+                          return (
+                            <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
+                              <p className="text-sm font-medium text-gray-700 mb-2">
+                                {date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              </p>
+                              {payload.map((entry: any, index: number) => (
+                                entry.value !== null && (
+                                  <p key={`item-${index}`} className="text-sm" style={{ color: entry.stroke }}>
+                                    {entry.dataKey}: ฿{entry.value?.toLocaleString()}
+                                  </p>
+                                )
+                              ))}
+                            </div>
+                          );
+                        }
+                        return null;
                       }}
                     />
                     <Legend

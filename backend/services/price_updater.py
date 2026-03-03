@@ -409,6 +409,7 @@ class PriceUpdater:
 
         Skips:
         - Unmatched/unverified retailer products (~50%+ of database)
+        - GlobalHouse products (handled by update_globalhouse_prices.py)
 
         Note: Products are attempted even if they have high scrape_fail_count, as URLs may come back online.
 
@@ -440,6 +441,8 @@ class PriceUpdater:
                               AND pm.verified_result = TRUE
                           )
                       )
+                      -- Exclude GlobalHouse (handled by update_globalhouse_prices.py)
+                      AND p.retailer_id != 'gbh'
                 """
                 params = []
 

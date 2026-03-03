@@ -3,6 +3,7 @@
 ## Overview
 
 The price update service scrapes all products daily to keep prices current.
+**Note:** GlobalHouse is excluded and handled by `update_globalhouse_prices.py`.
 
 **Estimated Time:** ~2-4 hours for 10,000 products
 
@@ -11,7 +12,8 @@ The price update service scrapes all products daily to keep prices current.
 | File | Description |
 |------|-------------|
 | `services/price_updater.py` | Main price update service |
-| `update_prices.py` | Cron job entry point |
+| `update_prices.py` | Cron job entry point (excludes GlobalHouse) |
+| `update_globalhouse_prices.py` | GlobalHouse-specific updater |
 
 ## Railway Cron Setup
 
@@ -45,8 +47,10 @@ DATABASE_URL=postgresql://...
 UPDATE_BATCH_SIZE=50        # Optional: products per batch
 UPDATE_DELAY=1.0            # Optional: delay between products (seconds)
 UPDATE_PARALLEL=1           # Optional: 1=sequential, 2-6=parallel retailer workers
-UPDATE_RETAILER=            # Optional: specific retailer (twd, hp, dh, btv, gbh, mgh)
+UPDATE_RETAILER=            # Optional: specific retailer (twd, hp, dh, btv, mgh - NOT gbh)
 ```
+
+**Note:** GlobalHouse (gbh) is excluded from this script. Use `update_globalhouse_prices.py` for GlobalHouse products.
 
 ## Local Testing
 
@@ -203,3 +207,97 @@ Check Railway logs for:
 
 - Verify `DATABASE_URL` is set correctly
 - Check Neon connection pooling limits
+
+---
+
+## GlobalHouse Price Update (Separate Cron)
+
+### Overview
+
+GlobalHouse requires location selection, so it has a separate updater that uses the **เทพารักษ์ (THEPHARAK)** branch for all product prices.
+
+**File:** `update_globalhouse_prices.py`
+
+### Railway Cron Setup
+
+Create a separate cron service for GlobalHouse:
+
+1. In Railway, click **New** > **Empty Service**
+2. Connect to same GitHub repo
+3. Set **Root Directory**: `backend`
+4. Set **Start Command**: `python update_globalhouse_prices.py`
+5. Go to **Settings** > **Deploy**
+6. Set **Schedule**: `0 20 * * *` (3 AM Thailand = 8 PM UTC)
+
+### Environment Variables
+
+```
+DATABASE_URL=postgresql://...
+GBH_UPDATE_BATCH_SIZE=20       # Optional: products per batch (default: 20)
+GBH_UPDATE_DELAY=2.0           # Optional: delay between products in seconds (default: 2.0)
+GBH_UPDATE_TIMEOUT=120         # Optional: timeout per product in seconds (default: 120)
+GBH_UPDATE_LIMIT=              # Optional: limit number of products to update
+GBH_UPDATE_OFFSET=0            # Optional: skip N oldest products (default: 0)
+GBH_UPDATE_DRY_RUN=false       # Optional: test without updating database
+```
+
+### What It Does
+
+1. **Fetches GlobalHouse products** that are verified matches with Thai Watsadu
+2. **Scrapes each product** using the **เทพารักษ์ (THEPHARAK)** branch location
+3. **Updates main `products` table** and `price_history` (not location-specific tables)
+4. Uses the same logic as `location_price_updater.py` but updates the default product price
+
+### Local Testing
+
+```bash
+cd backend
+
+# Test with 5 products
+GBH_UPDATE_LIMIT=5 python update_globalhouse_prices.py
+
+# Dry run (no DB updates)
+GBH_UPDATE_DRY_RUN=true python update_globalhouse_prices.py
+
+# Custom batch size
+GBH_UPDATE_BATCH_SIZE=10 python update_globalhouse_prices.py
+```
+
+### Summary File
+
+Saved to `results/gbh_price_updates/summary_YYYYMMDD_HHMMSS.json`:
+
+```json
+{
+  "timestamp": "2024-01-15T04:30:00",
+  "branch": {
+    "branch_code": "GH-141",
+    "branch_name_TH": "เทพารักษ์",
+    "branch_name_EN": "THEPHARAK",
+    "postal_code": 10540
+  },
+  "stats": {
+    "total_products": 500,
+    "updated": 480,
+    "failed": 20,
+    "unchanged": 50,
+    "price_increased": 30,
+    "price_decreased": 25,
+    "new_lowest": 10,
+    "new_highest": 5
+  }
+}
+```
+
+### Why Separate from Other Retailers?
+
+- GlobalHouse requires location selection via `--gbh-location` parameter
+- Uses a fixed branch (เทพารักษ์) for consistent default prices
+- Location-specific prices are handled by `location_price_updater.py`
+
+### Recommended Schedule
+
+Run after the main price updater:
+- Main updater: `0 19 * * *` (2 AM Thailand)
+- GlobalHouse: `0 20 * * *` (3 AM Thailand)
+- Location prices: `0 21 * * *` (4 AM Thailand)

@@ -697,7 +697,7 @@ export default function ProductDetailPage() {
               </div>
 
               <div className="mt-4 pt-4 border-t border-gray-200">
-                <div className="text-2xl font-bold" style={{ color: '#C42D31' }}>
+                <div className="text-2xl font-bold text-gray-900">
                   {formatPrice(product.current_price)}
                 </div>
                 {product.original_price && product.original_price > (product.current_price || 0) && (
@@ -714,8 +714,7 @@ export default function ProductDetailPage() {
                     href={product.link}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-2 hover:underline"
-                    style={{ color: '#C42D31' }}
+                    className="flex items-center gap-2 text-cyan-600 hover:text-cyan-700 hover:underline"
                   >
                     <ExternalLink className="w-4 h-4" />
                     View on {product.retailer_name}

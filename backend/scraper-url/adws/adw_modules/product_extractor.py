@@ -1035,6 +1035,18 @@ class ThaiWatsaduExtractor(ProductExtractor):
             except (ValueError, TypeError):
                 pass
 
+        # Check for additional "Buy now get discount" badge: "ซื้อตอนนี้ลดเพิ่ม 500"
+        # If found, subtract the discount amount from the current price
+        if html_current_price:
+            additional_discount_pattern = r'ซื้อตอนนี้ลดเพิ่ม\s*([\d,]+)'
+            discount_match = re.search(additional_discount_pattern, html_content, re.IGNORECASE)
+            if discount_match:
+                try:
+                    discount_amount = float(discount_match.group(1).replace(',', ''))
+                    html_current_price -= discount_amount
+                except (ValueError, TypeError):
+                    pass
+
         # Override with HTML prices if found (HTML is more reliable than JSON-LD)
         if html_current_price:
             product.current_price = html_current_price

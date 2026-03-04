@@ -665,10 +665,9 @@ class Crawl4AIWrapper:
     // GlobalHouse Location Selection
     async function selectGlobalhouseLocation(locationName) {{
         try {{
-            console.log('Starting GlobalHouse location selection for:', locationName);
+            console.log('Location selection:', locationName);
 
-            // Step 1: Find and click the location button in navbar
-            // Look for button with text "กำลังช็อปที่" and has location pin icon
+            // Step 1: Click navbar location button
             const locationButtons = Array.from(document.querySelectorAll('button'));
             const navbarButton = locationButtons.find(btn =>
                 btn.textContent.includes('กำลังช็อปที่') ||
@@ -676,50 +675,68 @@ class Crawl4AIWrapper:
             );
 
             if (!navbarButton) {{
-                console.error('Location navbar button not found');
+                console.error('ERROR: Navbar button not found');
                 return false;
             }}
 
             navbarButton.click();
-            console.log('Clicked navbar location button');
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            await new Promise(resolve => setTimeout(resolve, 800));
 
-            // Step 2: Wait for modal to appear and find search input
-            const searchInput = document.querySelector('input[placeholder*="ค้นหา"], input[type="text"]');
+            // Step 2: Find search input
+            let searchInput = null;
+            for (let i = 0; i < 3; i++) {{
+                searchInput = document.querySelector('input[placeholder*="ค้นหา"], input[placeholder*="สาขา"], input[type="text"]');
+                if (searchInput) break;
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }}
+            
             if (!searchInput) {{
-                console.error('Search input not found');
+                console.error('ERROR: Search input not found');
                 return false;
             }}
 
-            // Step 3: Type location name in search
+            // Step 3: Type location name
             searchInput.focus();
             searchInput.value = locationName;
             searchInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
             searchInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            console.log('Typed location name:', locationName);
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            searchInput.dispatchEvent(new KeyboardEvent('keyup', {{ bubbles: true }}));
+            await new Promise(resolve => setTimeout(resolve, 500));
 
-            // Step 4: Find and click the matching location from search results
-            // Look for elements containing the location name
-            const allElements = Array.from(document.querySelectorAll('*'));
-            const locationElement = allElements.find(el =>
-                el.textContent.includes(locationName) &&
-                el.textContent.includes('สาขา') &&
-                (el.tagName === 'DIV' || el.tagName === 'BUTTON' || el.tagName === 'SPAN')
-            );
+            // Step 4: Find and click location
+            let locationElement = null;
+            const allClickable = Array.from(document.querySelectorAll('button, div[role="button"], [onclick], .cursor-pointer'));
+            
+            locationElement = allClickable.find(el => {{
+                const text = el.textContent.trim();
+                return text.includes(locationName) && text.includes('สาขา');
+            }});
 
-            if (locationElement) {{
-                // Click the location element or its parent if it's not clickable
-                const clickableElement = locationElement.closest('button, [role="button"], [onclick]') || locationElement;
-                clickableElement.click();
-                console.log('Clicked location:', locationName);
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }} else {{
-                console.error('Location not found in search results');
+            if (!locationElement) {{
+                const modal = document.querySelector('[role="dialog"], .modal, .fixed');
+                if (modal) {{
+                    const allInModal = Array.from(modal.querySelectorAll('*'));
+                    locationElement = allInModal.find(el => {{
+                        const text = el.textContent.trim();
+                        return text.includes(locationName) && 
+                               text.includes('สาขา') &&
+                               !text.includes('เลือกช้อป') &&
+                               !text.includes('เลือก') &&
+                               (el.tagName === 'DIV' || el.tagName === 'BUTTON' || el.tagName === 'SPAN');
+                    }});
+                }}
+            }}
+
+            if (!locationElement) {{
+                console.error('ERROR: Location not found');
                 return false;
             }}
 
-            // Step 5: Click "เลือกช้อปที่สาขานี้" button
+            const clickableElement = locationElement.closest('button, [role="button"], [onclick], .cursor-pointer') || locationElement;
+            clickableElement.click();
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Step 5: Click confirm button
             const confirmButtons = Array.from(document.querySelectorAll('button'));
             const confirmButton = confirmButtons.find(btn =>
                 btn.textContent.includes('เลือกช้อปที่สาขานี้') ||
@@ -727,21 +744,32 @@ class Crawl4AIWrapper:
             );
 
             if (!confirmButton) {{
-                console.error('Confirm button not found');
+                console.error('ERROR: Confirm button not found');
                 return false;
             }}
 
             confirmButton.click();
-            console.log('Clicked confirm button');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            // Step 6: Wait for price to update
-            await new Promise(resolve => setTimeout(resolve, 1500));
-
-            console.log('Location selection completed successfully');
+            
+            // Wait for price element
+            let priceFound = false;
+            for (let i = 0; i < 6; i++) {{
+                await new Promise(resolve => setTimeout(resolve, 500));
+                const priceElement = document.querySelector('span[class*="text-3xl"]');
+                if (priceElement && priceElement.textContent && priceElement.textContent.includes('฿')) {{
+                    priceFound = true;
+                    break;
+                }}
+            }}
+            
+            if (!priceFound) {{
+                console.warn('WARNING: Price element not found');
+            }}
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            console.log('SUCCESS:', locationName);
             return true;
         }} catch (error) {{
-            console.error('Error in selectGlobalhouseLocation:', error);
+            console.error('ERROR:', error);
             return false;
         }}
     }}

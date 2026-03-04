@@ -359,8 +359,15 @@ class LocationPriceUpdater:
                 logger.error(f"Timeout scraping {url} with location {location_name_th}")
                 return None
 
+            # Log errors only on failure
             if returncode != 0:
-                logger.warning(f"Scraper failed: {stderr[:200] if stderr else 'No error'}")
+                if stderr:
+                    err_lines = [line for line in stderr.split('\n') if 'ERROR' in line or 'FAILED' in line]
+                    if err_lines:
+                        print(f"⚠ Errors for {location_name_th}:", flush=True)
+                        for line in err_lines[-3:]:
+                            print(f"  {line}", flush=True)
+                logger.warning(f"Scraper failed for {location_name_th}")
                 return None
 
             # Look for GlobalHouse output file
@@ -376,6 +383,10 @@ class LocationPriceUpdater:
 
                         if isinstance(data, list) and len(data) > 0:
                             result_data = data[0]
+                            # If price is missing, log stderr for debugging
+                            if not result_data.get('current_price'):
+                                if stderr and 'STEP' in stderr:
+                                    logger.warning(f"No price for {location_name_th}. Scraper logs:\n{stderr[-2000:]}")
                             break
                         elif isinstance(data, dict):
                             result_data = data

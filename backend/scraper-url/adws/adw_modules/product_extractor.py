@@ -2723,13 +2723,13 @@ class GlobalHouseExtractor(ProductExtractor):
         # 3. Extract price from Global House specific patterns
         if not product.current_price:
             price_patterns = [
-                # GlobalHouse 2024 patterns - sale price in red text-3xl
-                r'<span[^>]*class="[^"]*text-3xl[^"]*text-red[^"]*"[^>]*>฿?([\d,]+)</span>',
-                r'<span[^>]*class="[^"]*text-red[^"]*text-3xl[^"]*"[^>]*>฿?([\d,]+)</span>',
-                # Font-bold price pattern
-                r'<span[^>]*class="[^"]*font-bold[^"]*text-3xl[^"]*"[^>]*>฿?([\d,]+)</span>',
-                # Generic large price display
-                r'<span[^>]*class="[^"]*text-(?:2|3)xl[^"]*"[^>]*>฿?([\d,]+)</span>',
+                # GlobalHouse 2024 patterns - sale price in red text-3xl (support decimals)
+                r'<span[^>]*class="[^"]*text-3xl[^"]*text-red[^"]*"[^>]*>฿?([\d,]+(?:\.\d+)?)</span>',
+                r'<span[^>]*class="[^"]*text-red[^"]*text-3xl[^"]*"[^>]*>฿?([\d,]+(?:\.\d+)?)</span>',
+                # Font-bold price pattern (support decimals)
+                r'<span[^>]*class="[^"]*font-bold[^"]*text-3xl[^"]*"[^>]*>฿?([\d,]+(?:\.\d+)?)</span>',
+                # Generic large price display (support decimals)
+                r'<span[^>]*class="[^"]*text-(?:2|3)xl[^"]*"[^>]*>฿?([\d,]+(?:\.\d+)?)</span>',
                 # Legacy patterns
                 r'<span[^>]*class="[^"]*price[^"]*final[^"]*"[^>]*>(.*?)</span>',
                 r'<span[^>]*class="[^"]*selling-price[^"]*"[^>]*>(.*?)</span>',

@@ -92,16 +92,20 @@ export default function PriceByLocationDetailPage() {
   const formatTimestamp = (timestamp: string | null) => {
     if (!timestamp) return '—';
     try {
-      const date = new Date(timestamp);
-      return date.toLocaleString('th-TH', {
-        timeZone: 'Asia/Bangkok',
-        day: '2-digit',
-        month: '2-digit',
-        year: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
+      // Parse UTC timestamp and convert to Bangkok time (UTC+7)
+      const utcDate = new Date(timestamp);
+      
+      // Add 7 hours for Bangkok timezone
+      const bangkokDate = new Date(utcDate.getTime() + (7 * 60 * 60 * 1000));
+      
+      // Format as DD/MM/YY HH:MM
+      const day = String(bangkokDate.getUTCDate()).padStart(2, '0');
+      const month = String(bangkokDate.getUTCMonth() + 1).padStart(2, '0');
+      const year = String(bangkokDate.getUTCFullYear()).slice(-2);
+      const hours = String(bangkokDate.getUTCHours()).padStart(2, '0');
+      const minutes = String(bangkokDate.getUTCMinutes()).padStart(2, '0');
+      
+      return `${day}/${month}/${year} ${hours}:${minutes}`;
     } catch {
       return '—';
     }

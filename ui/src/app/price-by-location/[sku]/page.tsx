@@ -89,6 +89,24 @@ export default function PriceByLocationDetailPage() {
     return `฿${price.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
+  const formatTimestamp = (timestamp: string | null) => {
+    if (!timestamp) return '—';
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleString('th-TH', {
+        timeZone: 'Asia/Bangkok',
+        day: '2-digit',
+        month: '2-digit',
+        year: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    } catch {
+      return '—';
+    }
+  };
+
   const getStatusBadge = (status: Branch['status'], price: number | null, twd_price: number | null) => {
     if (status === 'cheaper') {
       const diff = twd_price && price ? twd_price - price : 0;
@@ -427,9 +445,7 @@ export default function PriceByLocationDetailPage() {
                     <span className="px-2 py-1 rounded-full text-xs font-medium bg-cyan-100 text-cyan-700">My Price</span>
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-400">
-                    {product.twd_updated_at
-                      ? new Date(product.twd_updated_at).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
-                      : '—'}
+                    {formatTimestamp(product.twd_updated_at)}
                   </td>
                 </tr>
 
@@ -456,9 +472,7 @@ export default function PriceByLocationDetailPage() {
                       {getStatusBadge(branch.status, branch.price, product.twd_price)}
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-400">
-                      {branch.scraped_at
-                        ? new Date(branch.scraped_at).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
-                        : '—'}
+                      {formatTimestamp(branch.scraped_at)}
                     </td>
                   </tr>
                 ))}

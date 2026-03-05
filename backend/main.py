@@ -1239,7 +1239,7 @@ def get_available_groups(user: dict = Depends(get_current_user)):
     """Get all available SKU groups that have matched GlobalHouse products"""
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Get groups that have Thai Watsadu SKUs with verified GlobalHouse matches
+            # Optimized: Pre-filter verified matches, then join to reduce dataset early
             cur.execute("""
                 SELECT
                     wsg.group_id,
@@ -1249,10 +1249,15 @@ def get_available_groups(user: dict = Depends(get_current_user)):
                 FROM watchlist_sku_groups wsg
                 JOIN watchlist_sku_group_products wsgp ON wsg.group_id = wsgp.group_id
                 JOIN products p_twd ON wsgp.sku = p_twd.sku AND p_twd.retailer_id = 'twd'
-                JOIN product_matches pm ON pm.base_product_id = p_twd.product_id
-                JOIN products p_gbh ON pm.candidate_product_id = p_gbh.product_id AND p_gbh.retailer_id = 'gbh'
-                WHERE pm.verified_by_user = TRUE
-                  AND pm.is_same = TRUE
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM product_matches pm
+                    JOIN products p_gbh ON pm.candidate_product_id = p_gbh.product_id
+                    WHERE pm.base_product_id = p_twd.product_id
+                      AND pm.verified_by_user = TRUE
+                      AND pm.is_same = TRUE
+                      AND p_gbh.retailer_id = 'gbh'
+                )
                 GROUP BY wsg.group_id, wsg.name
                 ORDER BY wsg.name ASC
             """)

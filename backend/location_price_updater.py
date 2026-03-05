@@ -10,19 +10,24 @@ Features:
 - Updates product_location_prices and location_price_history
 - Parallel processing support
 - Memory-efficient with cleanup
+- LIMIT/OFFSET support for incremental processing
 
 Usage:
     python location_price_updater.py                    # Update all monitored products/locations
     python location_price_updater.py --dry-run          # Test without updating DB
     python location_price_updater.py --parallel 3       # 3 parallel workers
+    python location_price_updater.py --limit 100        # Process only 100 combinations
+    python location_price_updater.py --offset 100       # Skip first 100 combinations
     python location_price_updater.py --limit-groups 1   # Test with 1 group only
     python location_price_updater.py --limit-locations 2 # Test with 2 locations only
 
 Environment Variables:
-    LOC_UPDATE_BATCH_SIZE=10       # Products per batch
-    LOC_UPDATE_DELAY=2.0           # Delay between products (seconds)
-    LOC_UPDATE_PARALLEL=1          # Parallel workers (1=sequential)
-    LOC_UPDATE_TIMEOUT=120         # Timeout per product (seconds)
+    GBH_UPDATE_BATCH_SIZE=20       # Products per batch
+    GBH_UPDATE_DELAY=2.0           # Delay between products (seconds)
+    GBH_UPDATE_PARALLEL=1          # Parallel workers (1=sequential)
+    GBH_UPDATE_TIMEOUT=120         # Timeout per product (seconds)
+    GBH_UPDATE_LIMIT=100           # Limit combinations per run (for incremental updates)
+    GBH_UPDATE_OFFSET=0            # Skip N combinations (continue from previous run)
 """
 
 import os
@@ -508,18 +513,153 @@ class LocationPriceUpdater:
             self.stats.increment('failed')
             return False
 
-    def process_batch(
+    def mark_combination_failed(
         self,
-        products: List[Dict],
-        locations: List[Dict]
-    ) -> int:
+        product_id: int,
+        location_id: int
+    ) -> bool:
         """
-        Process a batch of products across all locations.
+        Mark a combination as failed by updating timestamp without price.
+        This moves it to the back of the queue (won't retry until next full cycle).
 
         Args:
-            products: List of GlobalHouse products
-            locations: List of locations
+            product_id: GlobalHouse product ID
+            location_id: Location ID
 
+        Returns:
+            True if marked successfully
+        """
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would mark combination as failed: product {product_id} at location {location_id}")
+            return True
+
+        try:
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    # Upsert with NULL price but update timestamp
+                    # This prevents retry loop while keeping the combination tracked
+                    cur.execute("""
+                        INSERT INTO product_location_prices (product_id, location_id, price, last_updated_at)
+                        VALUES (%s, %s, NULL, NOW())
+                        ON CONFLICT (product_id, location_id)
+                        DO UPDATE SET
+                            last_updated_at = NOW()
+                            -- Keep existing price if any, just update timestamp
+                    """, (product_id, location_id))
+
+                    conn.commit()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Database error marking combination as failed: {e}")
+            return False
+
+    def get_all_combinations(
+        self,
+        limit_groups: Optional[int] = None,
+        limit_locations: Optional[int] = None
+    ) -> List[Dict]:
+        """
+        Get all product×location combinations to process.
+        
+        Args:
+            limit_groups: Optional limit to N groups for testing
+            limit_locations: Optional limit to N locations for testing
+            
+        Returns:
+            List of dicts with: {
+                'group_id', 'group_name', 
+                'gbh_product_id', 'gbh_sku', 'gbh_name', 'gbh_link',
+                'location_id', 'location_name', 'branch_code',
+                'last_updated_at'  # For sorting by least recently updated
+            }
+        """
+        # Get monitored groups and locations
+        groups = self.get_monitored_groups()
+        locations = self.get_monitored_locations()
+
+        if limit_groups:
+            groups = groups[:limit_groups]
+        if limit_locations:
+            locations = locations[:limit_locations]
+
+        if not groups or not locations:
+            return []
+
+        # Collect all product IDs from all groups
+        all_product_ids = []
+        product_info = {}  # product_id -> {group_id, group_name, sku, name, link}
+        
+        for group in groups:
+            products = self.get_gbh_products_for_group(group['group_id'])
+            for product in products:
+                pid = product['gbh_product_id']
+                all_product_ids.append(pid)
+                product_info[pid] = {
+                    'group_id': group['group_id'],
+                    'group_name': group['name'],
+                    'gbh_sku': product['gbh_sku'],
+                    'gbh_name': product['gbh_name'],
+                    'gbh_link': product['gbh_link']
+                }
+
+        if not all_product_ids:
+            return []
+
+        # Fetch all last_updated_at timestamps in ONE batch query
+        location_ids = [loc['location_id'] for loc in locations]
+        
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT product_id, location_id, last_updated_at
+                    FROM product_location_prices
+                    WHERE product_id = ANY(%s) AND location_id = ANY(%s)
+                """, (all_product_ids, location_ids))
+                timestamp_rows = cur.fetchall()
+        
+        # Build lookup: (product_id, location_id) -> last_updated_at
+        timestamp_lookup = {
+            (row['product_id'], row['location_id']): row['last_updated_at']
+            for row in timestamp_rows
+        }
+
+        # Build all combinations
+        combinations = []
+        for pid, pinfo in product_info.items():
+            for location in locations:
+                loc_id = location['location_id']
+                last_updated = timestamp_lookup.get((pid, loc_id), None)
+                
+                combinations.append({
+                    'group_id': pinfo['group_id'],
+                    'group_name': pinfo['group_name'],
+                    'gbh_product_id': pid,
+                    'gbh_sku': pinfo['gbh_sku'],
+                    'gbh_name': pinfo['gbh_name'],
+                    'gbh_link': pinfo['gbh_link'],
+                    'location_id': loc_id,
+                    'location_name': location['name_th'] or location['name_en'],
+                    'branch_code': location['branch_code'],
+                    'last_updated_at': last_updated
+                })
+
+        # Sort by least recently updated first (NULL = never updated = highest priority)
+        combinations.sort(key=lambda x: x['last_updated_at'] or datetime.min)
+
+        return combinations
+
+    def process_combinations(
+        self,
+        combinations: List[Dict]
+    ) -> int:
+        """
+        Process a list of product×location combinations.
+        
+        Args:
+            combinations: List of combination dicts
+            
         Returns:
             Number of successfully updated combinations
         """
@@ -527,47 +667,59 @@ class LocationPriceUpdater:
 
         updated = 0
 
-        for i, product in enumerate(products):
-            logger.info(f"  [{i+1}/{len(products)}] Processing {product['gbh_sku']} - {product['gbh_name'][:50]}...")
+        for i, combo in enumerate(combinations):
+            logger.info(f"[{i+1}/{len(combinations)}] {combo['gbh_sku']} @ {combo['location_name']} ({combo['branch_code']})")
 
-            # Scrape this product for each location
-            for loc in locations:
-                location_name = loc['name_th'] or loc['name_en']
-                logger.info(f"    → Location: {location_name}")
-
-                scraped = None
-                for attempt in range(self.max_retries):
-                    scraped = self.scrape_product_with_location(
-                        product['gbh_link'],
-                        loc['name_th']
-                    )
-                    if scraped:
-                        break
-                    logger.warning(f"    Retry {attempt + 1}/{self.max_retries}")
+            scraped = None
+            for attempt in range(self.max_retries):
+                scraped = self.scrape_product_with_location(
+                    combo['gbh_link'],
+                    combo['location_name']
+                )
+                if scraped:
+                    break
+                if attempt < self.max_retries - 1:
+                    logger.warning(f"  Retry {attempt + 1}/{self.max_retries}")
                     time.sleep(self.delay_between_products)
 
-                if scraped and scraped.get('current_price'):
+            if scraped and scraped.get('current_price'):
+                try:
                     price = float(scraped['current_price'])
                     if self.update_location_price(
-                        product['gbh_product_id'],
-                        loc['location_id'],
+                        combo['gbh_product_id'],
+                        combo['location_id'],
                         price
                     ):
                         updated += 1
-                        logger.info(f"    Updated: ฿{price}")
+                        logger.info(f"  ✓ ฿{price}")
                     else:
-                        logger.error(f"    Failed to update database")
-                else:
+                        logger.error(f"  ✗ Failed to update database")
+                except (ValueError, TypeError) as e:
                     self.stats.increment('failed')
-                    logger.error(f"    Failed to scrape price")
+                    logger.error(f"  ✗ Invalid price: {e}")
+                    # Mark as failed to move to back of queue
+                    self.mark_combination_failed(combo['gbh_product_id'], combo['location_id'])
+            else:
+                # Failed to scrape after all retries
+                self.stats.increment('failed')
+                logger.error(f"  ✗ Failed to scrape after {self.max_retries} attempts")
+                # Mark as failed to move to back of queue (prevents retry loop)
+                self.mark_combination_failed(combo['gbh_product_id'], combo['location_id'])
 
-                # Rate limiting between locations
-                time.sleep(self.delay_between_products)
+            # Rate limiting
+            time.sleep(self.delay_between_products)
+
+            # Periodic cleanup every 10 combinations
+            if (i + 1) % 10 == 0:
+                cleanup_orphan_browsers()
+                gc.collect()
 
         return updated
 
     def run(
         self,
+        limit: Optional[int] = None,
+        offset: int = 0,
         limit_groups: Optional[int] = None,
         limit_locations: Optional[int] = None
     ) -> LocationUpdateStats:
@@ -575,6 +727,8 @@ class LocationPriceUpdater:
         Run the location price update process.
 
         Args:
+            limit: Limit to N combinations (for incremental updates)
+            offset: Skip first N combinations (continue from previous run)
             limit_groups: Optional limit to N groups for testing
             limit_locations: Optional limit to N locations for testing
 
@@ -587,6 +741,7 @@ class LocationPriceUpdater:
         logger.info("=" * 60)
         logger.info(f"Location Price Update Started: {start_time}")
         logger.info(f"Configuration: batch_size={self.batch_size}, parallel_workers={self.parallel_workers}, dry_run={self.dry_run}")
+        logger.info(f"Limit: {limit or 'ALL'}, Offset: {offset}")
         logger.info(f"Memory at start: {percent:.1f}% ({used_mb/1024:.2f}GB used)")
         logger.info("=" * 60)
 
@@ -595,69 +750,48 @@ class LocationPriceUpdater:
         cleanup_orphan_browsers()
         gc.collect()
 
-        # Get monitored groups and locations
-        groups = self.get_monitored_groups()
-        locations = self.get_monitored_locations()
+        # Get all combinations (sorted by least recently updated)
+        logger.info("\nCollecting all product×location combinations...")
+        all_combinations = self.get_all_combinations(limit_groups, limit_locations)
 
-        if limit_groups:
-            groups = groups[:limit_groups]
-            logger.info(f"Limited to {len(groups)} groups (testing)")
-
-        if limit_locations:
-            locations = locations[:limit_locations]
-            logger.info(f"Limited to {len(locations)} locations (testing)")
-
-        if not groups:
-            logger.warning("No monitored groups found. Configure in /price-by-location/settings")
+        if not all_combinations:
+            logger.warning("No combinations to process. Check monitored groups/locations.")
             return self.stats
 
-        if not locations:
-            logger.warning("No monitored locations found. Configure in /price-by-location/settings")
-            return self.stats
+        total_available = len(all_combinations)
+        logger.info(f"Total combinations available: {total_available}")
 
-        logger.info(f"\nMonitored groups: {len(groups)}")
-        for g in groups:
-            logger.info(f"  - {g['name']} (ID: {g['group_id']})")
+        # Apply offset
+        if offset > 0:
+            if offset >= total_available:
+                logger.warning(f"Offset {offset} >= total combinations {total_available}. Nothing to process.")
+                return self.stats
+            all_combinations = all_combinations[offset:]
+            logger.info(f"Skipped first {offset} combinations (offset)")
 
-        logger.info(f"\nMonitored locations: {len(locations)}")
-        for loc in locations:
-            logger.info(f"  - {loc['name_th']} ({loc['branch_code']})")
+        # Apply limit
+        if limit:
+            all_combinations = all_combinations[:limit]
+            logger.info(f"Limited to {len(all_combinations)} combinations")
 
-        # Process each group
-        for group in groups:
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Processing Group: {group['name']}")
-            logger.info(f"{'='*60}")
+        self.stats.total_combinations = len(all_combinations)
 
-            # Get GlobalHouse products for this group
-            products = self.get_gbh_products_for_group(group['group_id'])
+        # Show summary
+        logger.info(f"\nProcessing range: combinations {offset + 1} to {offset + len(all_combinations)} of {total_available}")
+        logger.info(f"Will process: {self.stats.total_combinations} combinations")
 
-            if not products:
-                logger.info(f"No GlobalHouse products found for group {group['name']}")
-                continue
+        # Group by product for display
+        unique_products = len(set(c['gbh_product_id'] for c in all_combinations))
+        unique_locations = len(set(c['location_id'] for c in all_combinations))
+        logger.info(f"  - {unique_products} unique products")
+        logger.info(f"  - {unique_locations} unique locations")
 
-            logger.info(f"Found {len(products)} GlobalHouse products in this group")
+        # Process all combinations
+        logger.info(f"\n{'='*60}")
+        logger.info("Starting Price Scraping")
+        logger.info(f"{'='*60}")
 
-            # Calculate total combinations
-            total_combos = len(products) * len(locations)
-            self.stats.total_combinations += total_combos
-            logger.info(f"Total combinations to scrape: {len(products)} products × {len(locations)} locations = {total_combos}")
-
-            # Process in batches
-            for batch_start in range(0, len(products), self.batch_size):
-                batch_end = min(batch_start + self.batch_size, len(products))
-                batch = products[batch_start:batch_end]
-
-                logger.info(f"\nBatch {batch_start//self.batch_size + 1}: products {batch_start + 1}-{batch_end}")
-                self.process_batch(batch, locations)
-
-                # Cleanup between batches
-                if batch_end < len(products):
-                    logger.info(f"Waiting before next batch...")
-                    cleanup_orphan_browsers()
-                    gc.collect()
-                    import time
-                    time.sleep(5)
+        updated = self.process_combinations(all_combinations)
 
         # Final cleanup
         logger.info("\nRunning final cleanup...")
@@ -673,11 +807,20 @@ class LocationPriceUpdater:
         logger.info("LOCATION PRICE UPDATE COMPLETE")
         logger.info("=" * 60)
         logger.info(f"Duration: {duration}")
-        logger.info(f"Total Combinations: {self.stats.total_combinations}")
+        logger.info(f"Processed: {self.stats.total_combinations} combinations")
         logger.info(f"Updated: {self.stats.updated}")
         logger.info(f"Failed: {self.stats.failed}")
+        if self.stats.total_combinations > 0:
+            success_rate = (self.stats.updated / self.stats.total_combinations) * 100
+            logger.info(f"Success Rate: {success_rate:.1f}%")
         logger.info(f"Memory at end: {percent:.1f}% ({used_mb/1024:.2f}GB used)")
         logger.info("=" * 60)
+
+        # Show next offset for continuation
+        next_offset = offset + self.stats.total_combinations
+        if next_offset < total_available:
+            remaining = total_available - next_offset
+            logger.info(f"\n💡 To continue: --offset {next_offset} (remaining: {remaining} combinations)")
 
         return self.stats
 
@@ -686,11 +829,13 @@ def main():
     """CLI entry point"""
     import argparse
 
-    # Get defaults from environment variables
-    env_batch_size = int(os.environ.get('LOC_UPDATE_BATCH_SIZE', 10))
-    env_delay = float(os.environ.get('LOC_UPDATE_DELAY', 2.0))
-    env_parallel = int(os.environ.get('LOC_UPDATE_PARALLEL', 1))
-    env_timeout = int(os.environ.get('LOC_UPDATE_TIMEOUT', 120))
+    # Get defaults from environment variables (updated to GBH_* prefix)
+    env_batch_size = int(os.environ.get('GBH_UPDATE_BATCH_SIZE', 20))
+    env_delay = float(os.environ.get('GBH_UPDATE_DELAY', 2.0))
+    env_parallel = int(os.environ.get('GBH_UPDATE_PARALLEL', 1))
+    env_timeout = int(os.environ.get('GBH_UPDATE_TIMEOUT', 120))
+    env_limit = int(os.environ.get('GBH_UPDATE_LIMIT', 0)) if os.environ.get('GBH_UPDATE_LIMIT') else None
+    env_offset = int(os.environ.get('GBH_UPDATE_OFFSET', 0))
 
     parser = argparse.ArgumentParser(description='Update location-based prices for GlobalHouse')
     parser.add_argument('--batch-size', '-b', type=int, default=env_batch_size,
@@ -701,9 +846,13 @@ def main():
                        help=f'Parallel workers (default: {env_parallel})')
     parser.add_argument('--timeout', '-t', type=int, default=env_timeout,
                        help=f'Timeout per product in seconds (default: {env_timeout})')
+    parser.add_argument('--limit', '-l', type=int, default=env_limit,
+                       help=f'Limit combinations to process (default: {env_limit or "ALL"})')
+    parser.add_argument('--offset', '-o', type=int, default=env_offset,
+                       help=f'Skip first N combinations (default: {env_offset})')
     parser.add_argument('--dry-run', action='store_true', help='Test without updating database')
-    parser.add_argument('--limit-groups', type=int, help='Limit to N groups for testing')
-    parser.add_argument('--limit-locations', type=int, help='Limit to N locations for testing')
+    parser.add_argument('--limit-groups', type=int, help='Limit to N groups for testing (overrides limit/offset)')
+    parser.add_argument('--limit-locations', type=int, help='Limit to N locations for testing (overrides limit/offset)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
 
     args = parser.parse_args()
@@ -720,6 +869,8 @@ def main():
     )
 
     stats = updater.run(
+        limit=args.limit,
+        offset=args.offset,
         limit_groups=args.limit_groups,
         limit_locations=args.limit_locations
     )

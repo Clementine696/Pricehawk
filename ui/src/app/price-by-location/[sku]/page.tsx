@@ -92,18 +92,18 @@ export default function PriceByLocationDetailPage() {
   const formatTimestamp = (timestamp: string | null) => {
     if (!timestamp) return '—';
     try {
-      // Parse UTC timestamp and convert to Bangkok time (UTC+7)
-      const utcDate = new Date(timestamp);
+      // Database stores UTC timestamps - ensure we parse as UTC
+      // If the string doesn't have timezone info, append 'Z' to indicate UTC
+      const utcDateStr = timestamp.endsWith('Z') || timestamp.includes('+') ? timestamp : timestamp + 'Z';
+      const date = new Date(utcDateStr);
       
-      // Add 7 hours for Bangkok timezone
-      const bangkokDate = new Date(utcDate.getTime() + (7 * 60 * 60 * 1000));
-      
-      // Format as DD/MM/YY HH:MM
-      const day = String(bangkokDate.getUTCDate()).padStart(2, '0');
-      const month = String(bangkokDate.getUTCMonth() + 1).padStart(2, '0');
-      const year = String(bangkokDate.getUTCFullYear()).slice(-2);
-      const hours = String(bangkokDate.getUTCHours()).padStart(2, '0');
-      const minutes = String(bangkokDate.getUTCMinutes()).padStart(2, '0');
+      // JavaScript Date automatically converts to local timezone (Bangkok for Thai users)
+      // Format as DD/MM/YY HH:MM in local time
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = String(date.getFullYear()).slice(-2);
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
       
       return `${day}/${month}/${year} ${hours}:${minutes}`;
     } catch {

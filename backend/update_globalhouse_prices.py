@@ -501,11 +501,14 @@ class GlobalHousePriceUpdater:
                         product['product_id']
                     ))
 
-                    # Insert price history
+                    # Extract pattern from metadata
+                    extraction_pattern = scraped_data.get('extraction_metadata', {}).get('price_pattern')
+
+                    # Insert price history with extraction pattern
                     cur.execute("""
-                        INSERT INTO price_history (product_id, price, scraped_at)
-                        VALUES (%s, %s, NOW())
-                    """, (product['product_id'], new_price))
+                        INSERT INTO price_history (product_id, price, extraction_pattern, scraped_at)
+                        VALUES (%s, %s, %s, NOW())
+                    """, (product['product_id'], new_price, extraction_pattern))
 
                     conn.commit()
 
@@ -576,7 +579,12 @@ class GlobalHousePriceUpdater:
             if scraped:
                 if self.update_product_price(product, scraped):
                     updated += 1
-                    logger.info(f"  ✓ Updated: ฿{scraped.get('current_price')}")
+                    price_info = f"฿{scraped.get('current_price')}"
+                    pattern = scraped.get('extraction_metadata', {}).get('price_pattern')
+                    if pattern:
+                        logger.info(f"  ✓ Updated: {price_info} (pattern: {pattern})")
+                    else:
+                        logger.info(f"  ✓ Updated: {price_info}")
                 else:
                     logger.error(f"  ✗ Failed to update database")
                     self.record_scrape_failure(product)

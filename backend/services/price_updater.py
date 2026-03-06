@@ -834,10 +834,11 @@ class PriceUpdater:
                     ))
 
                     # Insert price history
+                    extraction_pattern = (scraped_data.get('extraction_metadata', {}) or {}).get('price_pattern', None)
                     cur.execute("""
-                        INSERT INTO price_history (product_id, price, scraped_at)
-                        VALUES (%s, %s, NOW())
-                    """, (product['product_id'], new_price))
+                        INSERT INTO price_history (product_id, price, extraction_pattern, scraped_at)
+                        VALUES (%s, %s, %s, NOW())
+                    """, (product['product_id'], new_price, extraction_pattern))
 
                     conn.commit()
 

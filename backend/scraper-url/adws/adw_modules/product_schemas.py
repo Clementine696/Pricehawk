@@ -45,6 +45,9 @@ class ProductData:
     # Media and metadata
     images: List[str] = field(default_factory=list)
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    
+    # Extraction metadata - tracks which patterns were used
+    extraction_metadata: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         """Post-initialization processing and validation."""

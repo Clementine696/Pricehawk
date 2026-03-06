@@ -978,6 +978,7 @@ class ThaiWatsaduExtractor(ProductExtractor):
                 if price:
                     try:
                         product.current_price = float(price)
+                        product.extraction_metadata['price_pattern'] = 'twd_json_ld'
                     except (ValueError, TypeError):
                         pass
 
@@ -1005,6 +1006,7 @@ class ThaiWatsaduExtractor(ProductExtractor):
             try:
                 price_str = pack_match.group(1).replace(',', '')
                 html_current_price = float(price_str)
+                product.extraction_metadata['price_pattern'] = 'twd_pack_pricing'
             except (ValueError, TypeError):
                 pass
 
@@ -1021,6 +1023,7 @@ class ThaiWatsaduExtractor(ProductExtractor):
                 try:
                     price_str = red_match.group(1).replace(',', '')
                     html_current_price = float(price_str)
+                    product.extraction_metadata['price_pattern'] = 'twd_red_price'
                 except (ValueError, TypeError):
                     pass
 
@@ -1064,6 +1067,7 @@ class ThaiWatsaduExtractor(ProductExtractor):
                     individual_match = re.search(individual_price_pattern, next_data_str)
                     if individual_match:
                         product.current_price = float(individual_match.group(1))
+                        product.extraction_metadata['price_pattern'] = 'twd_next_data_individual'
                 except Exception:
                     pass
 
@@ -1613,6 +1617,7 @@ class HomeProExtractor(ProductExtractor):
                 if price:
                     try:
                         product.current_price = float(price)
+                        product.extraction_metadata['price_pattern'] = 'hp_json_ld'
                     except (ValueError, TypeError):
                         pass
 
@@ -1649,6 +1654,7 @@ class HomeProExtractor(ProductExtractor):
                             price = float(net_matches[0])
                             if 1 <= price <= 500000:
                                 product.current_price = price
+                                product.extraction_metadata['price_pattern'] = 'hp_gtm_net_price'
                                 print(f"[HomePro EXTRACT] gtmNetPrice-{product.sku}: {price}", flush=True, file=sys.stderr)
                         except ValueError:
                             pass
@@ -1663,6 +1669,7 @@ class HomeProExtractor(ProductExtractor):
                             price = float(sku_matches[0])
                             if 1 <= price <= 500000:
                                 product.current_price = price
+                                product.extraction_metadata['price_pattern'] = 'hp_gtm_price'
                                 print(f"[HomePro EXTRACT] gtmPrice-{product.sku}: {price}", flush=True, file=sys.stderr)
                         except ValueError:
                             pass
@@ -1677,6 +1684,7 @@ class HomeProExtractor(ProductExtractor):
                         price = float(js_match.group(1))
                         if 1 <= price <= 500000:
                             product.current_price = price
+                            product.extraction_metadata['price_pattern'] = 'hp_js_analytics'
                             print(f"[HomePro EXTRACT] JS item_price for {product.sku}: {price}", flush=True, file=sys.stderr)
                     except ValueError:
                         pass
@@ -1698,6 +1706,7 @@ class HomeProExtractor(ProductExtractor):
 
             if not product.current_price:
                 print(f"[HomePro EXTRACT] gtmPrice not found, trying {len(homepro_price_patterns)} HTML patterns...", flush=True, file=sys.stderr)
+                pattern_names = ['hp_discount_price_html', 'hp_obcon_price', 'hp_price_div', 'hp_meta_tag']
                 pattern_num = 0
                 for pattern in homepro_price_patterns:
                     pattern_num += 1
@@ -1710,6 +1719,7 @@ class HomeProExtractor(ProductExtractor):
                                 print(f"[HomePro EXTRACT]   Candidate price: {price}", flush=True, file=sys.stderr)
                                 if 50 <= price <= 500000:
                                     product.current_price = price
+                                    product.extraction_metadata['price_pattern'] = pattern_names[pattern_num - 1]
                                     print(f"[HomePro EXTRACT]   ✓ Price accepted: {price}", flush=True, file=sys.stderr)
                                     break
                                 else:
@@ -2087,6 +2097,7 @@ class BoonthavornExtractor(ProductExtractor):
                 if price:
                     product.current_price = float(price)
                     product.currency = offers.get('priceCurrency', 'THB')
+                    product.extraction_metadata['price_pattern'] = 'btv_json_ld'
 
             image = json_ld_data.get('image')
             if image:
@@ -2268,6 +2279,7 @@ class MegaHomeExtractor(ProductExtractor):
         if price_match:
             try:
                 product.current_price = float(price_match.group(1).replace(',', ''))
+                product.extraction_metadata['price_pattern'] = 'mgh_discount_price'
             except ValueError:
                 pass
 
@@ -2286,6 +2298,7 @@ class MegaHomeExtractor(ProductExtractor):
             if swiper_1ea:
                 try:
                     product.current_price = float(swiper_1ea.group(1).replace(',', ''))
+                    product.extraction_metadata['price_pattern'] = 'mgh_swiper_1ea'
                 except ValueError:
                     pass
 
@@ -2298,6 +2311,7 @@ class MegaHomeExtractor(ProductExtractor):
                         try:
                             # Last amount is the single-unit price (highest in range)
                             product.current_price = float(amounts[-1].replace(',', ''))
+                            product.extraction_metadata['price_pattern'] = 'mgh_scale_price_range'
                         except ValueError:
                             pass
 
@@ -2307,6 +2321,7 @@ class MegaHomeExtractor(ProductExtractor):
             if gtm_price:
                 try:
                     product.current_price = float(gtm_price.group(1))
+                    product.extraction_metadata['price_pattern'] = 'mgh_gtm_price'
                 except ValueError:
                     pass
 
@@ -2422,6 +2437,7 @@ class DoHomeExtractor(ProductExtractor):
                 if price:
                     try:
                         product.current_price = float(price)
+                        product.extraction_metadata['price_pattern'] = 'dh_json_ld'
                     except (ValueError, TypeError):
                         pass
 
@@ -2465,13 +2481,15 @@ class DoHomeExtractor(ProductExtractor):
                 r'<span[^>]*class="[^"]*price[^"]*"[^>]*>(.*?)</span>',
                 r'ราคา[:\s]*([฿]?[\d,]+\.?\d*)',
             ]
-            for pattern in price_patterns:
+            pattern_names = ['dh_text_3xl_semibold', 'dh_json_market_price', 'dh_json_sale_price', 'dh_generic_baht', 'dh_price_span', 'dh_thai_price_text']
+            for idx, pattern in enumerate(price_patterns):
                 match = re.search(pattern, html_content, re.DOTALL | re.IGNORECASE)
                 if match:
                     price_text = self._clean_text(match.group(1))
                     price = PriceParser.parse_price(price_text)
                     if price and price > 0:
                         product.current_price = price
+                        product.extraction_metadata['price_pattern'] = pattern_names[idx]
                         break
 
         # 4. Extract original price
@@ -2694,6 +2712,7 @@ class GlobalHouseExtractor(ProductExtractor):
                 if price:
                     try:
                         product.current_price = float(price)
+                        product.extraction_metadata['price_pattern'] = 'gbh_json_ld'
                     except (ValueError, TypeError):
                         pass
 
@@ -2736,13 +2755,18 @@ class GlobalHouseExtractor(ProductExtractor):
                 r'<div[^>]*class="[^"]*product-price[^"]*"[^>]*>.*?([฿\d,\.]+).*?</div>',
                 r'ราคา[:\s]*([฿]?[\d,]+\.?\d*)',
             ]
-            for pattern in price_patterns:
+            pattern_names = [
+                'gbh_text_3xl_red', 'gbh_text_red_3xl', 'gbh_font_bold_3xl', 'gbh_text_large',
+                'gbh_price_final', 'gbh_selling_price', 'gbh_product_price_div', 'gbh_thai_price_text'
+            ]
+            for idx, pattern in enumerate(price_patterns):
                 match = re.search(pattern, html_content, re.DOTALL | re.IGNORECASE)
                 if match:
                     price_text = self._clean_text(match.group(1))
                     price = PriceParser.parse_price(price_text)
                     if price and price > 0:
                         product.current_price = price
+                        product.extraction_metadata['price_pattern'] = pattern_names[idx]
                         break
 
         # 4. Extract original price (only if "ราคาเดิม" is present)

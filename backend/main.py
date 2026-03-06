@@ -2716,11 +2716,14 @@ def rescrape_product(product_id: int, user: dict = Depends(get_current_user)):
                                 WHERE product_id = %s
                             """, (new_price, new_original_price, lowest_price, highest_price, product["product_id"]))
 
-                            # Insert price history
+                            # Extract pattern from metadata
+                            extraction_pattern = scraped_data.get('extraction_metadata', {}).get('price_pattern')
+
+                            # Insert price history with extraction pattern
                             cur.execute("""
-                                INSERT INTO price_history (product_id, price)
-                                VALUES (%s, %s)
-                            """, (product["product_id"], new_price))
+                                INSERT INTO price_history (product_id, price, extraction_pattern)
+                                VALUES (%s, %s, %s)
+                            """, (product["product_id"], new_price, extraction_pattern))
 
                             results.append({
                                 "product_id": product["product_id"],

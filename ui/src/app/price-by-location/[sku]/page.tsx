@@ -438,11 +438,10 @@ export default function PriceByLocationDetailPage() {
                   <td className="px-4 py-3 text-sm font-medium text-cyan-700">Thai Watsadu</td>
                   <td className="px-4 py-3 text-sm font-medium text-cyan-700">
                     <div className="flex items-center gap-2">
-                      <MapPin className="w-4 h-4 shrink-0" />
-                      <span>เทพารักษ์</span>
+                      <span></span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">THEPHARAK</td>
+                  <td className="px-4 py-3 text-sm text-gray-500"></td>
                   <td className="px-4 py-3 text-sm text-gray-400 text-center"></td>
                   <td className="px-4 py-3 text-sm font-semibold text-cyan-700 text-right">{formatPrice(product.twd_price)}</td>
                   <td className="px-4 py-3 text-center">

@@ -54,7 +54,7 @@ Note: OFFSET is REQUIRED for parallel execution to prevent duplicate scraping
 import os
 import sys
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -82,7 +82,8 @@ def main():
     reset_hour_utc = int(os.environ.get('DAILY_RESET_HOUR', 18))  # UTC hour to reset (18 = 01:00 Bangkok)
 
     # Compute reset_since: the most recent occurrence of reset_hour_utc
-    now_utc = datetime.now(timezone.utc)
+    # Use naive UTC datetime to match DB's timestamp (without time zone) columns
+    now_utc = datetime.utcnow()
     reset_today = now_utc.replace(hour=reset_hour_utc, minute=0, second=0, microsecond=0)
     reset_since = reset_today if now_utc >= reset_today else reset_today - timedelta(days=1)
 

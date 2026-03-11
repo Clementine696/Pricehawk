@@ -28,7 +28,7 @@ import logging
 import gc
 import uuid
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from threading import Lock
@@ -226,7 +226,9 @@ class GlobalHousePriceUpdater:
     def get_globalhouse_products(
         self,
         limit: Optional[int] = None,
-        offset: int = 0
+        offset: int = 0,
+        daily_mode: bool = False,
+        reset_since: Optional[datetime] = None
     ) -> List[Dict]:
         """
         Get GlobalHouse products from database, ordered by oldest update first.
@@ -238,6 +240,7 @@ class GlobalHousePriceUpdater:
         Args:
             limit: Optional limit to fetch only N oldest products
             offset: Optional number of oldest products to skip
+            daily_mode: If True, only returns products not updated today (enables once-daily updates)
 
         Returns:
             List of GlobalHouse products (oldest updates first if limit is set)
@@ -261,9 +264,18 @@ class GlobalHousePriceUpdater:
                               AND pm.verified_result = TRUE
                           )
                       )
-                    ORDER BY p.last_updated_at ASC NULLS FIRST
                 """
                 params = []
+
+                # Daily mode: only fetch products not updated since the last reset point
+                if daily_mode:
+                    if reset_since:
+                        query += " AND (p.last_updated_at < %s OR p.last_updated_at IS NULL)"
+                        params.append(reset_since)
+                    else:
+                        query += " AND (DATE(p.last_updated_at) < CURRENT_DATE OR p.last_updated_at IS NULL)"
+
+                query += " ORDER BY p.last_updated_at ASC NULLS FIRST"
 
                 if limit:
                     query += " LIMIT %s"
@@ -609,7 +621,9 @@ class GlobalHousePriceUpdater:
     def run(
         self,
         limit: Optional[int] = None,
-        offset: int = 0
+        offset: int = 0,
+        daily_mode: bool = False,
+        reset_since: Optional[datetime] = None
     ) -> GBHUpdateStats:
         """
         Run the GlobalHouse price update process.
@@ -617,6 +631,7 @@ class GlobalHousePriceUpdater:
         Args:
             limit: Optional limit to N products for testing
             offset: Optional offset to skip N oldest products
+            daily_mode: If True, only processes products not updated today (once-daily updates)
 
         Returns:
             Update statistics
@@ -634,6 +649,8 @@ class GlobalHousePriceUpdater:
         logger.info(f"  Delay: {self.delay_between_products}s")
         logger.info(f"  Product Limit: {limit or 'NONE (all products)'}")
         logger.info(f"  Offset: {offset}")
+        if daily_mode:
+            logger.info(f"  Mode: DAILY (only products not updated today)")
         logger.info(f"  Dry Run: {self.dry_run}")
         logger.info(f"Memory at start: {percent:.1f}% ({used_mb/1024:.2f}GB used)")
 
@@ -643,7 +660,7 @@ class GlobalHousePriceUpdater:
         gc.collect()
 
         # Get GlobalHouse products
-        products = self.get_globalhouse_products(limit=limit, offset=offset)
+        products = self.get_globalhouse_products(limit=limit, offset=offset, daily_mode=daily_mode, reset_since=reset_since)
         self.stats.total_products = len(products)
 
         if not products:

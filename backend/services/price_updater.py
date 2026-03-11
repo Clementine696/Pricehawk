@@ -43,7 +43,7 @@ import subprocess
 import logging
 import gc
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -399,7 +399,7 @@ class PriceUpdater:
     # Maximum consecutive failures before skipping a product
     MAX_SCRAPE_FAILURES = 3
 
-    def get_all_products(self, retailer_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0) -> List[Dict]:
+    def get_all_products(self, retailer_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, daily_mode: bool = False, reset_since: Optional[datetime] = None) -> List[Dict]:
         """
         Get products from database as a flat list, ordered by oldest update first.
 
@@ -416,6 +416,8 @@ class PriceUpdater:
         Args:
             retailer_id: Optional filter for specific retailer
             limit: Optional limit to fetch only N oldest products (by last_updated_at)
+            offset: Optional offset for pagination
+            daily_mode: If True, only returns products not updated today (enables once-daily updates)
 
         Returns:
             List of products (oldest updates first if limit is set)
@@ -449,6 +451,14 @@ class PriceUpdater:
                 if retailer_id:
                     query += " AND p.retailer_id = %s"
                     params.append(retailer_id)
+
+                # Daily mode: only fetch products not updated since the last reset point
+                if daily_mode:
+                    if reset_since:
+                        query += " AND (p.last_updated_at < %s OR p.last_updated_at IS NULL)"
+                        params.append(reset_since)
+                    else:
+                        query += " AND (DATE(p.last_updated_at) < CURRENT_DATE OR p.last_updated_at IS NULL)"
 
                 # Order by oldest update first (NULL = never updated = highest priority)
                 query += " ORDER BY p.last_updated_at ASC NULLS FIRST"
@@ -987,13 +997,15 @@ class PriceUpdater:
         logger.info(f"\n[{retailer_id}] Completed: {total_updated}/{len(products)} updated")
         return total_updated
 
-    def run(self, retailer_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0) -> UpdateStats:
+    def run(self, retailer_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0, daily_mode: bool = False, reset_since: Optional[datetime] = None) -> UpdateStats:
         """
         Run the price update process.
 
         Args:
             retailer_id: Optional filter for specific retailer
             limit: Optional limit to update only N oldest products
+            offset: Optional offset for pagination
+            daily_mode: If True, only processes products not updated today (once-daily updates)
 
         Returns:
             Update statistics
@@ -1005,6 +1017,8 @@ class PriceUpdater:
         logger.info(f"Price Update Started: {start_time}")
         logger.info(f"Configuration: batch_size={self.batch_size}, parallel_workers={self.parallel_workers}, dry_run={self.dry_run}")
         logger.info(f"Memory at start: {percent:.1f}% ({used_mb/1024:.2f}GB used, {available_mb/1024:.2f}GB available)")
+        if daily_mode:
+            logger.info("DAILY MODE: Only updating products not updated today")
         if limit:
             logger.info(f"Limit: {limit} oldest products")
         if offset:
@@ -1018,7 +1032,7 @@ class PriceUpdater:
         gc.collect()
 
         # Get products as flat list (oldest first if limit is set)
-        all_products = self.get_all_products(retailer_id, limit, offset)
+        all_products = self.get_all_products(retailer_id, limit, offset, daily_mode, reset_since)
         total_products = len(all_products)
         self.stats.total_products = total_products
 

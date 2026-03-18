@@ -125,6 +125,113 @@ class EmailService:
             logger.error(f"Failed to send test email to {to_email}: {e}")
             return False
 
+    def send_pattern_alert_email(
+        self,
+        to_emails: List[str],
+        pattern_changes: List[Dict],
+        period_start: datetime,
+        period_end: datetime
+    ) -> Dict[str, any]:
+        """
+        Send extraction pattern change alert email to master recipients only.
+
+        Args:
+            to_emails: List of master recipient email addresses
+            pattern_changes: List of dicts with product info and old/new pattern
+            period_start: Start of detection period
+            period_end: End of detection period
+
+        Returns:
+            Dict with 'success', 'sent_count', 'failed'
+        """
+        if not to_emails or not pattern_changes:
+            return {'success': True, 'sent_count': 0, 'failed': []}
+
+        subject = f"[PriceHawk] Extraction Pattern Changed: {len(pattern_changes)} product(s)"
+
+        start_str = period_start.strftime('%Y-%m-%d %H:%M')
+        end_str = period_end.strftime('%Y-%m-%d %H:%M')
+
+        rows_html = ""
+        rows_text = ""
+        for p in pattern_changes:
+            name = p.get('name') or 'Unknown'
+            sku = p.get('sku') or '-'
+            retailer = p.get('retailer_name') or p.get('retailer_id') or '-'
+            old_pat = p.get('old_pattern') or '-'
+            new_pat = p.get('new_pattern') or '-'
+            scraped_at = p.get('scraped_at')
+            scraped_str = scraped_at.strftime('%Y-%m-%d %H:%M') if scraped_at else '-'
+            link = p.get('link') or '#'
+
+            rows_html += f"""
+            <tr>
+                <td style="padding:8px;border:1px solid #ddd;"><a href="{link}" style="color:#0ea5e9;">{name}</a></td>
+                <td style="padding:8px;border:1px solid #ddd;font-family:monospace;">{sku}</td>
+                <td style="padding:8px;border:1px solid #ddd;">{retailer}</td>
+                <td style="padding:8px;border:1px solid #ddd;font-family:monospace;color:#dc2626;">{old_pat}</td>
+                <td style="padding:8px;border:1px solid #ddd;font-family:monospace;color:#16a34a;">{new_pat}</td>
+                <td style="padding:8px;border:1px solid #ddd;">{scraped_str}</td>
+            </tr>"""
+
+            rows_text += f"  - {name} ({retailer}) SKU:{sku}\n    Old: {old_pat}\n    New: {new_pat}\n    At:  {scraped_str}\n\n"
+
+        html_body = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px;">
+  <div style="max-width:900px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+    <div style="background:#7c3aed;color:#fff;padding:20px 30px;">
+      <h1 style="margin:0;font-size:22px;">⚠️ Extraction Pattern Changed</h1>
+      <p style="margin:6px 0 0;opacity:0.85;">{len(pattern_changes)} product(s) — Period: {start_str} → {end_str}</p>
+    </div>
+    <div style="padding:24px 30px;">
+      <p style="color:#555;margin-top:0;">The following products had their price extraction pattern change during the last alert period.
+      This may indicate that the scraper is now reading the price from a different location on the page,
+      which could mean incorrect prices are being recorded.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#7c3aed;color:#fff;">
+            <th style="padding:10px;text-align:left;border:1px solid #6d28d9;">Product</th>
+            <th style="padding:10px;text-align:left;border:1px solid #6d28d9;">SKU</th>
+            <th style="padding:10px;text-align:left;border:1px solid #6d28d9;">Retailer</th>
+            <th style="padding:10px;text-align:left;border:1px solid #6d28d9;">Old Pattern</th>
+            <th style="padding:10px;text-align:left;border:1px solid #6d28d9;">New Pattern</th>
+            <th style="padding:10px;text-align:left;border:1px solid #6d28d9;">Detected At</th>
+          </tr>
+        </thead>
+        <tbody>{rows_html}
+        </tbody>
+      </table>
+    </div>
+    <div style="padding:16px 30px;background:#f9f9f9;color:#888;font-size:12px;border-top:1px solid #eee;">
+      PriceHawk — Internal monitoring alert (master recipients only)
+    </div>
+  </div>
+</body>
+</html>"""
+
+        plain_body = f"""EXTRACTION PATTERN CHANGED — {len(pattern_changes)} product(s)
+Period: {start_str} → {end_str}
+
+{rows_text}
+---
+PriceHawk internal monitoring alert (master recipients only)
+"""
+
+        sent_count = 0
+        failed = []
+        for email in to_emails:
+            try:
+                self._send_email(email, subject, html_body, plain_body)
+                sent_count += 1
+                logger.info(f"Pattern alert sent to {email}")
+            except Exception as e:
+                logger.error(f"Failed to send pattern alert to {email}: {e}")
+                failed.append(email)
+
+        return {'success': len(failed) == 0, 'sent_count': sent_count, 'failed': failed}
+
     def _send_email(
         self,
         to_email: str,

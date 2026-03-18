@@ -135,6 +135,21 @@ class AlertService:
 
             logger.info(f"Alert sent successfully: {len(products)} price changes, {len(status_changes)} status changes, {email_result['sent_count']} emails")
 
+            # --- Pattern change alerts (master emails only) ---
+            master_emails = self.get_master_emails()
+            if master_emails:
+                pattern_changes = await self.get_pattern_changes_since(period_start_utc)
+                logger.info(f"Found {len(pattern_changes)} products with extraction pattern changes")
+
+                if pattern_changes:
+                    pattern_result = self.email_service.send_pattern_alert_email(
+                        to_emails=master_emails,
+                        pattern_changes=pattern_changes,
+                        period_start=period_start,
+                        period_end=period_end
+                    )
+                    logger.info(f"Pattern alert sent: {pattern_result['sent_count']} emails, {len(pattern_changes)} products")
+
             return {
                 'should_send': True,
                 'alerts_sent': email_result['sent_count'],
@@ -313,6 +328,64 @@ class AlertService:
         
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(query)
+            return [dict(row) for row in rows]
+
+    def get_master_emails(self) -> List[str]:
+        """Get master alert emails from MASTER_ALERT_EMAILS env var"""
+        master_emails_str = os.getenv('MASTER_ALERT_EMAILS', '')
+        if not master_emails_str:
+            return []
+        return [e.strip() for e in master_emails_str.split(',') if e.strip()]
+
+    async def get_pattern_changes_since(self, since: datetime) -> List[Dict]:
+        """
+        Query price_history for products whose extraction_pattern changed within the period.
+
+        Finds the most recent scrape and its previous scrape for each product,
+        filtered to only those where:
+          - The most recent scrape occurred after `since`
+          - The extraction_pattern on that scrape differs from the previous one
+          - Both patterns are non-null (so we're comparing real values)
+
+        Returns:
+            List of dicts with product info plus old_pattern, new_pattern, scraped_at
+        """
+        query = """
+        WITH ranked AS (
+            SELECT
+                ph.product_id,
+                ph.price,
+                ph.extraction_pattern,
+                ph.scraped_at,
+                LAG(ph.extraction_pattern) OVER (PARTITION BY ph.product_id ORDER BY ph.scraped_at) AS old_pattern,
+                LAG(ph.scraped_at)          OVER (PARTITION BY ph.product_id ORDER BY ph.scraped_at) AS old_scraped_at,
+                ROW_NUMBER()                OVER (PARTITION BY ph.product_id ORDER BY ph.scraped_at DESC) AS rn
+            FROM price_history ph
+        )
+        SELECT
+            r.product_id,
+            r.price,
+            r.extraction_pattern AS new_pattern,
+            r.old_pattern,
+            r.scraped_at,
+            r.old_scraped_at,
+            p.name,
+            p.sku,
+            p.link,
+            p.retailer_id,
+            ret.name AS retailer_name
+        FROM ranked r
+        JOIN products p   ON r.product_id = p.product_id
+        JOIN retailers ret ON p.retailer_id = ret.retailer_id
+        WHERE r.rn = 1
+          AND r.scraped_at >= $1
+          AND r.extraction_pattern IS NOT NULL
+          AND r.old_pattern IS NOT NULL
+          AND r.extraction_pattern != r.old_pattern
+        ORDER BY r.scraped_at DESC;
+        """
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch(query, since)
             return [dict(row) for row in rows]
 
     async def update_product_alert_status(self, status_changes: List[Dict]) -> None:

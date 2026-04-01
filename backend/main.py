@@ -19,12 +19,13 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-    print("Warning: psutil not available - zombie process cleanup disabled")
+    pass  # psutil unavailable — browser cleanup disabled
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 import pandas as pd
 
 from database import get_user_by_username, get_db
+import re
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +37,65 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level constants and helpers
+# ---------------------------------------------------------------------------
+
+# Retailer name aliases: canonical name → list of possible DB names
+RETAILER_ALIASES: dict[str, list[str]] = {
+    'MegaHome': ['Mega Home', 'megahome'],
+    'Do Home': ['DoHome', 'dohome'],
+    'Global House': ['GlobalHouse', 'globalhouse'],
+    'HomePro': ['Home Pro', 'homepro'],
+}
+
+
+def _get_retailer_data(retailer_data_dict: dict, retailer_name: str):
+    """Return entry from retailer_data_dict by canonical name or alias."""
+    if retailer_name in retailer_data_dict:
+        return retailer_data_dict[retailer_name]
+    for alias in RETAILER_ALIASES.get(retailer_name, []):
+        if alias in retailer_data_dict:
+            return retailer_data_dict[alias]
+    return None
+
+
+def _parse_search_input(search: str) -> list[str]:
+    """Normalise a search string (commas/newlines → spaces) and split into tokens."""
+    normalised = search.replace('\n', ' ').replace('\r', ' ').replace(',', ' ')
+    return [s.strip() for s in normalised.split() if s.strip()]
+
+
+def _determine_price_status(base_price: float | None, all_prices: list[float]) -> str:
+    """Return the TWD price-comparison status label for Excel exports."""
+    if not base_price:
+        return ''
+    if len(all_prices) == 1:
+        return 'No Competitor Data'
+    all_equal = all(p == all_prices[0] for p in all_prices)
+    if all_equal:
+        return 'Same Price'
+    min_price = min(all_prices)
+    max_price = max(all_prices)
+    if base_price == min_price:
+        return 'Cheapest (Shared)' if all(p == min_price for p in all_prices) else 'Cheapest'
+    if base_price == max_price:
+        return 'Most Expensive (Shared)' if all(p == max_price for p in all_prices) else 'Most Expensive'
+    return ''
+
+
+def _extract_bearer_token(authorization: str | None) -> str | None:
+    """Return the token from an 'Authorization: Bearer <token>' header, or None."""
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[7:]
+    return None
+
+
+def _sanitize_sheet_name(name: str) -> str:
+    """Truncate to 31 chars and replace Excel-invalid characters with '-'."""
+    return re.sub(r'[/\\?*\[\]]', '-', name[:31])
+
 
 app = FastAPI(title="PriceHawk API")
 
@@ -93,15 +153,7 @@ def get_current_user(
     authorization: Optional[str] = Header(None)
 ) -> dict:
     """Validate session from cookie or Authorization header and return user"""
-    token = None
-
-    # First, try Authorization header (Bearer token)
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization[7:]  # Remove "Bearer " prefix
-
-    # Fall back to cookie
-    if not token:
-        token = session_token
+    token = _extract_bearer_token(authorization) or session_token
 
     if not token or token not in sessions:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -177,12 +229,7 @@ def logout(
     authorization: Optional[str] = Header(None)
 ):
     """Logout and clear session"""
-    # Try Authorization header first
-    token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization[7:]
-    if not token:
-        token = session_token
+    token = _extract_bearer_token(authorization) or session_token
 
     if token and token in sessions:
         session = sessions[token]
@@ -216,12 +263,7 @@ def page_unload(
     authorization: Optional[str] = Header(None)
 ):
     """Track when user closes page/browser tab (called via sendBeacon)"""
-    # Try Authorization header first
-    token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization[7:]
-    if not token:
-        token = session_token
+    token = _extract_bearer_token(authorization) or session_token
 
     if token and token in sessions:
         session = sessions[token]
@@ -435,20 +477,13 @@ async def test_file_upload(
     user: dict = Depends(get_current_user)
 ):
     """Test endpoint to verify file upload is working"""
-    print(f"\n{'='*60}")
-    print(f"TEST UPLOAD ENDPOINT HIT")
-    print(f"{'='*60}")
+    logger.info("TEST UPLOAD ENDPOINT HIT | User: %s | File: %s | Content-Type: %s",
+                user.get('username', 'Unknown'), file.filename, file.content_type)
 
     try:
-        print(f"User: {user.get('username', 'Unknown')}")
-        print(f"File received: {file.filename}")
-        print(f"Content type: {file.content_type}")
-
-        # Read file to get size
         contents = await file.read()
         file_size = len(contents)
-
-        print(f"File size: {file_size} bytes ({file_size / 1024:.2f} KB, {file_size / 1024 / 1024:.2f} MB)")
+        logger.info("Test upload file size: %d bytes (%.2f KB)", file_size, file_size / 1024)
 
         return {
             "success": True,
@@ -460,9 +495,7 @@ async def test_file_upload(
             "message": "File upload test successful"
         }
     except Exception as e:
-        print(f"ERROR in test upload: {e}")
-        import traceback
-        print(traceback.format_exc())
+        logger.exception("ERROR in test upload")
         raise HTTPException(status_code=500, detail=f"Test upload failed: {str(e)}")
 
 
@@ -483,70 +516,43 @@ async def import_excel_to_sku_groups(
 ):
     """Import Excel file to create SKU watchlist groups based on S-dept column"""
 
-    print(f"\n{'='*60}")
-    print(f"ENDPOINT HIT: /api/watchlist/sku-groups/import-excel")
-    print(f"Timestamp: {datetime.now().isoformat()}")
-    print(f"User: {user.get('username', 'Unknown')} (ID: {user.get('user_id', 'N/A')})")
-    print(f"{'='*60}")
+    logger.info("Excel import | User: %s | File: %s", user.get('username', 'Unknown'), file.filename)
 
-    # Check if file was received
     if not file:
-        print(f"ERROR: No file received in request")
         raise HTTPException(status_code=400, detail="No file provided")
 
-    print(f"File object received successfully")
-    print(f"File content_type: {file.content_type}")
-    print(f"File filename: {file.filename}")
-
     if not file.filename.endswith(('.xlsx', '.xls')):
-        print(f"ERROR: Invalid file type - {file.filename}")
         raise HTTPException(status_code=400, detail="File must be an Excel file (.xlsx or .xls)")
 
     try:
-        # Read Excel file
-        print(f"Reading Excel file...")
         contents = await file.read()
-        file_size = len(contents)
-        print(f"File size: {file_size} bytes ({file_size / 1024:.2f} KB)")
+        logger.info("Excel import: read %d bytes", len(contents))
 
-        print(f"Parsing Excel with pandas...")
         df = pd.read_excel(io.BytesIO(contents))
-        print(f"Excel parsed successfully. Total rows: {len(df)}, Columns: {list(df.columns)}")
-        
-        # Validate required columns
-        print(f"Validating columns...")
+        logger.info("Excel parsed: %d rows, columns: %s", len(df), list(df.columns))
+
         required_columns = ['SKU_Number', 'S-dept']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
-            print(f"ERROR: Missing columns: {missing_columns}")
-            print(f"Available columns: {list(df.columns)}")
+            logger.warning("Excel import missing columns: %s (available: %s)", missing_columns, list(df.columns))
             raise HTTPException(
                 status_code=400,
                 detail=f"Missing required columns: {', '.join(missing_columns)}. Expected columns: SKU_Number, PRNAME, Brand, S-dept, Dept"
             )
-        print(f"Column validation passed")
 
-        # Remove rows with missing SKU_Number or S-dept
         rows_before = len(df)
         df = df.dropna(subset=['SKU_Number', 'S-dept'])
-        rows_after = len(df)
-        print(f"Removed {rows_before - rows_after} rows with missing SKU_Number or S-dept")
+        logger.info("Dropped %d rows with missing SKU_Number or S-dept", rows_before - len(df))
 
         if len(df) == 0:
-            print(f"ERROR: No valid data after cleanup")
             raise HTTPException(status_code=400, detail="No valid data found in Excel file")
 
-        # Convert SKU_Number to string and clean
-        print(f"Converting and cleaning data...")
         df['SKU_Number'] = df['SKU_Number'].astype(str).str.strip()
         df['S-dept'] = df['S-dept'].astype(str).str.strip()
-        print(f"Data conversion complete")
 
-        # Group by S-dept
-        print(f"Grouping by S-dept...")
         grouped = df.groupby('S-dept')['SKU_Number'].apply(list).to_dict()
-        print(f"Found {len(grouped)} unique S-dept groups")
-        
+        logger.info("Excel import: %d unique S-dept groups", len(grouped))
+
         results = {
             "groups_created": [],
             "groups_updated": [],
@@ -556,43 +562,24 @@ async def import_excel_to_sku_groups(
             "groups_processed": len(grouped)
         }
 
-        print(f"------------------------------------------------------------")
-        print(f"Starting database operations...")
-        print(f"Opening database connection...")
-
         with get_db() as conn:
             with conn.cursor() as cur:
-                print(f"Database connection established successfully")
-                print(f"Processing {len(grouped)} S-dept groups...")
-                print(f"------------------------------------------------------------")
-
-                group_counter = 0
-                for s_dept, skus in grouped.items():
-                    group_counter += 1
-                    print(f"\n[GROUP {group_counter}/{len(grouped)}] Processing S-dept: '{s_dept}'")
-
-                    # Remove duplicates
-                    skus_before_dedup = len(skus)
+                for group_counter, (s_dept, skus) in enumerate(grouped.items(), 1):
                     skus = list(set(skus))
-                    print(f"  - SKUs in this group: {len(skus)} (removed {skus_before_dedup - len(skus)} duplicates)")
-
-                    # Use S-dept name directly as group name
                     group_name = s_dept
+                    logger.info("[%d/%d] Processing S-dept '%s': %d SKUs",
+                                group_counter, len(grouped), s_dept, len(skus))
 
-                    # Check if group exists
-                    print(f"  - Checking if group '{group_name}' exists...")
-                    cur.execute("""
-                        SELECT group_id FROM watchlist_sku_groups WHERE name = %s
-                    """, (group_name,))
+                    cur.execute(
+                        "SELECT group_id FROM watchlist_sku_groups WHERE name = %s",
+                        (group_name,)
+                    )
                     existing_group = cur.fetchone()
 
                     if existing_group:
                         group_id = existing_group['group_id']
-                        print(f"  - Group EXISTS (group_id: {group_id}), will UPDATE")
                         results["groups_updated"].append(s_dept)
                     else:
-                        # Create new group
-                        print(f"  - Group DOES NOT EXIST, creating new group...")
                         try:
                             cur.execute("""
                                 INSERT INTO watchlist_sku_groups (name)
@@ -600,15 +587,11 @@ async def import_excel_to_sku_groups(
                                 RETURNING group_id
                             """, (group_name,))
                             group_id = cur.fetchone()['group_id']
-                            print(f"  - Group CREATED successfully (group_id: {group_id})")
                             results["groups_created"].append(s_dept)
                         except Exception as e:
-                            print(f"  - ERROR creating group '{s_dept}': {e}")
-                            print(f"  - Skipping this group due to error")
+                            logger.error("Failed to create group '%s': %s", s_dept, e)
                             continue
 
-                    # Verify which SKUs exist in products table
-                    print(f"  - Validating {len(skus)} SKUs against products table...")
                     cur.execute("""
                         SELECT DISTINCT sku FROM products
                         WHERE sku = ANY(%s) AND retailer_id = 'twd'
@@ -616,17 +599,13 @@ async def import_excel_to_sku_groups(
                     valid_skus = [row['sku'] for row in cur.fetchall()]
                     invalid_skus = [sku for sku in skus if sku not in valid_skus]
 
-                    print(f"  - Validation complete: {len(valid_skus)} valid, {len(invalid_skus)} not found in products")
-                    if invalid_skus and len(invalid_skus) <= 10:
-                        print(f"  - Invalid SKUs: {invalid_skus}")
-                    elif invalid_skus:
-                        print(f"  - Invalid SKUs (first 10): {invalid_skus[:10]}")
+                    if invalid_skus:
+                        logger.info("  SKUs not found (%d): %s", len(invalid_skus),
+                                    invalid_skus if len(invalid_skus) <= 10 else invalid_skus[:10])
 
                     added_count = 0
                     already_exists_count = 0
 
-                    # Add valid SKUs to group
-                    print(f"  - Adding {len(valid_skus)} valid SKUs to group...")
                     for sku in valid_skus:
                         try:
                             cur.execute("""
@@ -639,19 +618,12 @@ async def import_excel_to_sku_groups(
                             else:
                                 already_exists_count += 1
                         except Exception as e:
-                            print(f"  - ERROR adding SKU '{sku}' to group '{s_dept}': {e}")
-                            continue
+                            logger.error("Failed to add SKU '%s' to group '%s': %s", sku, s_dept, e)
 
-                    print(f"  - SKU insertion complete: {added_count} new, {already_exists_count} already existed")
-
-                    # Update group timestamp
-                    print(f"  - Updating group timestamp...")
-                    cur.execute("""
-                        UPDATE watchlist_sku_groups
-                        SET updated_at = CURRENT_TIMESTAMP
-                        WHERE group_id = %s
-                    """, (group_id,))
-                    print(f"  - Group timestamp updated")
+                    cur.execute(
+                        "UPDATE watchlist_sku_groups SET updated_at = CURRENT_TIMESTAMP WHERE group_id = %s",
+                        (group_id,)
+                    )
 
                     results["skus_added"][s_dept] = {
                         "added": added_count,
@@ -662,49 +634,24 @@ async def import_excel_to_sku_groups(
                     if invalid_skus:
                         results["skus_not_found"][s_dept] = invalid_skus
 
-                print(f"\n------------------------------------------------------------")
-                print(f"All groups processed, committing transaction...")
                 conn.commit()
-                print(f"Transaction committed successfully")
-
-        print(f"\n============================================================")
-        print(f"=== EXCEL IMPORT COMPLETED SUCCESSFULLY ===")
-        print(f"============================================================")
-        print(f"Summary:")
-        print(f"  - Total rows processed: {results['total_rows']}")
-        print(f"  - S-dept groups processed: {results['groups_processed']}")
-        print(f"  - Groups created: {len(results['groups_created'])}")
-        print(f"  - Groups updated: {len(results['groups_updated'])}")
 
         total_added = sum(info['added'] for info in results['skus_added'].values())
-        total_already_exists = sum(info['already_exists'] for info in results['skus_added'].values())
-        total_not_found = sum(len(skus) for skus in results['skus_not_found'].values())
-
-        print(f"  - SKUs added: {total_added}")
-        print(f"  - SKUs already existed: {total_already_exists}")
-        print(f"  - SKUs not found in products: {total_not_found}")
-        print(f"============================================================")
+        total_not_found = sum(len(s) for s in results['skus_not_found'].values())
+        logger.info(
+            "Excel import complete: %d rows, %d groups created, %d updated, %d SKUs added, %d not found",
+            results['total_rows'], len(results['groups_created']), len(results['groups_updated']),
+            total_added, total_not_found
+        )
 
         return results
 
     except pd.errors.EmptyDataError:
-        print(f"ERROR: Excel file is empty (pd.errors.EmptyDataError)")
         raise HTTPException(status_code=400, detail="Excel file is empty")
-    except HTTPException as he:
-        # Re-raise HTTP exceptions (like column validation errors)
-        print(f"ERROR: HTTPException - {he.detail}")
+    except HTTPException:
         raise
     except Exception as e:
-        print(f"============================================================")
-        print(f"=== EXCEL IMPORT FAILED ===")
-        print(f"============================================================")
-        print(f"ERROR: Unexpected error during Excel import")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error message: {str(e)}")
-        print(f"Error details:")
-        import traceback
-        print(traceback.format_exc())
-        print(f"============================================================")
+        logger.exception("Excel import failed")
         raise HTTPException(status_code=500, detail=f"Error processing Excel file: {str(e)}")
 
 
@@ -769,11 +716,7 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
             # Create Excel workbook
             wb = Workbook()
             ws = wb.active
-            # Sanitize sheet name - remove invalid characters: / \ ? * [ ]
-            sheet_name = group["name"][:31]
-            for char in ['/', '\\', '?', '*', '[', ']']:
-                sheet_name = sheet_name.replace(char, '-')
-            ws.title = sheet_name
+            ws.title = _sanitize_sheet_name(group["name"])
 
             # Write header row
             headers = ['Product Name', 'SKU', 'Brand', 'Category', 'S-dept', 'Thai Watsadu Price',
@@ -788,23 +731,6 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
             
             # Define retailer order for columns (excluding Thai Watsadu which is base)
             retailer_order = ['HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House']
-            
-            # Retailer name aliases
-            retailer_aliases = {
-                'MegaHome': ['Mega Home', 'megahome'],
-                'Do Home': ['DoHome', 'dohome'],
-                'Global House': ['GlobalHouse', 'globalhouse'],
-                'HomePro': ['Home Pro', 'homepro'],
-            }
-            
-            def get_retailer_data(retailer_data_dict, retailer_name):
-                """Get retailer data, checking canonical name and aliases."""
-                if retailer_name in retailer_data_dict:
-                    return retailer_data_dict[retailer_name]
-                for alias in retailer_aliases.get(retailer_name, []):
-                    if alias in retailer_data_dict:
-                        return retailer_data_dict[alias]
-                return None
             
             # Hyperlink style (blue, underlined)
             link_font = Font(color="0563C1", underline="single")
@@ -854,28 +780,10 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
                     if rd["price"]:
                         all_prices.append(rd["price"])
                 
-                # Determine min and max prices
                 min_price = min(all_prices) if all_prices else None
                 max_price = max(all_prices) if all_prices else None
                 all_equal = len(all_prices) > 1 and all(p == all_prices[0] for p in all_prices)
-
-                # Determine status
-                status = ''
-                if base_price:
-                    if len(all_prices) == 1:
-                        status = 'No Competitor Data'
-                    elif all_equal:
-                        status = 'Same Price'
-                    elif base_price == min_price:
-                        if all(p == min_price for p in all_prices):
-                            status = 'Cheapest (Shared)'
-                        else:
-                            status = 'Cheapest'
-                    elif base_price == max_price:
-                        if all(p == max_price for p in all_prices):
-                            status = 'Most Expensive (Shared)'
-                        else:
-                            status = 'Most Expensive'
+                status = _determine_price_status(base_price, all_prices)
 
                 # Write row data
                 ws.cell(row=row_num, column=1, value=bp["name"] or '')
@@ -909,7 +817,7 @@ def export_sku_group(group_id: int, user: dict = Depends(get_current_user)):
                 # Retailer prices with hyperlinks and colors
                 for col_offset, retailer_name in enumerate(retailer_order):
                     col_num = 7 + col_offset
-                    data = get_retailer_data(retailer_data, retailer_name)
+                    data = _get_retailer_data(retailer_data, retailer_name)
                     if data and data["price"]:
                         cell = ws.cell(row=row_num, column=col_num, value=data["price"])
 
@@ -1501,10 +1409,7 @@ def get_products(
             params = [base_retailer_id]
 
             if search:
-                # Check if search contains multiple SKUs (comma, newline, or space separated)
-                # Replace newlines and commas with spaces, then split and filter
-                search_normalized = search.replace('\n', ' ').replace('\r', ' ').replace(',', ' ')
-                search_values = [s.strip() for s in search_normalized.split() if s.strip()]
+                search_values = _parse_search_input(search)
 
                 if len(search_values) > 1:
                     # Multiple SKUs - use exact match with IN clause
@@ -1826,10 +1731,7 @@ def export_products(
             params = [base_retailer_id]
 
             if search:
-                # Check if search contains multiple SKUs (comma, newline, or space separated)
-                # Replace newlines and commas with spaces, then split and filter
-                search_normalized = search.replace('\n', ' ').replace('\r', ' ').replace(',', ' ')
-                search_values = [s.strip() for s in search_normalized.split() if s.strip()]
+                search_values = _parse_search_input(search)
 
                 if len(search_values) > 1:
                     # Multiple SKUs - use exact match with IN clause
@@ -1947,24 +1849,6 @@ def export_products(
             # Define retailer order for columns (excluding Thai Watsadu which is base)
             retailer_order = ['HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House']
 
-            # Retailer name aliases - map canonical names to possible DB names
-            retailer_aliases = {
-                'MegaHome': ['Mega Home', 'megahome'],
-                'Do Home': ['DoHome', 'dohome'],
-                'Global House': ['GlobalHouse', 'globalhouse'],
-                'HomePro': ['Home Pro', 'homepro'],
-            }
-
-            def get_retailer_data(retailer_data_dict, retailer_name):
-                """Get retailer data, checking canonical name and aliases."""
-                # Try canonical name first
-                if retailer_name in retailer_data_dict:
-                    return retailer_data_dict[retailer_name]
-                # Try aliases
-                for alias in retailer_aliases.get(retailer_name, []):
-                    if alias in retailer_data_dict:
-                        return retailer_data_dict[alias]
-                return None
 
             # Hyperlink style (blue, underlined)
             link_font = Font(color="0563C1", underline="single")
@@ -2014,28 +1898,10 @@ def export_products(
                     if rd["price"]:
                         all_prices.append(rd["price"])
 
-                # Determine min and max prices
                 min_price = min(all_prices) if all_prices else None
                 max_price = max(all_prices) if all_prices else None
-
-                # Determine status
-                status = ''
                 all_equal = len(all_prices) > 1 and all(p == all_prices[0] for p in all_prices)
-                if base_price:
-                    if len(all_prices) == 1:
-                        status = 'No Competitor Data'
-                    elif all_equal:
-                        status = 'Same Price'
-                    elif base_price == min_price:
-                        if all(p == min_price for p in all_prices):
-                            status = 'Cheapest (Shared)'
-                        else:
-                            status = 'Cheapest'
-                    elif base_price == max_price:
-                        if all(p == max_price for p in all_prices):
-                            status = 'Most Expensive (Shared)'
-                        else:
-                            status = 'Most Expensive'
+                status = _determine_price_status(base_price, all_prices)
 
                 # Write row data
                 ws.cell(row=row_num, column=1, value=bp["name"] or '')
@@ -2069,7 +1935,7 @@ def export_products(
                 # Retailer prices with hyperlinks (columns 7-11) and colors
                 for col_offset, retailer_name in enumerate(retailer_order):
                     col_num = 7 + col_offset
-                    data = get_retailer_data(retailer_data, retailer_name)
+                    data = _get_retailer_data(retailer_data, retailer_name)
                     if data and data["price"]:
                         cell = ws.cell(row=row_num, column=col_num, value=data["price"])
 
@@ -2362,28 +2228,10 @@ def export_price_history(
                     else:
                         retailer_prices[retailer] = None
 
-                # Determine min and max prices
                 min_price = min(all_prices) if all_prices else None
                 max_price = max(all_prices) if all_prices else None
-
-                # Determine status
-                status = ''
                 all_equal = len(all_prices) > 1 and all(p == all_prices[0] for p in all_prices)
-                if base_price:
-                    if len(all_prices) == 1:
-                        status = 'No Competitor Data'
-                    elif all_equal:
-                        status = 'Same Price'
-                    elif base_price == min_price:
-                        if all(p == min_price for p in all_prices):
-                            status = 'Cheapest (Shared)'
-                        else:
-                            status = 'Cheapest'
-                    elif base_price == max_price:
-                        if all(p == max_price for p in all_prices):
-                            status = 'Most Expensive (Shared)'
-                        else:
-                            status = 'Most Expensive'
+                status = _determine_price_status(base_price, all_prices)
 
                 # Write basic info columns
                 ws.cell(row=row_num, column=1, value=timestamp.strftime('%Y-%m-%d %H:%M:%S'))
@@ -3172,19 +3020,42 @@ def normalize_url(url: str) -> str:
     return base_url.rstrip('/')
 
 
-def cleanup_zombie_browser_processes():
-    """
-    Clean up SCRAPER-RELATED zombie Chrome/Playwright processes to prevent thread exhaustion.
-    This prevents accumulation of browser processes from previous scrapes.
+def _is_scraper_browser(pinfo: dict) -> bool:
+    """Return True if the process looks like a Playwright/crawl4ai-launched browser."""
+    name = pinfo['name'].lower() if pinfo['name'] else ''
+    if not any(b in name for b in ['chrome', 'chromium']):
+        return False
+    cmdline = pinfo['cmdline'] if pinfo['cmdline'] else []
+    cmdline_str = ' '.join(cmdline).lower()
+    if 'playwright' in cmdline_str or 'crawl4ai' in cmdline_str:
+        return True
+    if any(flag in cmdline for flag in ['--disable-dev-shm-usage', '--no-sandbox']) and '--headless' in cmdline:
+        # Exclude real user Chrome sessions (they carry a user-data-dir under home)
+        has_user_profile = any(
+            '--profile-directory' in str(arg) or
+            ('--user-data-dir' in str(arg) and os.path.expanduser('~') in str(arg))
+            for arg in cmdline
+        )
+        return not has_user_profile
+    return False
 
-    IMPORTANT: Only kills browsers launched by Playwright/crawl4ai, NOT user's Chrome.
-    Identifies scraper browsers by checking for:
-    - 'playwright' or 'crawl4ai' in command line
-    - '--headless' flag (scrapers run headless)
-    - '--disable-dev-shm-usage' (our scraper-specific flag)
+
+def _cleanup_scraper_browsers(zombies_only: bool = False) -> int:
+    """Kill Chrome/Chromium processes launched by Playwright/crawl4ai scrapers.
+
+    Args:
+        zombies_only: When True, only kill processes that are zombie-status or
+                      consuming no CPU (likely stuck). When False, kill all
+                      matching scraper browsers immediately (post-scrape cleanup).
+
+    Returns:
+        Number of processes killed.
+
+    SAFETY: Never kills user-facing Chrome — requires playwright/crawl4ai in cmdline
+    or headless+scraper flags without a user-profile directory.
     """
     if not PSUTIL_AVAILABLE:
-        print("  [CLEANUP] psutil not available - skipping zombie process cleanup")
+        logger.warning("[CLEANUP] psutil not available - skipping browser cleanup")
         return 0
 
     try:
@@ -3192,135 +3063,48 @@ def cleanup_zombie_browser_processes():
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 pinfo = proc.info
-                name = pinfo['name'].lower() if pinfo['name'] else ''
-                cmdline = pinfo['cmdline'] if pinfo['cmdline'] else []
-                cmdline_str = ' '.join(cmdline).lower()
-
-                # Only process Chrome/Chromium
-                if not any(browser in name for browser in ['chrome', 'chromium']):
+                if not _is_scraper_browser(pinfo):
                     continue
 
-                # SAFETY CHECK: Only kill if it matches scraper-specific patterns
-                is_scraper_browser = False
+                proc_obj = psutil.Process(pinfo['pid'])
+                name = pinfo['name'].lower()
 
-                # Check 1: Playwright or crawl4ai in command line
-                if 'playwright' in cmdline_str or 'crawl4ai' in cmdline_str:
-                    is_scraper_browser = True
+                if zombies_only:
+                    # Only kill if zombie or stuck (no CPU, started shortly after boot)
+                    is_zombie = proc_obj.status() == psutil.STATUS_ZOMBIE
+                    is_stuck = (proc_obj.cpu_percent(interval=0.1) == 0 and
+                                proc_obj.create_time() < psutil.boot_time() + 300)
+                    if not (is_zombie or is_stuck):
+                        continue
 
-                # Check 2: Has scraper-specific flags AND is headless
-                elif any(flag in cmdline for flag in [
-                    '--disable-dev-shm-usage',  # Our specific flag
-                    '--no-sandbox'  # Common in automated browsers
-                ]) and '--headless' in cmdline:
-                    # Additional check: user Chrome will have profile flags
-                    has_user_profile = any(
-                        '--profile-directory' in str(arg) or
-                        ('--user-data-dir' in str(arg) and os.path.expanduser('~') in str(arg))
-                        for arg in cmdline
-                    )
-                    if not has_user_profile:
-                        is_scraper_browser = True
-
-                if is_scraper_browser:
-                    # Check if it's a zombie or stuck
+                logger.info("[CLEANUP] Killing scraper browser: PID=%d %s", pinfo['pid'], name)
+                proc_obj.kill()
+                killed_count += 1
+                if not zombies_only:
                     try:
-                        proc_obj = psutil.Process(pinfo['pid'])
-                        # Kill if zombie or consuming no CPU (likely stuck)
-                        if proc_obj.status() == psutil.STATUS_ZOMBIE or \
-                           (proc_obj.cpu_percent(interval=0.1) == 0 and proc_obj.create_time() < (psutil.boot_time() + 300)):
-                            print(f"  [CLEANUP] Killing zombie scraper browser: PID={pinfo['pid']} {name}")
-                            proc_obj.kill()
-                            killed_count += 1
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-
-            except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
-                pass
-
-        if killed_count > 0:
-            print(f"  [CLEANUP] Killed {killed_count} zombie scraper browser processes")
-        return killed_count
-    except Exception as e:
-        print(f"  [CLEANUP] Error during zombie process cleanup: {e}")
-        return 0
-
-
-def cleanup_all_scraper_browsers():
-    """
-    Force kill ALL Chrome/Playwright processes associated with scrapers.
-    This is called AFTER manual add scraping is complete to ensure no browser processes remain.
-
-    More aggressive than cleanup_zombie_browser_processes() - kills ALL scraper browsers,
-    not just zombies/stuck ones.
-
-    IMPORTANT: Only kills browsers launched by Playwright/crawl4ai, NOT user's Chrome.
-    """
-    if not PSUTIL_AVAILABLE:
-        print("  [CLEANUP] psutil not available - skipping browser cleanup")
-        return 0
-
-    try:
-        killed_count = 0
-        print("  [CLEANUP] Checking for scraper browser processes...")
-
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                pinfo = proc.info
-                name = pinfo['name'].lower() if pinfo['name'] else ''
-                cmdline = pinfo['cmdline'] if pinfo['cmdline'] else []
-                cmdline_str = ' '.join(cmdline).lower()
-
-                # Only process Chrome/Chromium
-                if not any(browser in name for browser in ['chrome', 'chromium']):
-                    continue
-
-                # SAFETY CHECK: Only kill if it matches scraper-specific patterns
-                is_scraper_browser = False
-
-                # Check 1: Playwright or crawl4ai in command line
-                if 'playwright' in cmdline_str or 'crawl4ai' in cmdline_str:
-                    is_scraper_browser = True
-
-                # Check 2: Has scraper-specific flags AND is headless
-                elif any(flag in cmdline for flag in [
-                    '--disable-dev-shm-usage',  # Our specific flag
-                    '--no-sandbox'  # Common in automated browsers
-                ]) and '--headless' in cmdline:
-                    # Additional check: user Chrome will have profile flags
-                    has_user_profile = any(
-                        '--profile-directory' in str(arg) or
-                        ('--user-data-dir' in str(arg) and os.path.expanduser('~') in str(arg))
-                        for arg in cmdline
-                    )
-                    if not has_user_profile:
-                        is_scraper_browser = True
-
-                if is_scraper_browser:
-                    try:
-                        proc_obj = psutil.Process(pinfo['pid'])
-                        print(f"  [CLEANUP] Killing scraper browser: PID={pinfo['pid']} {name}")
+                        proc_obj.wait(timeout=2)
+                    except psutil.TimeoutExpired:
                         proc_obj.kill()
-                        killed_count += 1
-                        # Wait a moment for process to die
-                        try:
-                            proc_obj.wait(timeout=2)
-                        except psutil.TimeoutExpired:
-                            # Force kill if still alive
-                            proc_obj.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
                 pass
 
-        if killed_count > 0:
-            print(f"  [CLEANUP] Killed {killed_count} scraper browser processes")
-        else:
-            print(f"  [CLEANUP] No scraper browser processes found")
+        if killed_count:
+            logger.info("[CLEANUP] Killed %d scraper browser process(es)", killed_count)
         return killed_count
     except Exception as e:
-        print(f"  [CLEANUP] Error during browser cleanup: {e}")
+        logger.error("[CLEANUP] Error during browser cleanup: %s", e)
         return 0
+
+
+def cleanup_zombie_browser_processes() -> int:
+    """Kill zombie/stuck scraper browsers to prevent thread exhaustion."""
+    return _cleanup_scraper_browsers(zombies_only=True)
+
+
+def cleanup_all_scraper_browsers() -> int:
+    """Force-kill all scraper browsers after manual add scraping completes."""
+    return _cleanup_scraper_browsers(zombies_only=False)
 
 
 def scrape_single_url(url: str, retailer_id: str = None) -> dict:
@@ -3366,8 +3150,7 @@ def scrape_single_url(url: str, retailer_id: str = None) -> dict:
         if retailer_id == "hp" or "homepro.co.th" in url.lower():
             cmd.extend(["--max-concurrent", "1"])
 
-        timeout_indicator = " (120s timeout)" if "homepro.co.th" in url.lower() else ""
-        print(f"\n  [PARALLEL] Scraping: {url}{timeout_indicator}")
+        logger.info("[SCRAPER] %s%s", url, " (120s timeout)" if "homepro.co.th" in url.lower() else "")
 
         # Execute scraper with timeout
         env = os.environ.copy()
@@ -3393,7 +3176,7 @@ def scrape_single_url(url: str, retailer_id: str = None) -> dict:
             returncode = process.returncode
         except subprocess.TimeoutExpired:
             # Kill the process and all its children on timeout
-            print(f"  [PARALLEL] TIMEOUT ({timeout_duration}s): {url} - killing process tree")
+            logger.warning("[SCRAPER] TIMEOUT (%ds): %s", timeout_duration, url)
             try:
                 # Try to kill process group (includes child processes like Chrome)
                 if PSUTIL_AVAILABLE:
@@ -3416,7 +3199,7 @@ def scrape_single_url(url: str, retailer_id: str = None) -> dict:
                     process.kill()
                     process.wait(timeout=5)
             except Exception as kill_err:
-                print(f"  [PARALLEL] Error killing process: {kill_err}")
+                logger.error("[SCRAPER] Error killing process: %s", kill_err)
             return {"success": False, "url": url, "error": "Scraper timed out (120s)"}
         finally:
             # Ensure process is cleaned up
@@ -3443,29 +3226,16 @@ def scrape_single_url(url: str, retailer_id: str = None) -> dict:
 
         if returncode != 0:
             error_msg = stderr or stdout or 'Unknown error'
-            print(f"  [PARALLEL] FAILED: {url} - returncode={returncode}")
-            # For HomePro, show much more output to debug extraction failures
-            if 'homepro' in url.lower():
-                print(f"  [PARALLEL] STDOUT (last 8000 chars):\n{stdout[-8000:]}")
-                print(f"  [PARALLEL] STDERR (last 8000 chars):\n{stderr[-8000:]}")
-            else:
-                print(f"  [PARALLEL] STDOUT: {stdout[:1000]}")
-                print(f"  [PARALLEL] STDERR: {stderr[:1000]}")
+            tail = 8000 if 'homepro' in url.lower() else 1000
+            logger.warning("[SCRAPER] FAILED rc=%d %s\nSTDOUT: %s\nSTDERR: %s",
+                           returncode, url, stdout[-tail:], stderr[-tail:])
             return {"success": False, "url": url, "error": f"Scraper failed (exit {returncode}): {error_msg[:500]}"}
 
-        # Log scraper output for debugging
-        print(f"  [DEBUG] Scraper returncode: {returncode}")
+        tail = 5000 if 'homepro' in url.lower() else 500
         if stdout:
-            # For HomePro debugging, show much more output (last 5000 chars to capture extraction logs)
-            if 'homepro' in url.lower():
-                print(f"  [DEBUG] Scraper stdout (last 5000 chars):\n{stdout[-5000:]}")
-            else:
-                print(f"  [DEBUG] Scraper stdout (last 500 chars): {stdout[-500:]}")
+            logger.debug("[SCRAPER] stdout: %s", stdout[-tail:])
         if stderr:
-            if 'homepro' in url.lower():
-                print(f"  [DEBUG] Scraper stderr (last 5000 chars):\n{stderr[-5000:]}")
-            else:
-                print(f"  [DEBUG] Scraper stderr (last 500 chars): {stderr[-500:]}")
+            logger.debug("[SCRAPER] stderr: %s", stderr[-tail:])
 
         # Look for scraped data in retailer files
         output_dir = os.path.dirname(output_file)
@@ -3479,44 +3249,28 @@ def scrape_single_url(url: str, retailer_id: str = None) -> dict:
             "unknown.json"
         ]
 
-        print(f"  [DEBUG] Looking for output in: {output_dir}")
-        print(f"  [DEBUG] Output file: {output_file}")
-        
-        # List all JSON files in the directory for debugging
-        try:
-            all_files = [f for f in os.listdir(output_dir) if f.endswith('.json')]
-            print(f"  [DEBUG] Found JSON files: {all_files}")
-        except Exception as e:
-            print(f"  [DEBUG] Error listing directory: {e}")
+        logger.debug("[SCRAPER] output_dir=%s output_file=%s", output_dir, output_file)
 
         for retailer_file in retailer_files:
             retailer_path = os.path.join(output_dir, retailer_file)
             if os.path.exists(retailer_path):
                 try:
-                    print(f"  [DEBUG] Checking file: {retailer_file}")
                     with open(retailer_path, 'r', encoding='utf-8') as f:
                         scraped_data = json.load(f)
 
                     if isinstance(scraped_data, list):
-                        print(f"  [DEBUG] Found {len(scraped_data)} products in {retailer_file}")
                         for product_data in scraped_data:
                             product_url = product_data.get('url', '')
-                            print(f"  [DEBUG] Product URL: {product_url}")
-                            print(f"  [DEBUG] Requested URL: {url}")
-                            print(f"  [DEBUG] Normalized product: {normalize_url(product_url)}")
-                            print(f"  [DEBUG] Normalized request: {normalize_url(url)}")
                             if normalize_url(product_url) == normalize_url(url) or product_url == url:
                                 product_data["source_url"] = url
-                                print(f"  [PARALLEL] SUCCESS: {url} -> {product_data.get('name', 'N/A')[:40]}...")
-                                # Clean up temp file
+                                logger.info("[SCRAPER] SUCCESS: %s -> %s", url, product_data.get('name', 'N/A')[:40])
                                 try:
-                                    if os.path.exists(output_file):
-                                        os.remove(output_file)
-                                except:
+                                    os.remove(output_file)
+                                except OSError:
                                     pass
                                 return {"success": True, "url": url, "data": product_data}
                 except Exception as e:
-                    print(f"  [PARALLEL] Error reading {retailer_path}: {e}")
+                    logger.error("[SCRAPER] Error reading %s: %s", retailer_path, e)
 
         # Check original output file as fallback
         if os.path.exists(output_file):
@@ -3526,11 +3280,11 @@ def scrape_single_url(url: str, retailer_id: str = None) -> dict:
                 if isinstance(scraped_data, list) and len(scraped_data) > 0:
                     product_data = scraped_data[0]
                     product_data["source_url"] = url
-                    print(f"  [PARALLEL] SUCCESS (fallback): {url}")
+                    logger.info("[SCRAPER] SUCCESS (fallback): %s", url)
                     os.remove(output_file)
                     return {"success": True, "url": url, "data": product_data}
             except Exception as e:
-                print(f"  [PARALLEL] Error reading output file: {e}")
+                logger.error("[SCRAPER] Error reading output file: %s", e)
 
         # Clean up
         try:
@@ -3563,38 +3317,20 @@ def scrape_urls(
     Returns scraped product data for each URL.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    import shutil
 
-    print(f"\n{'='*60}")
-    print(f"=== DEBUG: /api/scrape called (PARALLEL MODE) ===")
-    print(f"{'='*60}")
-    print(f"  URLs to scrape: {data.urls}")
-    print(f"  Total URLs: {len(data.urls)}")
-    print(f"  BACKEND_DIR: {BACKEND_DIR}")
-    print(f"  SCRAPER_SCRIPT: {SCRAPER_SCRIPT}")
-    print(f"  Script exists: {os.path.exists(SCRAPER_SCRIPT)}")
-    print(f"  Python executable: {shutil.which('python')}")
+    logger.info("/api/scrape: %d URLs", len(data.urls))
 
     # Clean up zombie browser processes before starting new scrape
-    print(f"\n  [CLEANUP] Checking for zombie browser processes...")
     cleanup_zombie_browser_processes()
 
     results = []
     errors = []
 
-    # Ensure results directory exists
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    # Scrape all URLs in parallel using ThreadPoolExecutor
-    # Max 4 workers to avoid overwhelming the system
     max_workers = min(len(data.urls), 4)
-    print(f"  Starting parallel scraping with {max_workers} workers...")
-
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all scrape tasks
         future_to_url = {executor.submit(scrape_single_url, url): url for url in data.urls}
-
-        # Collect results as they complete
         for future in as_completed(future_to_url):
             url = future_to_url[future]
             try:
@@ -3606,25 +3342,19 @@ def scrape_urls(
             except Exception as e:
                 errors.append({"url": url, "error": str(e)})
 
-    response = {
+    logger.info("/api/scrape done: %d scraped, %d errors", len(results), len(errors))
+    if errors:
+        logger.warning("/api/scrape errors: %s", errors)
+
+    cleanup_all_scraper_browsers()
+
+    return {
         "success": len(errors) == 0,
         "results": results,
         "errors": errors,
         "total_scraped": len(results),
         "total_errors": len(errors)
     }
-    print(f"\n=== DEBUG: /api/scrape returning ===")
-    print(f"  Total scraped: {len(results)}")
-    print(f"  Total errors: {len(errors)}")
-    if errors:
-        print(f"  Errors: {errors}")
-
-    # IMPORTANT: Clean up ALL scraper browser processes after manual add is complete
-    # This prevents thread exhaustion from accumulated browser processes
-    print(f"\n=== Cleaning up scraper browsers after manual add ===")
-    cleanup_all_scraper_browsers()
-
-    return response
 
 
 # ============== Manual Comparison API ==============
@@ -3729,17 +3459,7 @@ def manual_comparison(
     Creates products if they don't exist, creates matches, and returns comparison.
     Uses scraped_data if provided to populate product information.
     """
-    # Debug: Log received scraped data
-    print(f"\n=== DEBUG: Received scraped_data ===")
-    print(f"scraped_data count: {len(data.scraped_data) if data.scraped_data else 0}")
-    if data.scraped_data:
-        for i, sd in enumerate(data.scraped_data):
-            print(f"  [{i}] source_url: {sd.source_url}")
-            print(f"      url: {sd.url}")
-            print(f"      retailer: {sd.retailer}")
-            print(f"      name: {sd.name}")
-            print(f"      price: {sd.current_price}")
-            print(f"      images: {len(sd.images) if sd.images else 0} images")
+    logger.info("manual_comparison: %d scraped items", len(data.scraped_data) if data.scraped_data else 0)
 
     # Build a lookup of scraped data by URL (with multiple key variations)
     scraped_lookup = {}
@@ -3757,10 +3477,6 @@ def manual_comparison(
             if scraped.retailer:
                 retailer_key = scraped.retailer.lower().replace(" ", "")
                 scraped_by_retailer[retailer_key] = scraped
-
-    print(f"\n=== DEBUG: Lookup tables ===")
-    print(f"scraped_lookup keys: {list(scraped_lookup.keys())}")
-    print(f"scraped_by_retailer keys: {list(scraped_by_retailer.keys())}")
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -3856,15 +3572,9 @@ def manual_comparison(
 
             # Process each competitor
             for comp in data.competitors:
-                print(f"\n=== DEBUG: Processing competitor ===")
-                print(f"  comp.retailer: {comp.retailer}")
-                print(f"  comp.url: {comp.url}")
-                print(f"  normalized url: {normalize_url(comp.url)}")
-                print(f"  retailer lookup key: {comp.retailer.lower().replace(' ', '')}")
-
                 retailer_id = RETAILER_MAPPING.get(comp.retailer)
                 if not retailer_id:
-                    print(f"  ERROR: No retailer_id mapping for {comp.retailer}")
+                    logger.warning("manual_comparison: no retailer_id mapping for %s", comp.retailer)
                     continue
 
                 # Check if there's already a verified correct match for this retailer
@@ -3902,15 +3612,7 @@ def manual_comparison(
                 normalized_url_match = scraped_lookup.get(normalize_url(comp.url))
                 retailer_match = scraped_by_retailer.get(comp.retailer.lower().replace(" ", ""))
 
-                print(f"  URL match: {url_match is not None}")
-                print(f"  Normalized URL match: {normalized_url_match is not None}")
-                print(f"  Retailer match: {retailer_match is not None}")
-                if retailer_match:
-                    print(f"    -> retailer match name: {retailer_match.name}")
-                    print(f"    -> retailer match price: {retailer_match.current_price}")
-
                 comp_scraped = url_match or normalized_url_match or retailer_match
-                print(f"  Final comp_scraped: {comp_scraped is not None}")
 
                 # Ensure retailer exists
                 try:
@@ -4661,8 +4363,7 @@ def export_location_prices_template(
             params = []
 
             if search:
-                search_normalized = search.replace('\n', ' ').replace('\r', ' ').replace(',', ' ')
-                search_values = [s.strip() for s in search_normalized.split() if s.strip()]
+                search_values = _parse_search_input(search)
                 if len(search_values) > 1:
                     placeholders = ','.join(['%s'] * len(search_values))
                     filters.append(f"p_twd.sku IN ({placeholders})")

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Search, Check, X, AlertCircle } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
 
 interface Match {
   match_id: number;
@@ -364,13 +365,7 @@ export default function ComparisonPage() {
                                       <div className="flex gap-2 mt-3">
                                         {match.verified_by_user ? (
                                           <>
-                                            <button
-                                              onClick={() => handleUndo(match.match_id)}
-                                              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-gray-500 text-white rounded text-xs hover:bg-gray-600 transition-colors"
-                                            >
-                                              <X className="w-3 h-3" />
-                                              Undo
-                                            </button>
+                                            <Button size="sm" variant="ghost" className="flex-1" onClick={() => handleUndo(match.match_id)} icon={<X className="w-3 h-3" />}>Undo</Button>
                                             {match.is_same && (
                                               <div className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-green-100 text-green-700 rounded text-xs font-medium">
                                                 <Check className="w-3 h-3" />
@@ -380,25 +375,8 @@ export default function ComparisonPage() {
                                           </>
                                         ) : (
                                           <>
-                                            <button
-                                              onClick={() => handleVerify(match.match_id, true)}
-                                              disabled={hasVerifiedSameMatch}
-                                              className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs transition-colors ${
-                                                hasVerifiedSameMatch
-                                                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                                  : 'bg-green-500 text-white hover:bg-green-600'
-                                              }`}
-                                            >
-                                              <Check className="w-3 h-3" />
-                                              Correct
-                                            </button>
-                                            <button
-                                              onClick={() => handleVerify(match.match_id, false)}
-                                              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors"
-                                            >
-                                              <X className="w-3 h-3" />
-                                              Incorrect
-                                            </button>
+                                            <Button size="sm" variant="success" className="flex-1" onClick={() => handleVerify(match.match_id, true)} disabled={hasVerifiedSameMatch} icon={<Check className="w-3 h-3" />}>Correct</Button>
+                                            <Button size="sm" variant="danger" className="flex-1" onClick={() => handleVerify(match.match_id, false)} icon={<X className="w-3 h-3" />}>Incorrect</Button>
                                           </>
                                         )}
                                       </div>
@@ -430,12 +408,7 @@ export default function ComparisonPage() {
                   <div className="text-gray-500">
                     Showing {displayedProducts.length} of {filteredProducts.length} products
                   </div>
-                  <button
-                    onClick={loadMore}
-                    className="px-6 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors"
-                  >
-                    Load More
-                  </button>
+                  <Button variant="primary" onClick={loadMore}>Load More</Button>
                 </div>
               )}
             </div>

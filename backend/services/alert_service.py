@@ -18,6 +18,9 @@ from services.email_service import EmailService
 
 logger = logging.getLogger(__name__)
 
+# Bangkok is UTC+7. All timestamps from the DB are UTC; comparisons use this offset.
+BANGKOK_OFFSET_HOURS = 7
+
 
 class AlertService:
     """Service for managing price change alerts"""
@@ -440,11 +443,7 @@ class AlertService:
             - This method converts Bangkok time to UTC for comparison
         """
         frequency = settings.get('schedule_frequency')
-        # Get current time in UTC (Railway server time)
         now = datetime.utcnow()
-
-        # Bangkok timezone offset (UTC+7)
-        BANGKOK_OFFSET_HOURS = 7
 
         # If never sent, send immediately
         if not last_sent:
@@ -599,9 +598,6 @@ class AlertService:
 
         frequency = settings.get('schedule_frequency')
         now = datetime.utcnow()
-
-        # Bangkok timezone offset (UTC+7)
-        BANGKOK_OFFSET_HOURS = 7
 
         if not last_sent:
             return "Next check (never sent before)"

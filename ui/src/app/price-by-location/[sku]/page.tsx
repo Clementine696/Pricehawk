@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ArrowLeft, MapPin, RotateCcw, Loader2, ExternalLink, ChevronDown, X } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 import { apiFetch } from '@/lib/api';
 
 interface ProductDetail {
@@ -407,13 +408,7 @@ export default function PriceByLocationDetailPage() {
                   className="pl-3 pr-4 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 focus:border-transparent w-48"
                 />
               </div>
-              <button
-                onClick={fetchData}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Refresh
-              </button>
+              <Button size="sm" variant="outline" onClick={fetchData} icon={<RotateCcw className="w-3.5 h-3.5" />}>Refresh</Button>
             </div>
           </div>
 

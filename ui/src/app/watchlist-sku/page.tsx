@@ -12,150 +12,10 @@ import {
   Package,
   Upload,
   Download,
-  ChevronDown,
-  Check,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-
-// Multi-select dropdown component with search
-function MultiSelect({
-  options,
-  selected,
-  onChange,
-  placeholder,
-  className = "",
-}: {
-  options: string[];
-  selected: string[];
-  onChange: (selected: string[]) => void;
-  placeholder: string;
-  className?: string;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-        setSearchTerm("");
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Focus search input when dropdown opens
-  useEffect(() => {
-    if (isOpen && searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
-  }, [isOpen]);
-
-  const toggleOption = (option: string) => {
-    if (selected.includes(option)) {
-      onChange(selected.filter((s) => s !== option));
-    } else {
-      onChange([...selected, option]);
-    }
-  };
-
-  const clearAll = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onChange([]);
-  };
-
-  // Filter options based on search term
-  const filteredOptions = options.filter((option) =>
-    option.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
-
-  return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
-      >
-        <span
-          className={`truncate ${selected.length === 0 ? "text-gray-500" : "text-gray-900"}`}
-        >
-          {selected.length === 0
-            ? placeholder
-            : selected.length === 1
-              ? selected[0]
-              : `${selected.length} selected`}
-        </span>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {selected.length > 0 && (
-            <button
-              onClick={clearAll}
-              className="p-0.5 hover:bg-gray-200 rounded"
-            >
-              <X className="w-3.5 h-3.5 text-gray-500" />
-            </button>
-          )}
-          <ChevronDown
-            className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
-          />
-        </div>
-      </button>
-
-      {isOpen && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg">
-          {/* Search input */}
-          <div className="p-2 border-b border-gray-200">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="Search..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
-                onClick={(e) => e.stopPropagation()}
-              />
-            </div>
-          </div>
-
-          {/* Options list */}
-          <div className="max-h-60 overflow-y-auto">
-            {filteredOptions.length === 0 ? (
-              <div className="px-4 py-3 text-sm text-gray-500 text-center">
-                No options found
-              </div>
-            ) : (
-              filteredOptions.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => toggleOption(option)}
-                  className={`w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center justify-between ${
-                    selected.includes(option) ? "bg-cyan-50" : ""
-                  }`}
-                >
-                  <span className="text-sm text-gray-900 truncate">
-                    {option}
-                  </span>
-                  {selected.includes(option) && (
-                    <Check className="w-4 h-4 text-cyan-500 flex-shrink-0" />
-                  )}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+import { MultiSelect } from "@/components/ui/MultiSelect";
+import { Button } from "@/components/ui/Button";
 
 interface Product {
   sku: string;
@@ -611,21 +471,12 @@ export default function WatchlistSkuGroupsPage() {
               onChange={handleFileUpload}
               className="hidden"
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={importing}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 hover:border-gray-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Upload className="w-5 h-5" />
+            <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importing} loading={importing} icon={<Upload className="w-5 h-5" />}>
               {importing ? "Importing..." : "Import Excel"}
-            </button>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors"
-            >
-              <Plus className="w-5 h-5" />
+            </Button>
+            <Button variant="primary" onClick={() => setShowCreateModal(true)} icon={<Plus className="w-5 h-5" />}>
               Create Group
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -904,38 +755,26 @@ export default function WatchlistSkuGroupsPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
+                    <Button
+                      variant="outline-success"
                       onClick={() => handleExportGroup(group)}
-                      disabled={
-                        exportingGroupId === group.group_id ||
-                        group.product_count === 0
-                      }
-                      className="px-6 py-2 border border-green-600 text-green-600 rounded-lg hover:bg-green-50 transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={exportingGroupId === group.group_id || group.product_count === 0}
+                      loading={exportingGroupId === group.group_id}
+                      icon={<Download className="w-4 h-4" />}
                       title="Export SKUs to Excel"
                     >
-                      <Download className="w-4 h-4" />
-                      {exportingGroupId === group.group_id
-                        ? "Exporting..."
-                        : "Export"}
-                    </button>
+                      {exportingGroupId === group.group_id ? "Exporting..." : "Export"}
+                    </Button>
 
-                    <button
-                      onClick={() => {
-                        setSelectedGroup(group);
-                        setShowAddProductModal(true);
-                        setSearchTerm("");
-                      }}
-                      className="px-6 py-2 border border-cyan-600 text-cyan-600 rounded-lg hover:bg-cyan-50 transition-colors flex items-center gap-2 whitespace-nowrap"
+                    <Button
+                      variant="outline-primary"
+                      onClick={() => { setSelectedGroup(group); setShowAddProductModal(true); setSearchTerm(""); }}
+                      icon={<Plus className="w-4 h-4" />}
                     >
-                      <Plus className="w-4 h-4" />
                       Manage Products
-                    </button>
+                    </Button>
 
-                    <button
-                      onClick={() => handleDeleteGroup(group.group_id)}
-                      className="p-2 hover:bg-red-50 rounded-lg transition-colors"
-                      title="Delete group"
-                    >
+                    <button onClick={() => handleDeleteGroup(group.group_id)} className="p-2 hover:bg-red-50 rounded-lg transition-colors" title="Delete group">
                       <Trash2 className="w-5 h-5 text-red-600" />
                     </button>
                   </div>
@@ -971,21 +810,8 @@ export default function WatchlistSkuGroupsPage() {
               </div>
 
               <div className="flex gap-3 mt-6">
-                <button
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setNewGroupName("");
-                  }}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreateGroup}
-                  className="flex-1 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700"
-                >
-                  Create Group
-                </button>
+                <Button variant="outline" className="flex-1" onClick={() => { setShowCreateModal(false); setNewGroupName(""); }}>Cancel</Button>
+                <Button variant="primary" className="flex-1" onClick={handleCreateGroup}>Create Group</Button>
               </div>
             </div>
           </div>

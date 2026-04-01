@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Eye, EyeOff, Search, Package, Download, Loader2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
 
 interface CategoryItem {
   category: string;
@@ -153,23 +154,15 @@ export default function WatchlistPage() {
             </p>
           </div>
           {watchedCategories.length > 0 && (
-            <button
+            <Button
+              variant="primary"
               onClick={handleExport}
               disabled={isExporting}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              loading={isExporting}
+              icon={<Download className="w-4 h-4" />}
             >
-              {isExporting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Exporting...
-                </>
-              ) : (
-                <>
-                  <Download className="w-4 h-4" />
-                  Export Watchlist
-                </>
-              )}
-            </button>
+              {isExporting ? 'Exporting...' : 'Export Watchlist'}
+            </Button>
           )}
         </div>
 

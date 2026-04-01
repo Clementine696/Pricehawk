@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { apiFetch } from '@/lib/api';
 import { MapPin, Package, CheckCircle2, Loader2, ArrowLeft } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 
 interface Location {
   location_id: number;
@@ -215,14 +216,14 @@ export default function PriceByLocationSettingsPage() {
           </div>
           
           {/* Action Button */}
-          <button
+          <Button
+            variant="primary"
             onClick={handleSave}
+            loading={isSaving}
             disabled={isSaving || (selectedGroups.length === 0 && selectedLocations.length === 0)}
-            className="px-6 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
-            {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isSaving ? 'Saving...' : 'Save Settings'}
-          </button>
+            Save Settings
+          </Button>
         </div>
 
         {/* Error/Success Messages */}

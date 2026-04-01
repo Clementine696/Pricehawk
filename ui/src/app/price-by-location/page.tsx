@@ -3,9 +3,11 @@
 import { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Settings, Download, Loader2, ChevronDown, X, Check } from 'lucide-react';
+import { Search, RotateCcw, Settings, Download, Loader2, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
+import { MultiSelect } from '@/components/ui/MultiSelect';
+import { Button } from '@/components/ui/Button';
 
 interface LocationProduct {
   twd_sku: string;
@@ -25,168 +27,6 @@ interface LocationProduct {
   price_status: 'has_cheaper' | 'all_higher' | 'same' | 'unknown';
 }
 
-// ── MultiSelect (same as products page) ─────────────────────────────────────
-function MultiSelect({
-  options,
-  selected,
-  onChange,
-  placeholder,
-  className = '',
-}: {
-  options: string[] | { value: string; label: string }[];
-  selected: string[];
-  onChange: (selected: string[]) => void;
-  placeholder: string;
-  className?: string;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dropdownWidth, setDropdownWidth] = useState<number | null>(null);
-  const [dropdownHeight, setDropdownHeight] = useState(192);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const resizeHandleCornerRef = useRef<HTMLDivElement>(null);
-
-  const normalizedOptions = options.map(opt =>
-    typeof opt === 'string' ? { value: opt, label: opt } : opt
-  );
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-        setSearchTerm('');
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  useEffect(() => {
-    if (isOpen && searchInputRef.current) searchInputRef.current.focus();
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleMouseMove = (e: MouseEvent) => {
-      const containerRect = containerRef.current?.getBoundingClientRect();
-      if (!containerRect) return;
-      if (resizeHandleCornerRef.current?.dataset.dragging === 'true') {
-        e.preventDefault();
-        setDropdownWidth(Math.max(200, Math.min(800, e.clientX - containerRect.left)));
-        setDropdownHeight(Math.max(100, Math.min(600, e.clientY - containerRect.top - 70)));
-      }
-    };
-    const handleMouseUp = () => {
-      if (resizeHandleCornerRef.current) resizeHandleCornerRef.current.dataset.dragging = 'false';
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isOpen]);
-
-  const toggleOption = (value: string) => {
-    onChange(selected.includes(value) ? selected.filter(s => s !== value) : [...selected, value]);
-  };
-
-  const clearAll = (e: React.MouseEvent) => { e.stopPropagation(); onChange([]); };
-
-  const selectedLabels = selected.map(val => {
-    const opt = normalizedOptions.find(o => o.value === val);
-    return opt ? opt.label : val;
-  });
-
-  const filteredOptions = normalizedOptions.filter(o =>
-    o.label.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
-      >
-        <span className={`truncate ${selected.length === 0 ? 'text-gray-500' : 'text-gray-900'}`}>
-          {selected.length === 0 ? placeholder : selected.length === 1 ? selectedLabels[0] : `${selected.length} selected`}
-        </span>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {selected.length > 0 && (
-            <button onClick={clearAll} className="p-0.5 hover:bg-gray-200 rounded">
-              <X className="w-3.5 h-3.5 text-gray-500" />
-            </button>
-          )}
-          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-        </div>
-      </button>
-
-      {isOpen && (
-        <div
-          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col"
-          style={{ width: dropdownWidth ? `${dropdownWidth}px` : '100%', minWidth: '100%' }}
-        >
-          <div className="flex flex-1 min-h-0">
-            <div className="flex-1 flex flex-col min-w-0">
-              <div className="p-2 border-b border-gray-200">
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    ref={searchInputRef}
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search..."
-                    className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                  />
-                </div>
-              </div>
-              <div className="overflow-auto" style={{ height: `${dropdownHeight}px` }}>
-                {filteredOptions.length === 0 ? (
-                  <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
-                ) : (
-                  filteredOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => toggleOption(option.value)}
-                      className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
-                    >
-                      <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
-                        selected.includes(option.value) ? 'bg-cyan-500 border-cyan-500' : 'border-gray-300'
-                      }`}>
-                        {selected.includes(option.value) && <Check className="w-3 h-3 text-white" />}
-                      </div>
-                      <span className="text-sm text-gray-900 break-words">{option.label}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-          <div
-            ref={resizeHandleCornerRef}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              if (resizeHandleCornerRef.current) {
-                resizeHandleCornerRef.current.dataset.dragging = 'true';
-                document.body.style.cursor = 'nwse-resize';
-                document.body.style.userSelect = 'none';
-              }
-            }}
-            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-cyan-100 rounded-bl-lg flex items-center justify-center group"
-          >
-            <div className="w-3 h-3 border-r-2 border-b-2 border-gray-400 group-hover:border-cyan-500"></div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── SingleSelect ─────────────────────────────────────────────────────────────
 function SingleSelect({
@@ -397,13 +237,7 @@ function PriceByLocationContent() {
             <p className="text-gray-600 mt-1">Compare price by location branch</p>
           </div>
           <div className="flex gap-3">
-            <button
-              onClick={fetchData}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <RotateCcw className="w-4 h-4" />
-              Refresh
-            </button>
+            <Button variant="outline" onClick={fetchData} icon={<RotateCcw className="w-4 h-4" />}>Refresh</Button>
             <Link
               href="/price-by-location/settings"
               className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors"
@@ -459,15 +293,11 @@ function PriceByLocationContent() {
               className="w-[140px]"
             />
 
-            <button
-              onClick={handleReset}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <RotateCcw className="w-4 h-4" />
-              Reset
-            </button>
+            <Button variant="outline" onClick={handleReset} icon={<RotateCcw className="w-4 h-4" />}>Reset</Button>
 
-            <button
+            <Button
+              variant="primary"
+              icon={<Download className="w-4 h-4" />}
               onClick={async () => {
                 const params = new URLSearchParams();
                 if (search) params.set('search', search);
@@ -486,11 +316,9 @@ function PriceByLocationContent() {
                   URL.revokeObjectURL(url);
                 }
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors"
             >
-              <Download className="w-4 h-4" />
               Export
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -593,23 +421,11 @@ function PriceByLocationContent() {
                   Showing {startItem} to {endItem} of {total} products
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setPage(Math.max(1, page - 1))}
-                    disabled={page === 1}
-                    className="px-3 py-1 border border-gray-300 rounded text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
+                  <Button size="sm" variant="outline" onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1}>Previous</Button>
                   <span className="px-3 py-1 text-sm text-gray-600">
                     Page {page} of {totalPages || 1}
                   </span>
-                  <button
-                    onClick={() => setPage(Math.min(totalPages, page + 1))}
-                    disabled={page >= totalPages}
-                    className="px-3 py-1 border border-gray-300 rounded text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
+                  <Button size="sm" variant="outline" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>Next</Button>
                 </div>
               </div>
             </>

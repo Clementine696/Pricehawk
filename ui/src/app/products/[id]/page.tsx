@@ -6,6 +6,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ArrowLeft, ExternalLink, Check, X, Plus, ChevronDown, ChevronUp, RotateCcw, Loader2, RefreshCw, TrendingUp, TrendingDown, Download, Calendar, CheckCircle, AlertCircle, Link2, Link2Off } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 import { apiFetch } from '@/lib/api';
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -604,15 +605,15 @@ export default function ProductDetailPage() {
                 {rescrapeResult.message}
               </span>
             )}
-            <button
+            <Button
+              variant="primary"
               onClick={handleRescrape}
-              disabled={isRescraping}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              loading={isRescraping}
+              icon={<RotateCcw className="w-4 h-4" />}
               title={`Resync Thai Watsadu + ${verifiedMatchCount} verified match${verifiedMatchCount !== 1 ? 'es' : ''}`}
             >
-              <RotateCcw className={`w-4 h-4 ${isRescraping ? 'animate-spin' : ''}`} />
               {isRescraping ? 'Resyncing...' : 'Resync Prices'}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -932,13 +933,7 @@ export default function ProductDetailPage() {
                                   <div className="flex gap-3">
                                   {match.verified_by_user ? (
                                     <>
-                                      <button
-                                        onClick={() => handleUndo(match.match_id)}
-                                        className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
-                                      >
-                                        <RotateCcw className="w-4 h-4" />
-                                        Undo
-                                      </button>
+                                      <Button variant="ghost" onClick={() => handleUndo(match.match_id)} icon={<RotateCcw className="w-4 h-4" />}>Undo</Button>
                                       <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${match.is_same ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                                         {match.is_same ? (
                                           <>
@@ -955,25 +950,8 @@ export default function ProductDetailPage() {
                                     </>
                                   ) : (
                                     <>
-                                      <button
-                                        onClick={() => handleVerify(match.match_id, false)}
-                                        className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-red-200"
-                                      >
-                                        <X className="w-4 h-4" />
-                                        Incorrect
-                                      </button>
-                                      <button
-                                        onClick={() => handleVerify(match.match_id, true)}
-                                        disabled={hasCorrectMatch}
-                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors border ${
-                                          hasCorrectMatch
-                                            ? 'text-gray-400 border-gray-200 bg-gray-50 cursor-not-allowed'
-                                            : 'text-green-600 hover:bg-green-50 border-green-200'
-                                        }`}
-                                      >
-                                        <Check className="w-4 h-4" />
-                                        Correct
-                                      </button>
+                                      <Button variant="danger" onClick={() => handleVerify(match.match_id, false)} icon={<X className="w-4 h-4" />}>Incorrect</Button>
+                                      <Button variant="success" onClick={() => handleVerify(match.match_id, true)} disabled={hasCorrectMatch} icon={<Check className="w-4 h-4" />}>Correct</Button>
                                     </>
                                   )}
                                   </div>
@@ -1386,23 +1364,21 @@ export default function ProductDetailPage() {
             </select>
 
             <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => {
-                  setShowAddWatchlistModal(false);
-                  setSelectedWatchlistId('');
-                }}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              <Button
+                variant="ghost"
+                onClick={() => { setShowAddWatchlistModal(false); setSelectedWatchlistId(''); }}
                 disabled={isAddingToWatchlist}
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="primary"
                 onClick={handleAddToWatchlist}
+                loading={isAddingToWatchlist}
                 disabled={!selectedWatchlistId || isAddingToWatchlist}
-                className="px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isAddingToWatchlist ? 'Adding...' : 'Add to Watchlist'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

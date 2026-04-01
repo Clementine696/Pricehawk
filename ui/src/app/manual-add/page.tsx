@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Plus, RotateCcw, Check, X, ExternalLink, Info, CheckCircle } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 import Link from 'next/link';
 import Image from 'next/image';
 import { apiFetch } from '@/lib/api';
@@ -1055,17 +1056,16 @@ function ManualAddContent() {
 
             {/* Action Buttons */}
             <div className="flex justify-between">
-              <button
-                type="button"
+              <Button
+                variant="outline"
                 onClick={() => {
                   setErrors({});
                   setScrapeErrors([]);
                   setStage('input');
                 }}
-                className="px-6 py-3 border-2 border-gray-300 rounded-xl font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 ← Edit Inputs
-              </button>
+              </Button>
               <button
                 type="button"
                 onClick={handleConfirmAndCompare}
@@ -1471,14 +1471,9 @@ function ManualAddContent() {
                 <ExternalLink className="h-5 w-5" />
                 View in Products
               </Link>
-              <button
-                type="button"
-                onClick={handleStartNewComparison}
-                className="flex items-center gap-2 rounded-xl border-2 border-gray-300 bg-white px-8 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-              >
-                <RotateCcw className="h-5 w-5" />
+              <Button variant="outline" onClick={handleStartNewComparison} icon={<RotateCcw className="h-5 w-5" />}>
                 Start New Comparison
-              </button>
+              </Button>
             </div>
           </div>
         )}

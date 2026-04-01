@@ -3,220 +3,11 @@
 import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X, Check, TrendingUp, TrendingDown } from 'lucide-react';
+import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, TrendingUp, TrendingDown, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { trackExport, trackSearch, trackFilter } from '@/lib/analytics';
-
-// Multi-select dropdown component with search
-function MultiSelect({
-  options,
-  selected,
-  onChange,
-  placeholder,
-  className = '',
-}: {
-  options: string[] | { value: string; label: string }[];
-  selected: string[];
-  onChange: (selected: string[]) => void;
-  placeholder: string;
-  className?: string;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dropdownWidth, setDropdownWidth] = useState<number | null>(null); // null = auto width
-  const [dropdownHeight, setDropdownHeight] = useState(192); // Default 192px
-  const containerRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const resizeHandleCornerRef = useRef<HTMLDivElement>(null);
-
-  // Normalize options to always be { value, label }
-  const normalizedOptions = options.map(opt =>
-    typeof opt === 'string' ? { value: opt, label: opt } : opt
-  );
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-        setSearchTerm('');
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  // Focus search input when dropdown opens
-  useEffect(() => {
-    if (isOpen && searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
-  }, [isOpen]);
-
-  // Handle corner resize drag (both horizontal and vertical)
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const containerRect = containerRef.current?.getBoundingClientRect();
-      if (!containerRect) return;
-
-      // Handle corner resize (both width and height simultaneously)
-      if (resizeHandleCornerRef.current?.dataset.dragging === 'true') {
-        e.preventDefault();
-        const newWidth = e.clientX - containerRect.left;
-        const newHeight = e.clientY - containerRect.top - 70; // 70px for search input
-        setDropdownWidth(Math.max(200, Math.min(800, newWidth)));
-        setDropdownHeight(Math.max(100, Math.min(600, newHeight)));
-      }
-    };
-
-    const handleMouseUp = () => {
-      if (resizeHandleCornerRef.current) {
-        resizeHandleCornerRef.current.dataset.dragging = 'false';
-      }
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isOpen]);
-
-  const toggleOption = (value: string) => {
-    if (selected.includes(value)) {
-      onChange(selected.filter(s => s !== value));
-    } else {
-      onChange([...selected, value]);
-    }
-  };
-
-  const clearAll = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onChange([]);
-  };
-
-  // Get labels for selected values
-  const getSelectedLabels = () => {
-    return selected.map(val => {
-      const option = normalizedOptions.find(opt => opt.value === val);
-      return option ? option.label : val;
-    });
-  };
-
-  const selectedLabels = getSelectedLabels();
-
-  // Filter options based on search term
-  const filteredOptions = normalizedOptions.filter(option =>
-    option.label.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
-      >
-        <span className={`truncate ${selected.length === 0 ? 'text-gray-500' : 'text-gray-900'}`}>
-          {selected.length === 0
-            ? placeholder
-            : selected.length === 1
-            ? selectedLabels[0]
-            : `${selected.length} selected`}
-        </span>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {selected.length > 0 && (
-            <button
-              onClick={clearAll}
-              className="p-0.5 hover:bg-gray-200 rounded"
-            >
-              <X className="w-3.5 h-3.5 text-gray-500" />
-            </button>
-          )}
-          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-        </div>
-      </button>
-
-      {isOpen && (
-        <div
-          className="absolute z-50 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col"
-          style={{
-            width: dropdownWidth ? `${dropdownWidth}px` : '100%',
-            minWidth: '100%'
-          }}
-        >
-          <div className="flex flex-1 min-h-0">
-            <div className="flex-1 flex flex-col min-w-0">
-              {/* Search input */}
-              <div className="p-2 border-b border-gray-200">
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    ref={searchInputRef}
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search..."
-                    className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                  />
-                </div>
-              </div>
-              {/* Options list */}
-              <div
-                className="overflow-auto"
-                style={{ height: `${dropdownHeight}px` }}
-              >
-                {filteredOptions.length === 0 ? (
-                  <div className="px-4 py-2 text-gray-500 text-sm">No options found</div>
-                ) : (
-                  filteredOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => toggleOption(option.value)}
-                      className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
-                    >
-                      <div className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 ${
-                        selected.includes(option.value)
-                          ? 'bg-cyan-500 border-cyan-500'
-                          : 'border-gray-300'
-                      }`}>
-                        {selected.includes(option.value) && <Check className="w-3 h-3 text-white" />}
-                      </div>
-                      <span className="text-sm text-gray-900 break-words">{option.label}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-          {/* Corner resize handle (bottom-right) */}
-          <div
-            ref={resizeHandleCornerRef}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              if (resizeHandleCornerRef.current) {
-                resizeHandleCornerRef.current.dataset.dragging = 'true';
-                document.body.style.cursor = 'nwse-resize';
-                document.body.style.userSelect = 'none';
-              }
-            }}
-            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-cyan-100 rounded-bl-lg flex items-center justify-center group"
-            title="Drag to resize"
-          >
-            <div className="w-3 h-3 border-r-2 border-b-2 border-gray-400 group-hover:border-cyan-500"></div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+import { MultiSelect } from '@/components/ui/MultiSelect';
+import { Button } from '@/components/ui/Button';
 
 // Single-select dropdown component with same styling as MultiSelect
 function SingleSelect({
@@ -727,30 +518,18 @@ function ProductsContent() {
               placeholder="Watchlist"
               className="w-[180px]"
             />
-            <button
-              onClick={handleReset}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <RotateCcw className="w-4 h-4" />
+            <Button variant="outline" onClick={handleReset} icon={<RotateCcw className="w-4 h-4" />}>
               Reset
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="primary"
               onClick={handleExport}
               disabled={isExporting}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              loading={isExporting}
+              icon={<Download className="w-4 h-4" />}
             >
-              {isExporting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Exporting...
-                </>
-              ) : (
-                <>
-                  <Download className="w-4 h-4" />
-                  Export
-                </>
-              )}
-            </button>
+              {isExporting ? 'Exporting...' : 'Export'}
+            </Button>
           </div>
         </div>
 
@@ -889,23 +668,9 @@ function ProductsContent() {
                   Showing {startItem} to {endItem} of {total} products
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => handlePageChange(Math.max(1, page - 1))}
-                    disabled={page === 1}
-                    className="px-3 py-1 border border-gray-300 rounded text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
-                  <span className="px-3 py-1 text-sm text-gray-600">
-                    Page {page} of {totalPages || 1}
-                  </span>
-                  <button
-                    onClick={() => handlePageChange(Math.min(totalPages, page + 1))}
-                    disabled={page >= totalPages}
-                    className="px-3 py-1 border border-gray-300 rounded text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
+                  <Button size="sm" variant="outline" onClick={() => handlePageChange(Math.max(1, page - 1))} disabled={page === 1}>Previous</Button>
+                  <span className="px-3 py-1 text-sm text-gray-600">Page {page} of {totalPages || 1}</span>
+                  <Button size="sm" variant="outline" onClick={() => handlePageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>Next</Button>
                 </div>
               </div>
             </>

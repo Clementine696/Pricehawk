@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { apiFetch } from '@/lib/api';
 import { Trash2, Plus, Bell, CheckCircle2, Mail } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 
 interface AlertSettings {
   setting_id: number;
@@ -314,13 +315,7 @@ export default function PriceChangePage() {
                     emailError ? 'border-red-300' : 'border-gray-300'
                   }`}
                 />
-                <button
-                  onClick={handleAddEmail}
-                  className="px-6 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 font-medium flex items-center gap-2"
-                >
-                  <Plus className="w-5 h-5" />
-                  Add
-                </button>
+                <Button variant="primary" onClick={handleAddEmail} icon={<Plus className="w-5 h-5" />}>Add</Button>
               </div>
               {emailError && (
                 <p className="mt-2 text-sm text-red-600">{emailError}</p>
@@ -344,11 +339,7 @@ export default function PriceChangePage() {
                       <span className="text-gray-900">{email.email}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleRemoveEmail(email.email_id)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Remove email"
-                      >
+                      <button onClick={() => handleRemoveEmail(email.email_id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Remove email">
                         <Trash2 className="w-5 h-5" />
                       </button>
                     </div>

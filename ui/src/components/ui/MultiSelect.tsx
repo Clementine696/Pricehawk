@@ -29,9 +29,11 @@ export function MultiSelect({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
 
-  const normalizedOptions = options.map(opt =>
-    typeof opt === 'string' ? { value: opt, label: opt } : opt
-  );
+  const normalizedOptions = options
+    .filter(opt => opt !== null && opt !== undefined)
+    .map(opt =>
+      typeof opt === 'string' ? { value: opt, label: opt } : opt
+    );
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -90,7 +92,7 @@ export function MultiSelect({
   });
 
   const filteredOptions = normalizedOptions.filter(o =>
-    o.label.toLowerCase().includes(searchTerm.toLowerCase())
+    o.label && o.label.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (

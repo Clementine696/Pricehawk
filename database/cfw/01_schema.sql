@@ -1,5 +1,17 @@
 -- CFW / Makro Food Comparison System Schema
--- Simple schema: products, price_history, retailers, categories, departments, classes
+-- Simple schema: users, products, price_history, retailers, categories, departments, classes
+
+-- ============================================================================
+-- 0. Users
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS users (
+    user_id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    hashed_password VARCHAR(255) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
 
 -- ============================================================================
 -- 1. Retailers
@@ -131,5 +143,10 @@ $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER update_products_updated_at
     BEFORE UPDATE ON products
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();

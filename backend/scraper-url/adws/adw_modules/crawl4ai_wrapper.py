@@ -467,7 +467,8 @@ class Crawl4AIWrapper:
                 'dohome.co.th',
                 'boonthavorn.com',
                 'globalhouse.co.th',
-                'megahome.co.th'
+                'megahome.co.th',
+                'makro.pro',
             }
 
             return domain in supported_retailers

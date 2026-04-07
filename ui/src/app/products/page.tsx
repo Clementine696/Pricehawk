@@ -3,13 +3,13 @@
 import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, TrendingUp, TrendingDown, X } from 'lucide-react';
+import { Search, RotateCcw, Download, ExternalLink, Loader2, ChevronDown, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { trackExport, trackSearch, trackFilter } from '@/lib/analytics';
 import { MultiSelect } from '@/components/ui/MultiSelect';
 import { Button } from '@/components/ui/Button';
 
-// Single-select dropdown component with same styling as MultiSelect
+// Single-select dropdown component
 function SingleSelect({
   options,
   value,
@@ -26,7 +26,6 @@ function SingleSelect({
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
@@ -55,7 +54,6 @@ function SingleSelect({
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between gap-2"
-        title={selectedOption?.label || placeholder}
       >
         <span className={`truncate ${!value ? 'text-gray-500' : 'text-gray-900'}`}>
           {selectedOption?.label || placeholder}
@@ -80,12 +78,11 @@ function SingleSelect({
               key={option.value}
               type="button"
               onClick={() => handleSelect(option.value)}
-              className={`w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center justify-between ${
+              className={`w-full px-4 py-2 text-left hover:bg-gray-50 ${
                 option.value === value ? 'bg-cyan-50' : ''
               }`}
             >
-              <span className="text-sm text-gray-900 truncate">{option.label}</span>
-              {option.value === value && <Check className="w-4 h-4 text-cyan-500 flex-shrink-0" />}
+              <span className="text-sm text-gray-900">{option.label}</span>
             </button>
           ))}
         </div>
@@ -94,63 +91,32 @@ function SingleSelect({
   );
 }
 
-interface PriceChange {
-  old_price: number;
-  change: number;
-  change_pct: number;
-  direction: 'up' | 'down';
-}
-
-interface RetailerPrice {
-  price: number | null;
-  link: string | null;
-  verified?: boolean;
-  price_change?: PriceChange | null;
-}
-
 interface Product {
-  product_id: number;
+  id: number;
+  retailer_id: string;
+  retailer_name: string;
   sku: string;
+  barcode: string | null;
   name: string;
+  name_en: string | null;
   brand: string | null;
-  category: string | null;
-  base_price: number | null;
-  base_link: string | null;
-  base_price_change?: PriceChange | null;
-  status: 'cheapest' | 'same' | 'higher' | null;
-  retailer_prices: Record<string, RetailerPrice>;
-  is_verified: boolean;
+  category_id: string | null;
+  category_name: string | null;
+  current_price: number | null;
+  step_prices: any;
+  url: string | null;
+  image_url: string | null;
+  is_active: boolean;
+  match_count: number;
+  verified_match_count: number;
+  unverified_count: number;
+  matched_price: number | null;
 }
 
 interface Retailer {
-  retailer_id: number;
+  retailer_id: string;
   name: string;
 }
-
-const RETAILER_ORDER = ['Thai Watsadu', 'HomePro', 'MegaHome', 'Do Home', 'Boonthavorn', 'Global House'];
-
-// Map alternative retailer names to the canonical name used in RETAILER_ORDER
-const RETAILER_NAME_ALIASES: Record<string, string> = {
-  'Mega Home': 'MegaHome',
-  'megahome': 'MegaHome',
-  'DoHome': 'Do Home',
-  'GlobalHouse': 'Global House',
-  'Home Pro': 'HomePro',
-};
-
-// Get retailer price data, checking both canonical name and aliases
-const getRetailerPrice = (retailerPrices: Record<string, RetailerPrice> | undefined, retailerName: string): RetailerPrice | undefined => {
-  if (!retailerPrices) return undefined;
-  // Try canonical name first
-  if (retailerPrices[retailerName]) return retailerPrices[retailerName];
-  // Try to find by alias (reverse lookup)
-  for (const [alias, canonical] of Object.entries(RETAILER_NAME_ALIASES)) {
-    if (canonical === retailerName && retailerPrices[alias]) {
-      return retailerPrices[alias];
-    }
-  }
-  return undefined;
-};
 
 function ProductsContent() {
   const router = useRouter();
@@ -158,9 +124,8 @@ function ProductsContent() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [retailers, setRetailers] = useState<Retailer[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [categories, setCategories] = useState<{ value: string; label: string }[]>([]);
   const [brands, setBrands] = useState<string[]>([]);
-  const [watchlistGroups, setWatchlistGroups] = useState<{ group_id: number; name: string }[]>([]);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -173,23 +138,11 @@ function ProductsContent() {
   const [selectedBrands, setSelectedBrands] = useState<string[]>(
     searchParams.get('brand')?.split(',').filter(Boolean) || []
   );
-  const [verificationFilter, setVerificationFilter] = useState(searchParams.get('verified') || '');
-  const [retailerFilter, setRetailerFilter] = useState(searchParams.get('retailer') || '');
-  const [selectedWatchlists, setSelectedWatchlists] = useState<string[]>(
-    searchParams.get('watchlist')?.split(',').filter(Boolean) || []
-  );
+  const [matchStatus, setMatchStatus] = useState(searchParams.get('match_status') || '');
+  const [priceStatus, setPriceStatus] = useState(searchParams.get('price_status') || '');
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const [isExporting, setIsExporting] = useState(false);
   const pageSize = 10;
-
-  // Retailer options for filter (excluding Thai Watsadu which is the base)
-  const RETAILER_FILTER_OPTIONS = [
-    { id: 'hp', name: 'HomePro' },
-    { id: 'mgh', name: 'MegaHome' },
-    { id: 'dh', name: 'DoHome' },
-    { id: 'btv', name: 'Boonthavorn' },
-    { id: 'gbh', name: 'Global House' },
-  ];
 
   // Update URL when filters change
   const updateURL = (newParams: Record<string, string | number | string[]>) => {
@@ -198,9 +151,8 @@ function ProductsContent() {
       search,
       category: selectedCategories.join(','),
       brand: selectedBrands.join(','),
-      verified: verificationFilter,
-      retailer: retailerFilter,
-      watchlist: selectedWatchlists.join(','),
+      match_status: matchStatus,
+      price_status: priceStatus,
       page,
       ...newParams
     };
@@ -216,52 +168,37 @@ function ProductsContent() {
     router.push(queryString ? `?${queryString}` : '/products', { scroll: false });
   };
 
-  // Fetch watchlist groups on mount
-  useEffect(() => {
-    fetchWatchlistGroups();
-  }, []);
-
   useEffect(() => {
     fetchProducts();
-  }, [page, search, selectedCategories, selectedBrands, verificationFilter, retailerFilter, selectedWatchlists]);
-
-  const fetchWatchlistGroups = async () => {
-    try {
-      const response = await apiFetch('/api/watchlist/sku-groups');
-      if (!response.ok) throw new Error('Failed to fetch watchlist groups');
-      const data = await response.json();
-      // Sort groups alphabetically by name
-      const sortedGroups = (data.groups || []).sort((a: { name: string }, b: { name: string }) =>
-        a.name.localeCompare(b.name)
-      );
-      setWatchlistGroups(sortedGroups);
-    } catch (error) {
-      console.error('Error fetching watchlist groups:', error);
-    }
-  };
+  }, [page, search, selectedCategories, selectedBrands, matchStatus, priceStatus]);
 
   const fetchProducts = async () => {
     setIsLoading(true);
     try {
       const params = new URLSearchParams({
         page: page.toString(),
-        pageSize: pageSize.toString(),
+        page_size: pageSize.toString(),
       });
+      
       if (search) params.append('search', search);
       if (selectedCategories.length > 0) params.append('category', selectedCategories.join(','));
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
-      if (verificationFilter) params.append('verified', verificationFilter);
-      if (retailerFilter) params.append('retailer', retailerFilter);
-      if (selectedWatchlists.length > 0) params.append('watchlist_group_id', selectedWatchlists.join(','));
-
+      if (matchStatus) params.append('match_status', matchStatus);
+      if (priceStatus) params.append('price_status', priceStatus);
 
       const response = await apiFetch(`/api/products?${params}`);
       if (!response.ok) throw new Error('Failed to fetch products');
+      
       const data = await response.json();
-
       setProducts(data.products || []);
       setRetailers(data.retailers || []);
-      setCategories(data.categories || []);
+      
+      // Transform categories to MultiSelect format
+      const transformedCategories = (data.categories || []).map((cat: any) => ({
+        value: cat.category_id,
+        label: cat.category_name
+      }));
+      setCategories(transformedCategories);
       setBrands(data.brands || []);
       setTotal(data.total || 0);
     } catch (error) {
@@ -285,9 +222,8 @@ function ProductsContent() {
     setSearch('');
     setSelectedCategories([]);
     setSelectedBrands([]);
-    setVerificationFilter('');
-    setRetailerFilter('');
-    setSelectedWatchlists([]);
+    setMatchStatus('');
+    setPriceStatus('');
     setPage(1);
     router.push('/products', { scroll: false });
     // Don't call fetchProducts() here - the useEffect will trigger it when state changes
@@ -309,26 +245,24 @@ function ProductsContent() {
     trackFilter('brand', newBrands.join(', '));
   };
 
-  const handleFilterChange = (filterName: string, value: string) => {
-    const setters: Record<string, (v: string) => void> = {
-      verified: setVerificationFilter,
-      retailer: setRetailerFilter,
-    };
-    setters[filterName]?.(value);
+  const handleMatchStatusChange = (value: string) => {
+    setMatchStatus(value);
     setPage(1);
-    updateURL({ [filterName]: value, page: 1 });
+    updateURL({ match_status: value, page: 1 });
     // Track filter usage
     if (value) {
-      trackFilter(filterName, value);
+      trackFilter('match_status', value);
     }
   };
 
-  const handleWatchlistChange = (newWatchlists: string[]) => {
-    setSelectedWatchlists(newWatchlists);
+  const handlePriceStatusChange = (value: string) => {
+    setPriceStatus(value);
     setPage(1);
-    updateURL({ watchlist: newWatchlists.join(','), page: 1 });
+    updateURL({ price_status: value, page: 1 });
     // Track filter usage
-    trackFilter('watchlist', newWatchlists.join(', '));
+    if (value) {
+      trackFilter('price_status', value);
+    }
   };
 
   const handlePageChange = (newPage: number) => {
@@ -343,9 +277,6 @@ function ProductsContent() {
       if (search) params.append('search', search);
       if (selectedCategories.length > 0) params.append('category', selectedCategories.join(','));
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
-      if (verificationFilter) params.append('verified', verificationFilter);
-      if (retailerFilter) params.append('retailer', retailerFilter);
-      if (selectedWatchlists.length > 0) params.append('watchlist_group_id', selectedWatchlists.join(','));
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {
@@ -383,75 +314,56 @@ function ProductsContent() {
     return `฿${price.toLocaleString()}`;
   };
 
-  // Get price comparison category for coloring
-  const getPriceCategory = (price: number | null, allPrices: (number | null)[]): 'cheapest' | 'same' | 'higher' | null => {
-    if (price === null) return null;
-    const validPrices = allPrices.filter((p): p is number => p !== null && p > 0);
-    if (validPrices.length === 0) return null;
+  // Helper to determine status badge
+  const getStatus = (product: Product) => {
+    const allRejected = product.match_count > 0 && product.verified_match_count === 0 && product.unverified_count === 0;
+    const hasVerifiedMatch = product.verified_match_count > 0;
 
-    const minPrice = Math.min(...validPrices);
-    const maxPrice = Math.max(...validPrices);
+    if (allRejected || !product.matched_price || !product.current_price) {
+      return { label: 'No Match', color: 'bg-gray-100 text-gray-700' };
+    }
 
-    if (price === minPrice && minPrice === maxPrice) return 'same';
-    if (price === minPrice) return 'cheapest';
-    if (price > minPrice) return 'higher';
-    return null;
-  };
+    const myPrice = product.current_price;
+    const matchedPrice = product.matched_price;
 
-  const getPriceColorClass = (category: 'cheapest' | 'same' | 'higher' | null): string => {
-    switch (category) {
-      case 'cheapest': return 'text-green-600 font-semibold';
-      case 'higher': return 'text-red-600';
-      case 'same': return 'text-gray-500';
-      default: return 'text-cyan-600';
+    if (myPrice < matchedPrice) {
+      return { label: 'Lower', color: 'bg-green-100 text-green-700' };
+    } else if (myPrice > matchedPrice) {
+      return { label: 'Higher', color: 'bg-red-100 text-red-700' };
+    } else {
+      return { label: 'Same', color: 'bg-gray-100 text-gray-700' };
     }
   };
 
-  const PriceChangeIndicator = ({ change }: { change: PriceChange | null | undefined }) => {
-    if (!change) return null;
-    const isDown = change.direction === 'down';
-    return (
-      <span
-        className={`inline-flex items-center text-xs ml-1 ${isDown ? 'text-green-600' : 'text-red-500'}`}
-        title={`Was ฿${change.old_price.toLocaleString()} (${change.change_pct > 0 ? '+' : ''}${change.change_pct}%)`}
-      >
-        {isDown ? (
-          <TrendingDown className="w-3 h-3" />
-        ) : (
-          <TrendingUp className="w-3 h-3" />
-        )}
-      </span>
-    );
-  };
-
-  const getStatusBadge = (status: string | null) => {
-    if (!status) {
-      return (
-        <span className="px-2 py-1 rounded text-xs font-medium bg-gray-200 text-gray-600">
-          No Competitor
-        </span>
-      );
+  // Helper to determine verification badge
+  const getVerification = (product: Product) => {
+    // No matches at all, or all rejected (no correct, no unverified pending)
+    if (product.match_count === 0 || (product.verified_match_count === 0 && product.unverified_count === 0)) {
+      return { label: 'No Match', color: 'bg-gray-100 text-gray-700' };
     }
-    const styles: Record<string, string> = {
-      cheapest: 'bg-emerald-500 text-white',
-      same: 'bg-gray-400 text-white',
-      higher: 'bg-amber-500 text-white',
-    };
-    const labels: Record<string, string> = {
-      cheapest: 'Cheapest',
-      same: 'Same',
-      higher: 'Higher',
-    };
-    return (
-      <span className={`px-2 py-1 rounded text-xs font-medium ${styles[status]}`}>
-        {labels[status]}
-      </span>
-    );
+    if (product.verified_match_count > 0) {
+      return { label: 'Verified', color: 'bg-emerald-100 text-emerald-700' };
+    }
+    return { label: 'Unverified', color: 'bg-orange-100 text-orange-700' };
   };
 
-  // Get ordered retailers excluding Thai Watsadu (base)
-  const otherRetailers = RETAILER_ORDER.filter(name => name !== 'Thai Watsadu');
+  // Helper to get prices for display
+  const getPrices = (product: Product) => {
+    const allRejected = product.match_count > 0 && product.verified_match_count === 0 && product.unverified_count === 0;
+    const isCfw = product.retailer_id === 'cfw';
+    // Show matched_price if: correct match exists OR top unverified exists (backend handles fallback)
+    // Don't show if all rejected
+    const showMatchedPrice = !allRejected && product.matched_price != null;
 
+    return {
+      cfw: isCfw ? product.current_price : (showMatchedPrice ? product.matched_price : null),
+      makro: !isCfw ? product.current_price : (showMatchedPrice ? product.matched_price : null),
+      showCfwLink: isCfw,
+      showMakroLink: !isCfw,
+    };
+  };
+
+  // Calculate pagination info from backend total
   const totalPages = Math.ceil(total / pageSize);
   const startItem = (page - 1) * pageSize + 1;
   const endItem = Math.min(page * pageSize, total);
@@ -496,27 +408,26 @@ function ProductsContent() {
             />
             <SingleSelect
               options={[
-                { value: 'true', label: 'Verified' },
-                { value: 'false', label: 'Unverified' },
+                { value: 'verified', label: 'Verified' },
+                { value: 'unverified', label: 'Unverified' },
+                { value: 'no_match', label: 'No Match' },
               ]}
-              value={verificationFilter}
-              onChange={(value) => handleFilterChange('verified', value)}
-              placeholder="All Status"
-              className="w-[140px]"
+              value={matchStatus}
+              onChange={handleMatchStatusChange}
+              placeholder="Match Status"
+              className="w-[160px]"
             />
             <SingleSelect
-              options={RETAILER_FILTER_OPTIONS.map(r => ({ value: r.id, label: r.name }))}
-              value={retailerFilter}
-              onChange={(value) => handleFilterChange('retailer', value)}
-              placeholder="All Retailers"
-              className="w-[150px]"
-            />
-            <MultiSelect
-              options={watchlistGroups.map(g => ({ value: g.group_id.toString(), label: g.name }))}
-              selected={selectedWatchlists}
-              onChange={handleWatchlistChange}
-              placeholder="Watchlist"
-              className="w-[180px]"
+              options={[
+                { value: 'lower', label: 'Lower' },
+                { value: 'higher', label: 'Higher' },
+                { value: 'same', label: 'Same' },
+                { value: 'no_match', label: 'No Match' },
+              ]}
+              value={priceStatus}
+              onChange={handlePriceStatusChange}
+              placeholder="Price Status"
+              className="w-[160px]"
             />
             <Button variant="outline" onClick={handleReset} icon={<RotateCcw className="w-4 h-4" />}>
               Reset
@@ -551,110 +462,92 @@ function ProductsContent() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full table-fixed min-w-[1400px]">
+                <table className="w-full">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="w-[50px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No.</th>
-                      <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SKU</th>
-                      <th className="w-[280px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
-                      <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</th>
-                      <th className="w-[120px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                      <th className="w-[100px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                      <th className="w-[90px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Review</th>
-                      <th className="w-[110px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Thai Watsadu</th>
-                      {otherRetailers.map((retailer) => (
-                        <th key={retailer} className="w-[110px] px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          {retailer}
-                        </th>
-                      ))}
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">No.</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">SKU</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Brand</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Category</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Buyer ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Status</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-28">Verification</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">CFW</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">MAKRO</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200">
+                  <tbody className="divide-y divide-gray-200 bg-white">
                     {products.map((product, index) => {
-                      // Collect all prices for comparison
-                      const allPrices = [
-                        product.base_price,
-                        ...otherRetailers.map(r => getRetailerPrice(product.retailer_prices, r)?.price ?? null)
-                      ];
+                      const status = getStatus(product);
+                      const verification = getVerification(product);
+                      const prices = getPrices(product);
 
                       return (
-                        <tr
-                          key={product.product_id}
-                          onClick={() => window.open(`/products/${product.product_id}`, '_blank')}
-                          className="hover:bg-gray-50 cursor-pointer transition-colors h-10"
-                        >
-                          <td className="px-4 py-2 text-sm text-gray-500 text-center whitespace-nowrap">
+                        <tr key={product.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 text-sm text-gray-500 text-center">
                             {startItem + index}
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-900 whitespace-nowrap">
-                            {product.sku}
+                          <td className="px-4 py-3 text-sm text-gray-900 font-mono">
+                            {product.sku || '-'}
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-900 max-w-xs truncate" title={product.name}>
-                            {product.name}
+                          <td className="px-4 py-3 text-sm text-gray-900">
+                            <button
+                              onClick={() => router.push(`/products/${product.sku}`)}
+                              className="text-gray-900 hover:text-cyan-600 hover:underline text-left"
+                            >
+                              {product.name}
+                            </button>
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-700 truncate" title={product.brand || '-'}>
+                          <td className="px-4 py-3 text-sm text-gray-700">
                             {product.brand || '-'}
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-700 truncate" title={product.category || '-'}>
-                            {product.category || '-'}
+                          <td className="px-4 py-3 text-sm text-gray-700">
+                            {product.category_name || '-'}
                           </td>
-                          <td className="px-4 py-2 whitespace-nowrap">
-                            {getStatusBadge(product.status)}
+                          <td className="px-4 py-3 text-sm text-gray-700 text-center font-medium">
+                            DF8
                           </td>
-                          <td className="px-4 py-2 whitespace-nowrap">
-                            {product.is_verified ? (
-                              <span className="px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-700">
-                                Verified
-                              </span>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${status.color}`}>
+                              {status.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${verification.color}`}>
+                              {verification.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm whitespace-nowrap">
+                            {prices.cfw ? (
+                              <a
+                                href={prices.showCfwLink ? product.url || '#' : '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-gray-900 hover:underline hover:text-cyan-600"
+                              >
+                                {formatPrice(prices.cfw)}
+                                {prices.showCfwLink && <ExternalLink className="w-3 h-3" />}
+                              </a>
                             ) : (
-                              <span className="px-2 py-1 rounded text-xs font-medium bg-yellow-100 text-yellow-700">
-                                Unverified
-                              </span>
+                              <span className="text-gray-400">-</span>
                             )}
                           </td>
-                          <td className="px-4 py-2 text-sm whitespace-nowrap">
-                            {product.base_price ? (
-                              <span className="inline-flex items-center">
-                                <a
-                                  href={product.base_link || '#'}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className={`inline-flex items-center gap-1 hover:underline ${getPriceColorClass(getPriceCategory(product.base_price, allPrices))}`}
-                                >
-                                  {formatPrice(product.base_price)}
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
-                                <PriceChangeIndicator change={product.base_price_change} />
-                              </span>
-                            ) : <span className="text-gray-400">-</span>}
+                          <td className="px-4 py-3 text-sm whitespace-nowrap">
+                            {prices.makro ? (
+                              <a
+                                href={prices.showMakroLink ? product.url || '#' : '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-gray-900 hover:underline hover:text-cyan-600"
+                              >
+                                {formatPrice(prices.makro)}
+                                {prices.showMakroLink && <ExternalLink className="w-3 h-3" />}
+                              </a>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
                           </td>
-                          {otherRetailers.map((retailer) => {
-                            const priceData = getRetailerPrice(product.retailer_prices, retailer);
-                            const priceCategory = getPriceCategory(priceData?.price ?? null, allPrices);
-                            const isUnverified = priceData?.price && priceData?.verified === false;
-                            return (
-                              <td key={retailer} className="px-4 py-2 text-sm whitespace-nowrap">
-                                {priceData?.price ? (
-                                  <span className="inline-flex items-center">
-                                    <a
-                                      href={priceData.link || '#'}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={(e) => e.stopPropagation()}
-                                      className={`inline-flex items-center gap-1 hover:underline ${isUnverified ? 'italic opacity-70' : ''} ${getPriceColorClass(priceCategory)}`}
-                                      title={isUnverified ? 'Unverified match - click to review' : undefined}
-                                    >
-                                      {formatPrice(priceData.price)}
-                                      {isUnverified && <span className="text-yellow-500">?</span>}
-                                      <ExternalLink className="w-3 h-3" />
-                                    </a>
-                                    <PriceChangeIndicator change={priceData.price_change} />
-                                  </span>
-                                ) : <span className="text-gray-400">-</span>}
-                              </td>
-                            );
-                          })}
                         </tr>
                       );
                     })}

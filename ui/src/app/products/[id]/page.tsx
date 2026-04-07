@@ -179,11 +179,7 @@ function ProductImage({ src, alt, className }: { src: string | null; alt: string
 
 // All competitor retailers configuration
 const COMPETITORS = [
-  { id: 'hp', name: 'HomePro', nameTh: 'โฮมโปร', color: '#0566B3', bgClass: 'bg-blue-800', logo: '/logos/homepro.png' },
-  { id: 'mgh', name: 'MegaHome', nameTh: 'เมกาโฮม', color: '#4BB35D', bgClass: 'bg-green-500', logo: '/logos/megahome.png' },
-  { id: 'btv', name: 'Boonthavorn', nameTh: 'บุญถาวร', color: '#FA4757', bgClass: 'bg-indigo-900', logo: '/logos/boonthavorn.png' },
-  { id: 'gbh', name: 'Global House', nameTh: 'โกลบอลเฮ้าส์', color: '#2B543D', bgClass: 'bg-teal-600', logo: '/logos/globalhouse.png' },
-  { id: 'dh', name: 'Do Home', nameTh: 'ดูโฮม', color: '#F2672C', bgClass: 'bg-yellow-500', logo: '/logos/dohome.png' },
+  { id: 'makro', name: 'Makro', nameTh: 'แม็คโคร', color: '#0066CC', bgClass: 'bg-blue-600', logo: '/logos/makro.png' },
 ];
 
 
@@ -488,8 +484,8 @@ export default function ProductDetailPage() {
     }
   };
 
-  // Count verified matches for rescrape button
-  const verifiedMatchCount = data?.matches.filter(m => m.verified_by_user && m.is_same).length || 0;
+  // Count verified correct Makro matches (only these can be resynced)
+  const verifiedMatchCount = data?.matches.filter(m => m.verified_by_user && m.is_same === true).length || 0;
 
   const formatPrice = (price: number | null) => {
     if (price === null) return '-';
@@ -559,15 +555,35 @@ export default function ProductDetailPage() {
   if (error || !data) {
     return (
       <MainLayout>
-        <div className="flex flex-col items-center justify-center min-h-[400px]">
-          <p className="text-red-500 mb-4">{error || 'Product not found'}</p>
-          <button
-            onClick={() => router.push('/products')}
-            className="text-cyan-500 hover:text-cyan-600 flex items-center gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Products
-          </button>
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+          <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+            <div className="mb-6">
+              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100">
+                <X className="h-10 w-10 text-red-600" />
+              </div>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">
+              {error === 'Product not found' ? 'Product Not Found' : 'Failed to Load'}
+            </h2>
+            <p className="text-gray-600 mb-6">
+              {error || 'The product you are looking for could not be found or loaded.'}
+            </p>
+            <div className="flex gap-3 justify-center">
+              <Button
+                variant="outline"
+                onClick={() => router.back()}
+                icon={<ArrowLeft className="w-4 h-4" />}
+              >
+                Go Back
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => router.push('/products')}
+              >
+                Back to Products
+              </Button>
+            </div>
+          </div>
         </div>
       </MainLayout>
     );
@@ -609,10 +625,11 @@ export default function ProductDetailPage() {
               variant="primary"
               onClick={handleRescrape}
               loading={isRescraping}
+              disabled={verifiedMatchCount === 0}
               icon={<RotateCcw className="w-4 h-4" />}
-              title={`Resync Thai Watsadu + ${verifiedMatchCount} verified match${verifiedMatchCount !== 1 ? 'es' : ''}`}
+              title={verifiedMatchCount === 0 ? 'No verified Makro match to resync' : `Resync ${verifiedMatchCount} verified Makro match${verifiedMatchCount !== 1 ? 'es' : ''}`}
             >
-              {isRescraping ? 'Resyncing...' : 'Resync Prices'}
+              {isRescraping ? 'Resyncing...' : `Resync Prices${verifiedMatchCount === 0 ? ' (0)' : ` (${verifiedMatchCount})`}`}
             </Button>
           </div>
         </div>
@@ -836,6 +853,7 @@ export default function ProductDetailPage() {
                         // Check if any match is already marked as correct BY USER for this retailer
                         const hasCorrectMatch = retailerMatches.some((m) => m.is_same === true && m.verified_by_user === true);
 
+                        // No matches at all
                         if (retailerMatches.length === 0) {
                           return (
                             <div className="p-6 text-center">
@@ -851,9 +869,15 @@ export default function ProductDetailPage() {
                           );
                         }
 
+                        // If a correct match exists: show only that one
+                        // Otherwise: show all (unverified + incorrect) so user can undo
+                        const visibleMatches = hasCorrectMatch
+                          ? retailerMatches.filter((m) => m.is_same === true && m.verified_by_user === true)
+                          : retailerMatches;
+
                         return (
                           <>
-                            {retailerMatches.map((match) => (
+                            {visibleMatches.map((match) => (
                               <div key={match.match_id} className="p-4 hover:bg-gray-50 transition-colors">
                                 <div className="flex gap-4">
                                   <ProductImage
@@ -894,7 +918,7 @@ export default function ProductDetailPage() {
                                       </span> */}
                                       {match.confidence_score !== null && (
                                         <span className={`${getConfidenceColor(match.confidence_score)} text-white text-xs font-medium px-2 py-1 rounded`}>
-                                          {Math.round(match.confidence_score * 100)}%
+                                          {Math.round(match.confidence_score)}%
                                         </span>
                                       )}
                                     </div>
@@ -982,361 +1006,7 @@ export default function ProductDetailPage() {
             </div>
           </div>
         </div>
-
-        {/* Price History Chart */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex flex-col gap-4 mb-6">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <h2 className="text-lg font-semibold text-gray-900">Price History</h2>
-              <div className="flex flex-wrap items-center gap-2">
-              {[
-                { days: 1, label: '1 Day' },
-                { days: 7, label: '1 Week' },
-                { days: 30, label: '1 Month' },
-                { days: 90, label: '3 Months' },
-                { days: 180, label: '6 Months' },
-                { days: 365, label: '1 Year' },
-              ].map(({ days, label }) => (
-                <button
-                  key={days}
-                  onClick={() => {
-                    setHistoryDays(days);
-                    setShowCustomRange(false);
-                  }}
-                  className={`px-3 h-8 text-sm rounded-md font-medium transition-colors ${
-                    historyDays === days && !showCustomRange
-                      ? 'bg-cyan-500 text-white hover:bg-cyan-600'
-                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-              <button
-                onClick={() => setShowCustomRange(!showCustomRange)}
-                className={`px-3 h-8 text-sm rounded-md font-medium transition-colors ${
-                  showCustomRange
-                    ? 'bg-cyan-500 text-white hover:bg-cyan-600'
-                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
-                }`}
-              >
-                Custom
-              </button>
-              <button
-                onClick={exportPriceHistory}
-                disabled={!priceHistory}
-                className="px-3 h-8 text-sm rounded-md font-medium transition-colors bg-white text-gray-600 hover:bg-gray-100 border border-gray-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download className="h-4 w-4" />
-                Export
-              </button>
-              </div>
-            </div>
-
-              {/* Custom Date Range Picker */}
-              {showCustomRange && (
-                <div className="flex flex-wrap items-center justify-end gap-2">
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-700">From:</label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 hover:bg-cyan-500 hover:border-cyan-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40 text-left relative">
-                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
-                      {customStartDate ? format(customStartDate, "MMM d, yyyy") : "Start date"}
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start">
-                    <CalendarComponent
-                      mode="single"
-                      selected={customStartDate || undefined}
-                      onSelect={(date: Date | undefined) => {
-                        setCustomStartDate(date || null);
-                        // If start date is after end date, clear end date
-                        if (date && customEndDate && date > customEndDate) {
-                          setCustomEndDate(null);
-                        }
-                      }}
-                      disabled={(date) => date > new Date()}
-                      defaultMonth={customStartDate || new Date()}
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-700">To:</label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 hover:bg-cyan-500 hover:border-cyan-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40 text-left relative">
-                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
-                      {customEndDate ? format(customEndDate, "MMM d, yyyy") : "End date"}
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start">
-                    <CalendarComponent
-                      mode="single"
-                      selected={customEndDate || undefined}
-                      onSelect={(date: Date | undefined) => setCustomEndDate(date || null)}
-                      disabled={(date) =>
-                        date > new Date() || (customStartDate ? date < customStartDate : false)
-                      }
-                      defaultMonth={customEndDate || customStartDate || new Date()}
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <button
-                onClick={() => {
-                  if (customStartDate || customEndDate) {
-                    // Trigger refetch with custom dates
-                    fetchPriceHistory();
-                  }
-                }}
-                disabled={!customStartDate && !customEndDate}
-                className="ml-auto px-3 h-9 text-sm rounded-md font-medium bg-cyan-500 text-white hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Apply
-              </button>
-                </div>
-              )}
-          </div>
-
-          {isLoadingHistory ? (
-            <div className="space-y-6">
-              {/* Placeholder for stats cards */}
-              <div className="h-[100px]"></div>
-              {/* Loading spinner */}
-              <div className="h-[350px] flex items-center justify-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
-              </div>
-              {/* Placeholder for data point counter */}
-              <div className="h-[24px]"></div>
-            </div>
-          ) : priceHistory && (priceHistory.base_product.history.length > 0 || priceHistory.matched_products.some(p => p.history.length > 0)) ? (
-            <div className="space-y-6">
-              {/* Price Stats Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {(() => {
-                  // Calculate lowest and highest prices
-                  const allPrices: { price: number; retailer: string; date: string }[] = [];
-
-                  priceHistory.base_product.history.forEach(h => {
-                    allPrices.push({
-                      price: h.price,
-                      retailer: priceHistory.base_product.retailer,
-                      date: h.date
-                    });
-                  });
-
-                  priceHistory.matched_products.forEach(mp => {
-                    mp.history.forEach(h => {
-                      allPrices.push({
-                        price: h.price,
-                        retailer: mp.retailer,
-                        date: h.date
-                      });
-                    });
-                  });
-
-                  const lowestPrice = allPrices.reduce((min, curr) =>
-                    curr.price < min.price ? curr : min
-                  , allPrices[0]);
-
-                  const highestPrice = allPrices.reduce((max, curr) =>
-                    curr.price > max.price ? curr : max
-                  , allPrices[0]);
-
-                  return (
-                    <>
-                      <div className="flex items-center gap-3 p-4 bg-green-50 rounded-lg border border-green-200">
-                        <div className="p-2 bg-green-100 rounded-full">
-                          <TrendingDown className="h-5 w-5 text-green-600" />
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-600">Lowest Price</p>
-                          <p className="text-xl font-bold text-green-600">
-                            ฿{lowestPrice.price.toLocaleString()}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {lowestPrice.retailer} • {new Date(lowestPrice.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 p-4 bg-red-50 rounded-lg border border-red-200">
-                        <div className="p-2 bg-red-100 rounded-full">
-                          <TrendingUp className="h-5 w-5 text-red-600" />
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-600">Highest Price</p>
-                          <p className="text-xl font-bold text-red-600">
-                            ฿{highestPrice.price.toLocaleString()}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {highestPrice.retailer} • {new Date(highestPrice.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          </p>
-                        </div>
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-
-              {/* Chart */}
-              <div className="h-[350px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={(() => {
-                      // Combine all price history into chart data
-                      const allDates = new Set<string>();
-                      priceHistory.base_product.history.forEach(h => allDates.add(h.date.split('T')[0]));
-                      priceHistory.matched_products.forEach(p => p.history.forEach(h => allDates.add(h.date.split('T')[0])));
-
-                      const sortedDates = Array.from(allDates).sort();
-
-                      return sortedDates.map(date => {
-                        const point: Record<string, string | number | null> = { date };
-
-                        // Find base product price for this date
-                        const basePrice = priceHistory.base_product.history.find(h => h.date.split('T')[0] === date);
-                        point[priceHistory.base_product.retailer] = basePrice?.price ?? null;
-
-                        // Find matched products prices for this date
-                        priceHistory.matched_products.forEach(mp => {
-                          const mpPrice = mp.history.find(h => h.date.split('T')[0] === date);
-                          point[mp.retailer] = mpPrice?.price ?? null;
-                        });
-
-                        return point;
-                      });
-                    })()}
-                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fontSize: 12 }}
-                      className="text-gray-600"
-                      tickFormatter={(value: string) => {
-                        const date = new Date(value);
-                        // Always show same format for consistency
-                        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                      }}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 12 }}
-                      className="text-gray-600"
-                      tickFormatter={(value: number) => `฿${value.toLocaleString()}`}
-                    />
-                    <Tooltip
-                      content={({ active, payload, label }: any) => {
-                        if (active && payload && payload.length) {
-                          const date = new Date(label);
-                          return (
-                            <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
-                              <p className="text-sm font-medium text-gray-700 mb-2">
-                                {date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}
-                              </p>
-                              {payload.map((entry: any, index: number) => (
-                                entry.value !== null && (
-                                  <p key={`item-${index}`} className="text-sm" style={{ color: entry.stroke }}>
-                                    {entry.dataKey}: ฿{entry.value?.toLocaleString()}
-                                  </p>
-                                )
-                              ))}
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
-                    />
-                    <Legend
-                      wrapperStyle={{ paddingTop: '20px' }}
-                      content={(props) => {
-                        const { payload } = props;
-                        return (
-                          <ul className="flex justify-center gap-4 flex-wrap">
-                            {payload?.map((entry: any, index: number) => (
-                              <li key={`legend-${index}`} className="flex items-center gap-2">
-                                <div
-                                  className="w-3 h-3 rounded-full"
-                                  style={{ backgroundColor: entry.color }}
-                                />
-                                <span className="text-sm text-gray-600">{entry.value}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        );
-                      }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey={priceHistory.base_product.retailer}
-                      stroke="#C42D31"
-                      strokeWidth={3}
-                      dot={false}
-                      connectNulls
-                    />
-                    {priceHistory.matched_products.map((mp, index) => {
-                      // Map retailer names to their brand colors
-                      const retailerColors: Record<string, string> = {
-                        'HomePro': '#0566B3',
-                        'Home Pro': '#0566B3',
-                        'MegaHome': '#4BB35D',
-                        'Mega Home': '#4BB35D',
-                        'Boonthavorn': '#FA4757',
-                        'Global House': '#2B543D',
-                        'GlobalHouse': '#2B543D',
-                        'Do Home': '#F2672C',
-                        'DoHome': '#F2672C',
-                      };
-
-                      // Get color by retailer name, fallback to default colors
-                      const defaultColors = ['#0566B3', '#4BB35D', '#FA4757', '#2B543D', '#F2672C'];
-                      const color = retailerColors[mp.retailer] || defaultColors[index % defaultColors.length];
-
-                      return (
-                        <Line
-                          key={mp.product_id}
-                          type="monotone"
-                          dataKey={mp.retailer}
-                          stroke={color}
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls
-                        />
-                      );
-                    })}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Data point counter */}
-              <div className="flex items-center">
-                <h4 className="font-medium text-sm text-gray-500">
-                  Showing {(() => {
-                    const allDates = new Set<string>();
-                    priceHistory.base_product.history.forEach(h => allDates.add(h.date.split('T')[0]));
-                    priceHistory.matched_products.forEach(p => p.history.forEach(h => allDates.add(h.date.split('T')[0])));
-                    return allDates.size;
-                  })()} data points
-                </h4>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Placeholder for stats cards */}
-              <div className="h-[100px]"></div>
-              {/* No data message */}
-              <div className="h-[350px] flex items-center justify-center text-gray-500">
-                No price history data available for the selected period
-              </div>
-              {/* Placeholder for data point counter */}
-              <div className="h-[24px]"></div>
-            </div>
-          )}
-        </div>
+        {/* Price History Chart - COMMENTED OUT TEMPORARILY (no data yet) */}
       </div>
 
       {/* Add to Watchlist Modal */}

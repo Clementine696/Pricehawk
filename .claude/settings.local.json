@@ -8,7 +8,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(psql:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Read(//c/Users/kanat/Desktop/PriceHawk/_PROD - Makro/backend/scraper-url/adws//**)",
+      "Read(//c/Users/kanat/Desktop//**)"
     ]
   }
 }

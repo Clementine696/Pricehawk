@@ -978,7 +978,6 @@ class ThaiWatsaduExtractor(ProductExtractor):
                 if price:
                     try:
                         product.current_price = float(price)
-                        product.extraction_metadata['price_pattern'] = 'twd_json_ld'
                     except (ValueError, TypeError):
                         pass
 
@@ -989,95 +988,43 @@ class ThaiWatsaduExtractor(ProductExtractor):
                 elif isinstance(image, str):
                     product.images = [image]
 
-        # 2b. Extract price from rendered HTML (Thai Watsadu)
-        # Extract from the actual displayed price elements in the DOM
-        # IMPORTANT: Always try HTML extraction for Thai Watsadu as it's more reliable than JSON-LD
-        # We'll override JSON-LD price if HTML price is found
-        html_current_price = None
-        html_original_price = None
-
-        # CASE 1: Pack/Multiple pricing - Find "1 ชิ้น" (1 piece) price
-        # Look for the container with "1 ชิ้น" text and extract adjacent price
-        # The 1-piece card uses text-[40px] (large/highlighted), pack cards use text-[24px] (smaller)
-        # Both are captured here since we anchor on the "1 ชิ้น" label
-        pack_price_pattern = r'<div[^>]*class="[^"]*whitespace-nowrap[^"]*font-semibold[^"]*"[^>]*>1\s*(?:<!--|&nbsp;|<!--\s*-->)\s*ชิ้น</div>(?:(?!</div>).)*?<div[^>]*class="[^"]*text-primary[^"]*text-\[(?:24|40)px\][^"]*font-price[^"]*"[^>]*>([\d,]+(?:\.\d+)?)</div>'
-        pack_match = re.search(pack_price_pattern, html_content, re.DOTALL | re.IGNORECASE)
-        if pack_match:
-            try:
-                price_str = pack_match.group(1).replace(',', '')
-                html_current_price = float(price_str)
-                product.extraction_metadata['price_pattern'] = 'twd_pack_pricing'
-            except (ValueError, TypeError):
-                pass
-
-        # CASE 2 & 3: Normal and Coupon case - Red price with text-redPrice class
-        # This covers both discount and coupon scenarios
-        if not html_current_price:
-            # Look for: <span class="text-redPrice ...">฿</span><span class="... font-price ... text-redPrice ...">363.75</span>
-            # Anchor on the ฿ symbol in a <span> immediately before the price span.
-            # Main product price area always has <span ...>฿</span> before the price span.
-            # Suggested product cards use <div ...>฿</div> + <div ... font-price ...> — excluded by this pattern.
-            red_price_pattern = r'<span[^>]*class="[^"]*text-redPrice[^"]*"[^>]*>฿</span>\s*<span[^>]*class="[^"]*font-price[^"]*text-redPrice[^"]*"[^>]*>([\d,]+(?:\.\d+)?)</span>'
-            red_match = re.search(red_price_pattern, html_content, re.IGNORECASE)
-            if red_match:
-                try:
-                    price_str = red_match.group(1).replace(',', '')
-                    html_current_price = float(price_str)
-                    product.extraction_metadata['price_pattern'] = 'twd_red_price'
-                except (ValueError, TypeError):
-                    pass
-
-        # Extract original price (ราคาเดิม with line-through)
-        # Look for: <div class="text-grayDark line-through text-lg">ราคาเดิม<!-- --> <!-- -->2,180.00</div>
-        original_price_pattern = r'<div[^>]*class="[^"]*text-grayDark[^"]*line-through[^"]*"[^>]*>ราคาเดิม(?:<!--|&nbsp;|<!--\s*-->|\s)*(?:<!--|&nbsp;|<!--\s*-->|\s)*([\d,]+(?:\.\d{2})?)</div>'
-        original_match = re.search(original_price_pattern, html_content, re.IGNORECASE)
-        if original_match:
-            try:
-                price_str = original_match.group(1).replace(',', '')
-                html_original_price = float(price_str)
-            except (ValueError, TypeError):
-                pass
-
-        # Check for additional "Buy now get discount" badge: "ซื้อตอนนี้ลดเพิ่ม 500"
-        # If found, subtract the discount amount from the current price
-        if html_current_price:
-            additional_discount_pattern = r'ซื้อตอนนี้ลดเพิ่ม\s*([\d,]+)'
-            discount_match = re.search(additional_discount_pattern, html_content, re.IGNORECASE)
-            if discount_match:
-                try:
-                    discount_amount = float(discount_match.group(1).replace(',', ''))
-                    html_current_price -= discount_amount
-                except (ValueError, TypeError):
-                    pass
-
-        # Override with HTML prices if found (HTML is more reliable than JSON-LD)
-        if html_current_price:
-            product.current_price = html_current_price
-        if html_original_price:
-            product.original_price = html_original_price
-
-        # Fallback: Try __NEXT_DATA__ JSON if HTML extraction completely failed
+        # 2b. Extract price from __NEXT_DATA__ (Thai Watsadu uses Next.js)
+        # This is more reliable than JSON-LD and handles bulk vs individual pricing correctly
+        # The individual price is in: "price":"169" (with prUname:"EACH")
+        # The bulk price is in: "proPrice":160 (promotional bulk price - we want to AVOID this)
         if not product.current_price:
+            # Look for __NEXT_DATA__ JSON
             next_data_pattern = r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>'
             next_data_match = re.search(next_data_pattern, html_content, re.DOTALL)
             if next_data_match:
                 try:
                     next_data_str = next_data_match.group(1)
+                    # Look for the individual price pattern: "price":"169" with EACH unit
+                    # This pattern appears in the product data, NOT the bulk promo section
                     individual_price_pattern = r'"price"\s*:\s*"(\d+)"[^}]*"prUname"\s*:\s*"EACH'
                     individual_match = re.search(individual_price_pattern, next_data_str)
                     if individual_match:
                         product.current_price = float(individual_match.group(1))
-                        product.extraction_metadata['price_pattern'] = 'twd_next_data_individual'
+                    else:
+                        # Fallback: look for "price":"XXX" where XXX is a number (not proPrice)
+                        # But avoid proPrice pattern
+                        price_pattern = r'"price"\s*:\s*"(\d+)"'
+                        price_matches = re.findall(price_pattern, next_data_str)
+                        if price_matches:
+                            # Get the first numeric price that's not in proPrice context
+                            for price_str in price_matches:
+                                price = float(price_str)
+                                if price > 0:
+                                    product.current_price = price
+                                    break
                 except Exception:
                     pass
 
-        # Fallback: Try __NEXT_DATA__ JSON for original price
-        if not product.original_price:
-            next_data_pattern = r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>'
-            next_data_match = re.search(next_data_pattern, html_content, re.DOTALL)
-            if next_data_match:
+            # Also extract original price (disc field = original/discount price)
+            if not product.original_price and next_data_match:
                 try:
                     next_data_str = next_data_match.group(1)
+                    # Look for disc (original price before discount): "disc":"180.00"
                     disc_pattern = r'"disc"\s*:\s*"([\d.]+)"'
                     disc_match = re.search(disc_pattern, next_data_str)
                     if disc_match:
@@ -1239,28 +1186,12 @@ class ThaiWatsaduExtractor(ProductExtractor):
 
         Thai Watsadu uses Next.js images like:
         /_next/image?url=https://pim.thaiwatsadu.com/TWDPIM/web/Thumbnail/Image/0204/60265581r.jpg&w=1920&q=75
-
-        Images can be in srcset or src attributes. Prioritize srcset for product images.
-        Filter out badge/promotional images (e.g., /images/badge/).
         """
         from urllib.parse import unquote
         images = []
 
-        # Pattern 1: Find Next.js images in srcset attributes (main product images)
-        srcset_pattern = r'srcset="([^"]*/_next/image\?url=https%3A%2F%2Fpim\.thaiwatsadu\.com[^"]*)"'
-        srcset_matches = re.findall(srcset_pattern, html_content, re.IGNORECASE)
-        for srcset_value in srcset_matches:
-            # srcset can have multiple URLs like "url1 1x, url2 2x"
-            # Extract all URLs from srcset
-            url_matches = re.findall(r'/_next/image\?url=(https%3A%2F%2Fpim\.thaiwatsadu\.com[^&\s]+)', srcset_value)
-            for url_encoded in url_matches:
-                actual_url = unquote(url_encoded)
-                # Filter out badge images
-                if '/badge/' not in actual_url.lower() and actual_url not in images:
-                    images.append(actual_url)
-
-        # Pattern 2: Find Next.js images with pim.thaiwatsadu URLs containing the SKU in src
-        if sku and not images:
+        # Pattern 1: Find Next.js images with pim.thaiwatsadu URLs containing the SKU
+        if sku:
             sku_pattern = rf'src="(/_next/image\?url=[^"]*{sku}[^"]*)"'
             matches = re.findall(sku_pattern, html_content, re.IGNORECASE)
             for match in matches:
@@ -1268,27 +1199,24 @@ class ThaiWatsaduExtractor(ProductExtractor):
                 url_match = re.search(r'url=([^&]+)', match)
                 if url_match:
                     actual_url = unquote(url_match.group(1))
-                    # Filter out badge images
-                    if actual_url and '/badge/' not in actual_url.lower() and actual_url not in images:
+                    if actual_url and actual_url not in images:
                         images.append(actual_url)
 
-        # Pattern 3: Find all pim.thaiwatsadu.com images in src attributes
+        # Pattern 2: Find all pim.thaiwatsadu.com images
         if not images:
-            pim_pattern = r'src="/_next/image\?url=(https%3A%2F%2Fpim\.thaiwatsadu\.com[^&"]+)'
+            pim_pattern = r'src="/_next/image\?url=(https%3A%2F%2Fpim\.thaiwatsadu\.com[^&]+)'
             matches = re.findall(pim_pattern, html_content, re.IGNORECASE)
             for match in matches[:10]:
                 actual_url = unquote(match)
-                # Filter out badge images
-                if actual_url and '/badge/' not in actual_url.lower() and actual_url not in images:
+                if actual_url and actual_url not in images:
                     images.append(actual_url)
 
-        # Pattern 4: Direct pim.thaiwatsadu.com URLs (if not Next.js wrapped)
+        # Pattern 3: Direct pim.thaiwatsadu.com URLs (if not Next.js wrapped)
         if not images:
             direct_pattern = r'src="(https://pim\.thaiwatsadu\.com[^"]+)"'
             matches = re.findall(direct_pattern, html_content, re.IGNORECASE)
             for match in matches[:10]:
-                # Filter out badge images
-                if '/badge/' not in match.lower() and match not in images:
+                if match not in images:
                     images.append(match)
 
         return images[:10]  # Limit to 10 images
@@ -1489,6 +1417,35 @@ class ThaiWatsaduExtractor(ProductExtractor):
             if 'size' in specs and 'dimensions' not in specs:
                 specs['dimensions'] = specs['size']
 
+            # Method 4: Extract from __NEXT_DATA__ JSON 'attrb' table
+            # The attrb field contains an HTML table: <td>วัสดุหลัก</td><td>ผ้า</td>
+            if 'material' not in specs or 'color' not in specs:
+                next_data_match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html_content, re.DOTALL)
+                if next_data_match:
+                    try:
+                        import json
+                        data = json.loads(next_data_match.group(1))
+                        attrb_html = data.get('props', {}).get('pageProps', {}).get('productDetailData', {}).get('priceset', {}).get('attrb', '')
+
+                        if attrb_html and isinstance(attrb_html, str):
+                            # Extract material from table: <td>วัสดุหลัก</td><td>...</td>
+                            if 'material' not in specs:
+                                material_match = re.search(r'<td[^>]*>วัสดุหลัก</td>\s*<td[^>]*>([^<]+)</td>', attrb_html, re.IGNORECASE)
+                                if material_match:
+                                    value = material_match.group(1).strip()
+                                    if value and value.upper() not in ['N/A', 'NA', '-']:
+                                        specs['material'] = self._clean_thaiwatsadu_text(value)
+
+                            # Extract color from table: <td>สี</td><td>...</td>
+                            if 'color' not in specs:
+                                color_match = re.search(r'<td[^>]*>สี</td>\s*<td[^>]*>([^<]+)</td>', attrb_html, re.IGNORECASE)
+                                if color_match:
+                                    value = color_match.group(1).strip()
+                                    if value and value.upper() not in ['N/A', 'NA', '-']:
+                                        specs['color'] = self._clean_thaiwatsadu_text(value)
+                    except (json.JSONDecodeError, Exception):
+                        pass
+
         except Exception:
             pass
 
@@ -1533,32 +1490,6 @@ class HomeProExtractor(ProductExtractor):
 
     def extract_from_html(self, html_content: str, url: str = None) -> Optional[ProductData]:
         """Extract product data specifically from HomePro using JSON-LD as primary source."""
-        import sys
-        print(f"\n{'='*60}", flush=True, file=sys.stderr)
-        print(f"[HomePro EXTRACT] Starting extraction for: {url}", flush=True, file=sys.stderr)
-        print(f"[HomePro EXTRACT] HTML length: {len(html_content) if html_content else 0} chars", flush=True, file=sys.stderr)
-        
-        if not html_content:
-            print(f"[HomePro EXTRACT] ERROR: HTML content is None or empty!", flush=True, file=sys.stderr)
-            return None
-        
-        # Show first 200 chars to verify it's valid HTML
-        preview = html_content[:500].replace('\n', ' ')[:200]
-        print(f"[HomePro EXTRACT] HTML preview: {preview}...", flush=True, file=sys.stderr)
-        
-        # DEBUG: Save HTML to file for inspection
-        import os
-        import hashlib
-        sku_from_url = re.search(r'/p/(\d+)', url)
-        sku_str = sku_from_url.group(1) if sku_from_url else 'unknown'
-        debug_file = f"results/debug_homepro_{sku_str}.html"
-        try:
-            with open(debug_file, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-            print(f"[HomePro DEBUG] Saved HTML to: {debug_file}", flush=True, file=sys.stderr)
-        except Exception as e:
-            print(f"[HomePro DEBUG] Could not save HTML: {e}", flush=True, file=sys.stderr)
-        
         product = ProductData(url=url)
 
         # 1. Extract SKU from URL first (most reliable for HomePro)
@@ -1567,25 +1498,9 @@ class HomeProExtractor(ProductExtractor):
             sku_match = re.search(r'/p/(\d+)', url)
             if sku_match:
                 product.sku = sku_match.group(1)
-                print(f"[HomePro EXTRACT] Extracted SKU from URL: {product.sku}", flush=True, file=sys.stderr)
-            else:
-                print(f"[HomePro EXTRACT] WARNING: Could not extract SKU from URL", flush=True, file=sys.stderr)
 
         # 2. Try JSON-LD extraction (primary source for HomePro - most accurate)
         json_ld_data = self._extract_json_ld(html_content)
-
-        import sys
-        print(f"[HomePro DEBUG] JSON-LD extraction for {url}", flush=True, file=sys.stderr)
-        if json_ld_data:
-            print(f"  JSON-LD keys: {list(json_ld_data.keys())}", flush=True, file=sys.stderr)
-            print(f"  name: {json_ld_data.get('name')}", flush=True, file=sys.stderr)
-            print(f"  sku: {json_ld_data.get('sku')}", flush=True, file=sys.stderr)
-            print(f"  brand: {json_ld_data.get('brand')}", flush=True, file=sys.stderr)
-            offers = json_ld_data.get('offers', {})
-            if isinstance(offers, dict):
-                print(f"  price: {offers.get('price')}", flush=True, file=sys.stderr)
-        else:
-            print(f"  JSON-LD not found - will use HTML extraction", flush=True, file=sys.stderr)
 
         if json_ld_data:
             # Name from JSON-LD
@@ -1617,121 +1532,56 @@ class HomeProExtractor(ProductExtractor):
                 if price:
                     try:
                         product.current_price = float(price)
-                        product.extraction_metadata['price_pattern'] = 'hp_json_ld'
                     except (ValueError, TypeError):
                         pass
 
             # Images from JSON-LD
             image = json_ld_data.get('image')
             if image:
+                extracted_images = []
                 if isinstance(image, list):
-                    # Filter to only product images (cdn.homepro.co.th or ecatalog-media.homepro.co.th)
-                    product.images = [img for img in image if ('cdn.homepro.co.th' in img or 'ecatalog-media.homepro.co.th' in img) and 'ART_IMAGE' in img]
+                    # Handle list of images (can be strings or objects)
+                    for img in image:
+                        if isinstance(img, str):
+                            # Accept images from any HomePro domain (cdn.homepro.co.th, ecatalog-media.homepro.co.th, etc.)
+                            if 'homepro' in img.lower():
+                                extracted_images.append(img)
+                        elif isinstance(img, dict):
+                            img_url = img.get('url')
+                            if img_url and 'homepro' in img_url.lower():
+                                extracted_images.append(img_url)
                 elif isinstance(image, str):
-                    if 'cdn.homepro.co.th' in image or 'ecatalog-media.homepro.co.th' in image:
-                        product.images = [image]
+                    if 'homepro' in image.lower():
+                        extracted_images.append(image)
+                elif isinstance(image, dict):
+                    # Single image object
+                    img_url = image.get('url')
+                    if img_url and 'homepro' in img_url.lower():
+                        extracted_images.append(img_url)
+
+                if extracted_images:
+                    product.images = extracted_images
 
         # 2b. If JSON-LD price not found, try HomePro-specific HTML price patterns
-        print(f"[HomePro EXTRACT] After JSON-LD - Price: {product.current_price}, Name: {product.name}", flush=True, file=sys.stderr)
+        # NOTE: HomePro renders main product price in 'obcon-price-info' section
+        # The DOM structure places this AFTER some related product sections, so we can't cut by marker
         if not product.current_price:
-            print(f"[HomePro EXTRACT] Attempting HTML price extraction...", flush=True, file=sys.stderr)
-
-            # FIRST: SKU-specific gtm price — anchored to this product's SKU, can never match a related product
-            # If gtmIsNetPrice=true, use gtmNetPrice (actual payable price after online discount)
-            # e.g. shelf price gtmPrice=659, but gtmNetPrice=649 after ฿10 "buy online extra discount"
-            if product.sku:
-                is_net = re.search(
-                    rf'gtmIsNetPrice-{re.escape(product.sku)}[^>]*value=["\']true["\']',
-                    html_content, re.IGNORECASE
-                )
-                if is_net:
-                    net_matches = re.findall(
-                        rf'<input[^>]*id=["\']gtmNetPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']',
-                        html_content, re.IGNORECASE
-                    )
-                    if net_matches:
-                        try:
-                            price = float(net_matches[0])
-                            if 1 <= price <= 500000:
-                                product.current_price = price
-                                product.extraction_metadata['price_pattern'] = 'hp_gtm_net_price'
-                                print(f"[HomePro EXTRACT] gtmNetPrice-{product.sku}: {price}", flush=True, file=sys.stderr)
-                        except ValueError:
-                            pass
-
-                if not product.current_price:
-                    sku_matches = re.findall(
-                        rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']',
-                        html_content, re.IGNORECASE
-                    )
-                    if sku_matches:
-                        try:
-                            price = float(sku_matches[0])
-                            if 1 <= price <= 500000:
-                                product.current_price = price
-                                product.extraction_metadata['price_pattern'] = 'hp_gtm_price'
-                                print(f"[HomePro EXTRACT] gtmPrice-{product.sku}: {price}", flush=True, file=sys.stderr)
-                        except ValueError:
-                            pass
-
-            # SECOND: SKU-anchored JS analytics price (Facebook Pixel / GTM event)
-            # Pattern: contents:[{id:"271155",...,item_price:"2399",...}]
-            if not product.current_price and product.sku:
-                js_price_pattern = rf'id\s*:\s*["\']?{re.escape(product.sku)}["\']?.{{0,300}}?item_price\s*:\s*["\'](\d+)["\']'
-                js_match = re.search(js_price_pattern, html_content, re.IGNORECASE | re.DOTALL)
-                if js_match:
-                    try:
-                        price = float(js_match.group(1))
-                        if 1 <= price <= 500000:
-                            product.current_price = price
-                            product.extraction_metadata['price_pattern'] = 'hp_js_analytics'
-                            print(f"[HomePro EXTRACT] JS item_price for {product.sku}: {price}", flush=True, file=sys.stderr)
-                    except ValueError:
-                        pass
-
-            # THIRD: Generic HTML patterns (only if both SKU-anchored methods failed)
-            # These can match related/comparison product prices — use as last resort only
-            # These can match related/comparison product prices — use as last resort only
+            # HomePro specific price patterns - prioritized from most specific to general
+            # Focus on patterns that identify MAIN product price, not related products
             homepro_price_patterns = [
-                # 1. discount-price container — the actual displayed sale/online price
-                r'<div[^>]*class="[^"]*discount-price[^"]*"[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 2. obcon-price-info container
+                # 1. obcon-price-info container (MOST RELIABLE for HomePro main product)
+                # Pattern: <span class="obcon-price-info">...<span class="currency">฿</span>...<span class="amount">1,190</span>
                 r'obcon-price-info[^>]*>.*?<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
-                # 3. Price div with ฿ (can match comparison/related product prices — only used if SKU-anchored sources fail)
+                # 2. Price div with specific class pattern for main product (not cards/tiles)
                 r'<div[^>]*class="[^"]*price[^"]*"[^>]*>\s*(?:<[^>]*>)*\s*฿\s*([\d,]+)</div>',
+                # 3. Amount class with currency sibling (main product pattern)
+                r'<span[^>]*class="[^"]*currency[^"]*"[^>]*>฿</span>\s*(?:<[^>]*>)*\s*<span[^>]*class="[^"]*amount[^"]*"[^>]*>([\d,]+)</span>',
                 # 4. Price meta tag
                 r'<meta[^>]*property=["\']product:price:amount["\'][^>]*content=["\']([\d.]+)["\']',
-                # NOTE: currency+amount span pattern removed — proven to match installation fees / service prices
             ]
 
-            if not product.current_price:
-                print(f"[HomePro EXTRACT] gtmPrice not found, trying {len(homepro_price_patterns)} HTML patterns...", flush=True, file=sys.stderr)
-                pattern_names = ['hp_discount_price_html', 'hp_obcon_price', 'hp_price_div', 'hp_meta_tag']
-                pattern_num = 0
-                for pattern in homepro_price_patterns:
-                    pattern_num += 1
-                    matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
-                    print(f"[HomePro EXTRACT] Pattern #{pattern_num}: found {len(matches)} matches", flush=True, file=sys.stderr)
-                    if matches:
-                        for price_str in matches:
-                            try:
-                                price = float(price_str.replace(',', ''))
-                                print(f"[HomePro EXTRACT]   Candidate price: {price}", flush=True, file=sys.stderr)
-                                if 50 <= price <= 500000:
-                                    product.current_price = price
-                                    product.extraction_metadata['price_pattern'] = pattern_names[pattern_num - 1]
-                                    print(f"[HomePro EXTRACT]   ✓ Price accepted: {price}", flush=True, file=sys.stderr)
-                                    break
-                                else:
-                                    print(f"[HomePro EXTRACT]   ✗ Price out of range", flush=True, file=sys.stderr)
-                            except ValueError:
-                                print(f"[HomePro EXTRACT]   ✗ Price parse error: {price_str}", flush=True, file=sys.stderr)
-                                continue
-                    if product.current_price:
-                        break
-
-            # Kept for compatibility — now handled above as first attempt
-            if not product.current_price and product.sku:
+            # First, try SKU-specific GTM input (most reliable if available)
+            if product.sku:
                 sku_gtm_pattern = rf'<input[^>]*id=["\']gtmPrice-{re.escape(product.sku)}["\'][^>]*value=["\']([\d.]+)["\']'
                 sku_matches = re.findall(sku_gtm_pattern, html_content, re.IGNORECASE)
                 if sku_matches:
@@ -1739,9 +1589,26 @@ class HomeProExtractor(ProductExtractor):
                         price = float(sku_matches[0])
                         if 1 <= price <= 500000:
                             product.current_price = price
-                            print(f"[HomePro EXTRACT] GTM fallback price: {price}", flush=True, file=sys.stderr)
                     except ValueError:
                         pass
+
+            # If SKU-specific GTM didn't work, try other patterns
+            if not product.current_price:
+                for pattern in homepro_price_patterns:
+                    matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
+                    if matches:
+                        # Filter to reasonable price range - HomePro main products are usually > 50 THB
+                        for price_str in matches:
+                            try:
+                                price = float(price_str.replace(',', ''))
+                                # Use higher minimum (50) to avoid matching small related product prices
+                                if 50 <= price <= 500000:
+                                    product.current_price = price
+                                    break
+                            except ValueError:
+                                continue
+                    if product.current_price:
+                        break
 
         # 3. Extract original price from HTML (for discount calculation)
         # HomePro HTML: <div class="original-price">...<span class="amount">235</span>
@@ -1771,6 +1638,15 @@ class HomeProExtractor(ProductExtractor):
         # 4. Extract category from breadcrumb
         product.category = self._extract_homepro_category(html_content)
 
+        # 4b. Extract brand from prd-brand div if not found in JSON-LD
+        if not product.brand:
+            brand_pattern = r'<div[^>]*class="prd-brand"[^>]*>.*?<a[^>]*>([^<]+)</a>'
+            brand_match = re.search(brand_pattern, html_content, re.DOTALL | re.IGNORECASE)
+            if brand_match:
+                brand = self._clean_homepro_text(brand_match.group(1))
+                if brand:
+                    product.brand = brand
+
         # 5. Extract dimensions, volume, and other specs from product specifications
         specs = self._extract_homepro_specs(html_content)
         if specs:
@@ -1780,6 +1656,8 @@ class HomeProExtractor(ProductExtractor):
                 product.volume = specs['volume']
             if specs.get('color') and not product.color:
                 product.color = specs['color']
+            if specs.get('material') and not product.material:
+                product.material = specs['material']
             if specs.get('brand') and not product.brand:
                 product.brand = specs['brand']
             if specs.get('model') and not product.model:
@@ -1790,69 +1668,82 @@ class HomeProExtractor(ProductExtractor):
 
         # 6. Extract product name from HTML if not found in JSON-LD
         if not product.name:
-            import sys
-            print(f"[HomePro EXTRACT] Name not found in JSON-LD, trying HTML patterns...", flush=True, file=sys.stderr)
             name_patterns = [
-                # Try h1 with product-specific classes first
                 r'<h1[^>]*class="[^"]*product[^"]*name[^"]*"[^>]*>(.*?)</h1>',
                 r'<h1[^>]*class="[^"]*pdp[^"]*"[^>]*>(.*?)</h1>',
-                # Try h1 with data-testid
-                r'<h1[^>]*data-testid="[^"]*product[^"]*name[^"]*"[^>]*>(.*?)</h1>',
-                # Try any h1 that's not in a nav or footer
                 r'<h1[^>]*>(.*?)</h1>',
-                # Try page title as last resort
-                r'<title[^>]*>([^<]+)</title>',
             ]
-            pattern_num = 0
             for pattern in name_patterns:
-                pattern_num += 1
                 match = re.search(pattern, html_content, re.DOTALL | re.IGNORECASE)
                 if match:
-                    raw_name = match.group(1)
-                    print(f"[HomePro EXTRACT] Pattern #{pattern_num} matched! Raw: {raw_name[:100]}", flush=True, file=sys.stderr)
-                    name = self._clean_text(raw_name)
+                    name = self._clean_text(match.group(1))
                     name = self._clean_homepro_text(name)
-                    print(f"[HomePro EXTRACT] After cleaning: {name}", flush=True, file=sys.stderr)
                     if name and len(name) > 3:
                         product.name = name
-                        print(f"[HomePro EXTRACT] ✓ Name accepted: {name}", flush=True, file=sys.stderr)
                         break
-                    else:
-                        print(f"[HomePro EXTRACT] ✗ Name rejected (too short or empty)", flush=True, file=sys.stderr)
-                else:
-                    print(f"[HomePro EXTRACT] Pattern #{pattern_num} no match", flush=True, file=sys.stderr)
-            
-            # Additional fallback: Try og:title meta tag
-            if not product.name:
-                og_title_match = re.search(r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\'](.*?)["\']', html_content, re.IGNORECASE)
-                if og_title_match:
-                    name = self._clean_text(og_title_match.group(1))
-                    name = self._clean_homepro_text(name)
-                    if name and len(name) > 3:
-                        product.name = name
-                        print(f"[HomePro DEBUG] Found name from og:title")
 
         # 7. Extract images from HTML if not found (fallback)
         if not product.images:
-            # HomePro product images pattern (cdn.homepro.co.th or ecatalog-media.homepro.co.th)
+            # HomePro product images pattern - support multiple CDNs (ecatalog-media, cdn, etc.)
             img_patterns = [
-                r'<img[^>]*src="(https://(?:cdn|ecatalog-media)\.homepro\.co\.th/[^"]*ART_IMAGE[^"]+)"',
-                r'"(https://(?:cdn|ecatalog-media)\.homepro\.co\.th/[^"]*ART_IMAGE[^"]+)"',
-                r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']*)"',
+                # ecatalog-media CDN (primary - newer URL format)
+                r'"(https://ecatalog-media\.homepro\.co\.th/[^"]*ART_IMAGE[^"]+)"',
+                r'src="(https://ecatalog-media\.homepro\.co\.th/[^"]*ART_IMAGE[^"]+)"',
+                # cdn.homepro.co.th (fallback - older URL format)
+                r'<img[^>]*src="(https://cdn\.homepro\.co\.th/ART_IMAGE[^"]+)"',
+                r'"(https://cdn\.homepro\.co\.th/ART_IMAGE[^"]+)"',
             ]
             images = []
             for pattern in img_patterns:
                 matches = re.findall(pattern, html_content)
                 for img in matches:
-                    # Only include HomePro product images
-                    if 'homepro.co.th' in img and img not in images:
+                    if img not in images:
                         images.append(img)
+                if images:  # Stop after first pattern that finds images
+                    break
             if images:
                 product.images = images[:10]
 
         # 8. Clean and validate color field (prevent CSS contamination)
         if product.color:
             product.color = self._sanitize_homepro_color(product.color)
+
+        # 8b. Extract color from product name if not found elsewhere
+        # Pattern: "สีขาว" (white color), "สีดำ" (black color), etc.
+        if not product.color and product.name:
+            color_pattern = r'สี([^\s]+)'
+            color_match = re.search(color_pattern, product.name)
+            if color_match:
+                color = color_match.group(1)
+                # Clean and validate
+                if color and len(color) < 20:
+                    product.color = color
+
+        # 8c. Extract volume/weight from product name if not found elsewhere
+        # Pattern: "8 กก.", "1.5 ลิตร", "500 กรัม", "2 กิโลกรัม", etc.
+        if not product.volume and product.name:
+            volume_patterns = [
+                r'(\d+(?:\.\d+)?)\s*(กิโลกรัม|กก\.?|kg)',  # Kilograms
+                r'(\d+(?:\.\d+)?)\s*(กรัม|กม\.?|g)',  # Grams
+                r'(\d+(?:\.\d+)?)\s*(ลิตร|ลิตต|ล\.?|l)',  # Liters
+                r'(\d+(?:\.\d+)?)\s*(มิลลิลิตร|มล\.?|ml)',  # Milliliters
+            ]
+
+            for pattern in volume_patterns:
+                volume_match = re.search(pattern, product.name, re.IGNORECASE)
+                if volume_match:
+                    number = volume_match.group(1)
+                    unit = volume_match.group(2)
+                    # Normalize the unit
+                    if 'กิโลกรัม' in unit or 'กก' in unit or unit.lower() == 'kg':
+                        product.volume = f"{number} กก."
+                    elif 'กรัม' in unit or 'กม' in unit or unit.lower() == 'g':
+                        product.volume = f"{number} กม."
+                    elif 'ลิตร' in unit or unit.lower() == 'l':
+                        product.volume = f"{number} ลิตร"
+                    elif 'มิลลิลิตร' in unit or 'มล' in unit or unit.lower() == 'ml':
+                        product.volume = f"{number} มล."
+                    break
 
         # 9. Clean model field (filter invalid values)
         if product.model:
@@ -1898,21 +1789,6 @@ class HomeProExtractor(ProductExtractor):
                 # HomePro's HTML structure causes base extraction to pick up related product prices
 
         product.retailer = "HomePro"
-        
-        # DEBUG: Log extraction results
-        import sys
-        print(f"\n[HomePro DEBUG] Extraction completed for: {url}", flush=True, file=sys.stderr)
-        print(f"  Name: {product.name}", flush=True, file=sys.stderr)
-        print(f"  Price: {product.current_price}", flush=True, file=sys.stderr)
-        print(f"  Brand: {product.brand}", flush=True, file=sys.stderr)
-        print(f"  SKU: {product.sku}", flush=True, file=sys.stderr)
-        print(f"  Images: {len(product.images) if product.images else 0}", flush=True, file=sys.stderr)
-        
-        # Validation: HomePro products must have at minimum name OR sku
-        if not product.name and not product.sku:
-            print(f"[HomePro ERROR] Failed to extract name or SKU - extraction failed!", flush=True, file=sys.stderr)
-            return None
-        
         return product
 
     def _clean_homepro_text(self, text: str, strip_html: bool = False) -> Optional[str]:
@@ -2006,7 +1882,9 @@ class HomeProExtractor(ProductExtractor):
             (r'<td[^>]*>ความลึก[^<]*</td>\s*<td[^>]*>([\d.]+)</td>', 'depth'),
             (r'<td[^>]*>น้ำหนัก[^<]*</td>\s*<td[^>]*>([\d.]+)</td>', 'weight'),
             (r'<td[^>]*>ขนาดสินค้า</td>\s*<td[^>]*>([^<]+)</td>', 'size'),
-            (r'<td[^>]*>สี</td>\s*<td[^>]*>([^<]+)</td>', 'color'),
+            (r'<td[^>]*>สีสินค้า</td>\s*<td[^>]*>([^<]+)</td>', 'color'),  # Product color (more specific)
+            (r'<td[^>]*>สี</td>\s*<td[^>]*>([^<]+)</td>', 'color'),  # Color (general)
+            (r'<td[^>]*>วัสดุหลัก</td>\s*<td[^>]*>([^<]+)</td>', 'material'),
             (r'<td[^>]*>ยี่ห้อ</td>\s*<td[^>]*>([^<]+)</td>', 'brand'),
             (r'<td[^>]*>รุ่น</td>\s*<td[^>]*>([^<]+)</td>', 'model'),
         ]
@@ -2031,18 +1909,25 @@ class HomeProExtractor(ProductExtractor):
             if len(dim_parts) >= 2:
                 specs['dimensions'] = ' x '.join(dim_parts) + ' cm'
 
-        # Extract volume from size field (e.g., "500ML")
+        # Extract volume from size field
+        # Priority: Use as volume if has ลิตร/กิโลกรัม/etc., otherwise also use size (e.g., "18-INCH") as volume fallback
         if 'size' in specs and not specs.get('volume'):
-            size_val = specs['size'].upper()
-            vol_match = re.search(r'(\d+)\s*(ML|L|ลิตร|มล)', size_val, re.IGNORECASE)
+            size_val = specs['size']
+            # Check for volume/weight units
+            vol_match = re.search(r'(\d+(?:\.\d+)?)\s*(กิโลกรัม|กก\.?|kg|กรัม|กม\.?|g|ลิตร|ลิตต|ล\.?|l|มิลลิลิตร|มล\.?|ml)', size_val, re.IGNORECASE)
             if vol_match:
+                # Size contains volume/weight - use it as volume
+                specs['volume'] = specs['size']
+            else:
+                # No volume unit, but still use size as volume fallback (e.g., "18-INCH")
                 specs['volume'] = specs['size']
 
         return specs
 
     def _extract_json_ld(self, html_content: str) -> Optional[Dict[str, Any]]:
-        """Extract and parse JSON-LD data from HTML."""
+        """Extract and parse JSON-LD data from HTML (handles both static and dynamically injected JSON-LD)."""
         try:
+            # First try static JSON-LD scripts
             pattern = r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>'
             matches = re.finditer(pattern, html_content, re.DOTALL)
 
@@ -2057,6 +1942,27 @@ class HomeProExtractor(ProductExtractor):
                                 return item
                 except json.JSONDecodeError:
                     continue
+
+            # If not found, try dynamic JSON-LD injection pattern (crawl4ai renders JavaScript)
+            # Pattern: a.innerHTML=JSON.stringify(b); where b contains the Product JSON-LD
+            pattern_dynamic = r'a\.innerHTML=JSON\.stringify\((.*?)\);'
+            dynamic_matches = re.findall(pattern_dynamic, html_content, re.DOTALL)
+
+            for match_str in dynamic_matches:
+                try:
+                    # The captured content is likely a variable name, but in some cases
+                    # we might get the actual JSON. Try to extract the actual JSON object.
+                    # Look for nested Product objects in the page
+                    data = json.loads(match_str)
+                    if isinstance(data, dict) and data.get('@type') == 'Product':
+                        return data
+                    elif isinstance(data, list):
+                        for item in data:
+                            if isinstance(item, dict) and item.get('@type') == 'Product':
+                                return item
+                except json.JSONDecodeError:
+                    continue
+
         except Exception:
             pass
         return None
@@ -2097,7 +2003,6 @@ class BoonthavornExtractor(ProductExtractor):
                 if price:
                     product.current_price = float(price)
                     product.currency = offers.get('priceCurrency', 'THB')
-                    product.extraction_metadata['price_pattern'] = 'btv_json_ld'
 
             image = json_ld_data.get('image')
             if image:
@@ -2124,13 +2029,39 @@ class BoonthavornExtractor(ProductExtractor):
                 clean_dimensions = self._sanitize_dimensions_field(dimensions_value)
                 product.dimensions = clean_dimensions
 
-            # Enhanced volume extraction - get weight (น้ำหนัก) instead of unit count
-            if 'น้ำหนัก' in attributes:
-                weight_value = attributes['น้ำหนัก'].strip()
-                clean_weight = self._sanitize_text_field(weight_value, max_length=50)
-                product.volume = clean_weight
+        # 2.2b. Extract volume/weight from product name FIRST if it has volume units (priority over น้ำหนัก)
+        # Pattern: "80 ลิตร", "2.5 กิโลกรัม", "500 กรัม", etc.
+        if product.name:
+            volume_patterns = [
+                r'(\d+(?:\.\d+)?)\s*(กิโลกรัม|กก\.?|kg)',  # Kilograms
+                r'(\d+(?:\.\d+)?)\s*(กรัม|กม\.?|g)',  # Grams
+                r'(\d+(?:\.\d+)?)\s*(ลิตร|ลิตต|ล\.?|l)',  # Liters
+                r'(\d+(?:\.\d+)?)\s*(มิลลิลิตร|มล\.?|ml)',  # Milliliters
+            ]
 
-        # 2.3. Fallback: Extract weight from specifications tab or other patterns
+            for pattern in volume_patterns:
+                volume_match = re.search(pattern, product.name, re.IGNORECASE)
+                if volume_match:
+                    number = volume_match.group(1)
+                    unit = volume_match.group(2)
+                    # Normalize the unit
+                    if 'กิโลกรัม' in unit or 'กก' in unit or unit.lower() == 'kg':
+                        product.volume = f"{number} กก."
+                    elif 'กรัม' in unit or 'กม' in unit or unit.lower() == 'g':
+                        product.volume = f"{number} กม."
+                    elif 'ลิตร' in unit or unit.lower() == 'l':
+                        product.volume = f"{number} ลิตร"
+                    elif 'มิลลิลิตร' in unit or 'มล' in unit or unit.lower() == 'ml':
+                        product.volume = f"{number} มล."
+                    break
+
+        # 2.3. Fallback: Extract weight from Quick Info น้ำหนัก if name didn't have volume
+        if not product.volume and attributes and 'น้ำหนัก' in attributes:
+            weight_value = attributes['น้ำหนัก'].strip()
+            clean_weight = self._sanitize_text_field(weight_value, max_length=50)
+            product.volume = clean_weight
+
+        # 2.4. Fallback: Extract weight from specifications tab or other patterns
         if not product.volume:
             # Try to find weight in various formats
             weight_patterns = [
@@ -2279,41 +2210,18 @@ class MegaHomeExtractor(ProductExtractor):
         if price_match:
             try:
                 product.current_price = float(price_match.group(1).replace(',', ''))
-                product.extraction_metadata['price_pattern'] = 'mgh_discount_price'
             except ValueError:
                 pass
 
-        # Pattern 2: Scale price (bulk pricing) - must get the single-unit (1 ea) price, not the bulk price
-        # Case A: Swiper carousel with per-quantity slides — find the "1 ea" slide
-        # Format: <div class="swiper-slide" onclick="setItemScaling('1');">...1 ea...<span class="amount">50</span>
-        # Case B: Simple scale-price range — get the LAST amount (highest = single unit price)
-        # Format: <span class="scale-price">...<span class="amount">47</span> - <span class="amount">50</span>
+        # Pattern 2: Scale price (bulk pricing) - get the first/lowest price
+        # Format: <span class="scale-price">...<span class="amount">199</span> บาท - <span class="amount">209</span> บาท
         if not product.current_price:
-            # Case A: Try swiper carousel first - find slide with onclick="setItemScaling('1')"
-            # Note: quotes in HTML are encoded as &#39; not '
-            swiper_1ea = re.search(
-                r'onclick="setItemScaling\((?:\'|&#39;)1(?:\'|&#39;)\);".*?<span class="amount">([0-9,.]+)</span>',
-                html_content, re.DOTALL
-            )
-            if swiper_1ea:
+            scale_price_match = re.search(r'<span class="scale-price">.*?<span class="amount">([0-9,.]+)</span>', html_content, re.DOTALL)
+            if scale_price_match:
                 try:
-                    product.current_price = float(swiper_1ea.group(1).replace(',', ''))
-                    product.extraction_metadata['price_pattern'] = 'mgh_swiper_1ea'
+                    product.current_price = float(scale_price_match.group(1).replace(',', ''))
                 except ValueError:
                     pass
-
-            # Case B: Fallback - scale-price range, take the LAST amount (single unit = highest price)
-            if not product.current_price:
-                scale_price_match = re.search(r'<span class="scale-price">(.*?)</span>\s*</div>', html_content, re.DOTALL)
-                if scale_price_match:
-                    amounts = re.findall(r'<span class="amount">([0-9,.]+)</span>', scale_price_match.group(1))
-                    if amounts:
-                        try:
-                            # Last amount is the single-unit price (highest in range)
-                            product.current_price = float(amounts[-1].replace(',', ''))
-                            product.extraction_metadata['price_pattern'] = 'mgh_scale_price_range'
-                        except ValueError:
-                            pass
 
         # Fallback to hidden gtmPrice input
         if not product.current_price:
@@ -2321,7 +2229,6 @@ class MegaHomeExtractor(ProductExtractor):
             if gtm_price:
                 try:
                     product.current_price = float(gtm_price.group(1))
-                    product.extraction_metadata['price_pattern'] = 'mgh_gtm_price'
                 except ValueError:
                     pass
 
@@ -2352,6 +2259,11 @@ class MegaHomeExtractor(ProductExtractor):
         color_match = re.search(r'class="pdp-[A-Z]+_COLOR"[^>]*>.*?<td[^>]*>[^<]*</td>\s*<td[^>]*>([^<]+)</td>', html_content, re.DOTALL)
         if color_match:
             product.color = color_match.group(1).strip()
+
+        # Model/Series: pdp-*_SERIES (ซีรีส์)
+        series_match = re.search(r'class="pdp-[A-Z]+_SERIES"[^>]*>.*?<td[^>]*>[^<]*</td>\s*<td[^>]*>([^<]+)</td>', html_content, re.DOTALL)
+        if series_match:
+            product.model = series_match.group(1).strip()
 
         # Dimensions: width x depth x height (skip label in first td, capture value in second td)
         width_match = re.search(r'class="pdp-[A-Z]+_WIDTH"[^>]*>.*?<td[^>]*>[^<]*</td>\s*<td[^>]*>([^<]+)</td>', html_content, re.DOTALL)
@@ -2437,7 +2349,6 @@ class DoHomeExtractor(ProductExtractor):
                 if price:
                     try:
                         product.current_price = float(price)
-                        product.extraction_metadata['price_pattern'] = 'dh_json_ld'
                     except (ValueError, TypeError):
                         pass
 
@@ -2481,15 +2392,13 @@ class DoHomeExtractor(ProductExtractor):
                 r'<span[^>]*class="[^"]*price[^"]*"[^>]*>(.*?)</span>',
                 r'ราคา[:\s]*([฿]?[\d,]+\.?\d*)',
             ]
-            pattern_names = ['dh_text_3xl_semibold', 'dh_json_market_price', 'dh_json_sale_price', 'dh_generic_baht', 'dh_price_span', 'dh_thai_price_text']
-            for idx, pattern in enumerate(price_patterns):
+            for pattern in price_patterns:
                 match = re.search(pattern, html_content, re.DOTALL | re.IGNORECASE)
                 if match:
                     price_text = self._clean_text(match.group(1))
                     price = PriceParser.parse_price(price_text)
                     if price and price > 0:
                         product.current_price = price
-                        product.extraction_metadata['price_pattern'] = pattern_names[idx]
                         break
 
         # 4. Extract original price
@@ -2580,6 +2489,24 @@ class DoHomeExtractor(ProductExtractor):
         if model_match and not product.model:
             product.model = model_match.group(1)
 
+        # Extract color from attribute_key/attribute_value JSON pattern
+        # Pattern: \"attribute_key\":\"สี\",\"attribute_value\":\"ขาว\"
+        if not product.color:
+            color_match = re.search(r'\\"attribute_key\\":\\"สี\\",\\"attribute_value\\":\\"([^"\\]+)\\"', html_content)
+            if color_match:
+                color = color_match.group(1)
+                if color:
+                    product.color = color
+
+        # Extract material from attribute_key/attribute_value JSON pattern
+        # Pattern: \"attribute_key\":\"วัสดุ\",\"attribute_value\":\"อะลูมิเนียม\"
+        if not product.material:
+            material_match = re.search(r'\\"attribute_key\\":\\"วัสดุ\\",\\"attribute_value\\":\\"([^"\\]+)\\"', html_content)
+            if material_match:
+                material = material_match.group(1)
+                if material:
+                    product.material = material
+
         # 9. Extract images if not found
         if not product.images:
             product.images = self._extract_images(html_content)
@@ -2626,25 +2553,7 @@ class GlobalHouseExtractor(ProductExtractor):
         """Extract product data specifically from Global House."""
         product = ProductData(url=url)
 
-        # 1. Extract SKU from URL first (most reliable for GlobalHouse)
-        # Global House URL pattern: /product/MAZUMA-...-i.8852163012022
-        if url:
-            sku_match = re.search(r'-i\.(\d+)(?:\?|$)', url)
-            if sku_match:
-                potential_sku = sku_match.group(1)
-                if self._is_valid_sku(potential_sku):
-                    product.sku = potential_sku
-
-        # 2. Extract SKU from HTML if not found in URL
-        # GlobalHouse displays: <div class="text-xs text-gray-400">รหัสสินค้า : 8852163012022</div>
-        if not product.sku:
-            sku_html_match = re.search(r'รหัสสินค้า\s*:\s*(\d+)', html_content)
-            if sku_html_match:
-                potential_sku = sku_html_match.group(1)
-                if self._is_valid_sku(potential_sku):
-                    product.sku = potential_sku
-
-        # 3. Try __NEXT_DATA__ extraction (Next.js specific)
+        # 1. Try __NEXT_DATA__ extraction first (Next.js specific)
         next_data = self._extract_next_data(html_content)
         if next_data:
             ast_data = next_data.get('props', {}).get('pageProps', {}).get('ast', {}).get('data', {})
@@ -2674,6 +2583,17 @@ class GlobalHouseExtractor(ProductExtractor):
                 dims = [d for d in [width_val, depth_val, height_val] if d]
                 if dims:
                     product.dimensions = ' x '.join(dims) + ' cm'
+
+                # Get brand from __NEXT_DATA__
+                brand_data = ast_data.get('brand', {})
+                if isinstance(brand_data, dict) and brand_data.get('name'):
+                    product.brand = self._sanitize_brand_field(brand_data['name'])
+                elif isinstance(brand_data, str) and brand_data:
+                    product.brand = self._sanitize_brand_field(brand_data)
+
+                # Get name from __NEXT_DATA__ title
+                if not product.name and ast_data.get('title'):
+                    product.name = ast_data['title']
 
                 # Get description from htmlContent
                 html_contents = ast_data.get('htmlContent', [])
@@ -2712,7 +2632,6 @@ class GlobalHouseExtractor(ProductExtractor):
                 if price:
                     try:
                         product.current_price = float(price)
-                        product.extraction_metadata['price_pattern'] = 'gbh_json_ld'
                     except (ValueError, TypeError):
                         pass
 
@@ -2742,31 +2661,26 @@ class GlobalHouseExtractor(ProductExtractor):
         # 3. Extract price from Global House specific patterns
         if not product.current_price:
             price_patterns = [
-                # GlobalHouse 2024 patterns - sale price in red text-3xl (support decimals)
-                r'<span[^>]*class="[^"]*text-3xl[^"]*text-red[^"]*"[^>]*>฿?([\d,]+(?:\.\d+)?)</span>',
-                r'<span[^>]*class="[^"]*text-red[^"]*text-3xl[^"]*"[^>]*>฿?([\d,]+(?:\.\d+)?)</span>',
-                # Font-bold price pattern (support decimals)
-                r'<span[^>]*class="[^"]*font-bold[^"]*text-3xl[^"]*"[^>]*>฿?([\d,]+(?:\.\d+)?)</span>',
-                # Generic large price display (support decimals)
-                r'<span[^>]*class="[^"]*text-(?:2|3)xl[^"]*"[^>]*>฿?([\d,]+(?:\.\d+)?)</span>',
+                # GlobalHouse 2024 patterns - sale price in red text-3xl
+                r'<span[^>]*class="[^"]*text-3xl[^"]*text-red[^"]*"[^>]*>฿?([\d,]+)</span>',
+                r'<span[^>]*class="[^"]*text-red[^"]*text-3xl[^"]*"[^>]*>฿?([\d,]+)</span>',
+                # Font-bold price pattern
+                r'<span[^>]*class="[^"]*font-bold[^"]*text-3xl[^"]*"[^>]*>฿?([\d,]+)</span>',
+                # Generic large price display
+                r'<span[^>]*class="[^"]*text-(?:2|3)xl[^"]*"[^>]*>฿?([\d,]+)</span>',
                 # Legacy patterns
                 r'<span[^>]*class="[^"]*price[^"]*final[^"]*"[^>]*>(.*?)</span>',
                 r'<span[^>]*class="[^"]*selling-price[^"]*"[^>]*>(.*?)</span>',
                 r'<div[^>]*class="[^"]*product-price[^"]*"[^>]*>.*?([฿\d,\.]+).*?</div>',
                 r'ราคา[:\s]*([฿]?[\d,]+\.?\d*)',
             ]
-            pattern_names = [
-                'gbh_text_3xl_red', 'gbh_text_red_3xl', 'gbh_font_bold_3xl', 'gbh_text_large',
-                'gbh_price_final', 'gbh_selling_price', 'gbh_product_price_div', 'gbh_thai_price_text'
-            ]
-            for idx, pattern in enumerate(price_patterns):
+            for pattern in price_patterns:
                 match = re.search(pattern, html_content, re.DOTALL | re.IGNORECASE)
                 if match:
                     price_text = self._clean_text(match.group(1))
                     price = PriceParser.parse_price(price_text)
                     if price and price > 0:
                         product.current_price = price
-                        product.extraction_metadata['price_pattern'] = pattern_names[idx]
                         break
 
         # 4. Extract original price (only if "ราคาเดิม" is present)
@@ -2791,54 +2705,21 @@ class GlobalHouseExtractor(ProductExtractor):
                         product.original_price = price
                         break
 
-        # 5b. Extract specs from table-cell pairs (available after clicking "ข้อมูลจำเพาะ" tab)
-        # Pattern: <td data-slot="table-cell" ...>KEY</td><td data-slot="table-cell" ...>VALUE</td>
-        spec_pairs = re.findall(
-            r'data-slot="table-cell"[^>]*>([^<]+)</td>\s*<td[^>]*data-slot="table-cell"[^>]*>(.*?)</td>',
-            html_content,
-            re.DOTALL
-        )
-        if spec_pairs:
-            width_val = depth_val = height_val = None
-            for key, val in spec_pairs:
-                key = key.strip()
-                val = self._clean_text(val)
-                if not val:
-                    continue
-                if key == 'รุ่น' and not product.model:
-                    product.model = val
-                elif key == 'แบรนด์' and not product.brand:
-                    product.brand = self._sanitize_brand_field(val)
-                elif 'กว้าง' in key:
-                    m = re.search(r'([\d.]+)', val)
-                    if m:
-                        width_val = m.group(1)
-                elif 'ยาว' in key:
-                    m = re.search(r'([\d.]+)', val)
-                    if m:
-                        depth_val = m.group(1)
-                elif 'สูง' in key:
-                    m = re.search(r'([\d.]+)', val)
-                    if m:
-                        height_val = m.group(1)
-            if not product.dimensions:
-                dims = [d for d in [width_val, depth_val, height_val] if d]
-                if dims:
-                    product.dimensions = ' x '.join(dims) + ' cm'
+        # 5. Extract SKU from URL pattern: /product/BRAND-NAME-i.SKU
+        if url and not product.sku:
+            # Global House URL pattern: /product/MAZUMA-...-i.8852163012022
+            sku_match = re.search(r'-i\.(\d+)(?:\?|$)', url)
+            if sku_match:
+                potential_sku = sku_match.group(1)
+                if self._is_valid_sku(potential_sku):
+                    product.sku = potential_sku
 
         # 6. Extract brand from HTML or product name if not found
         if not product.brand:
-            # Try GlobalHouse header brand pattern first: สินค้าแบรนด์ : <a>BRAND</a>
-            brand_header = re.search(
-                r'สินค้าแบรนด์[^<]*</span>\s*<a[^>]*>([^<]+)</a>',
-                html_content, re.IGNORECASE
-            )
-            if brand_header:
-                product.brand = self._sanitize_brand_field(brand_header.group(1).strip())
-
-        if not product.brand:
-            # Try HTML patterns
+            # Try HTML patterns first
             brand_patterns = [
+                # GlobalHouse specific: สินค้าแบรนด์ : <a>BRAND</a>
+                r'สินค้าแบรนด์\s*:?\s*</span>\s*<a[^>]*>([^<]+)</a>',
                 r'<span[^>]*class="[^"]*brand[^"]*"[^>]*>(.*?)</span>',
                 r'<a[^>]*class="[^"]*brand[^"]*"[^>]*>(.*?)</a>',
                 r'ยี่ห้อ[:\s]*([^\n<]+)',
@@ -2923,6 +2804,213 @@ class GlobalHouseExtractor(ProductExtractor):
         except Exception:
             pass
         return None
+
+
+class HardwareWarehouseExtractor(ProductExtractor):
+    """Extractor for hardwarehouse.co.th products.
+
+    Note: HardwareWarehouse loads product details dynamically, so we extract from
+    the simpler structure that's available in the initial HTML (product cards).
+    """
+
+    def extract_from_html(self, html_content: str, url: str = None) -> Optional[ProductData]:
+        """Extract product information from HardwareWarehouse page."""
+        product = ProductData(url=url)
+
+        # Extract SKU from URL (most reliable)
+        # URL pattern: https://www.hardwarehouse.co.th/product/1113110-BKT
+        if url:
+            sku_match = re.search(r'/product/([A-Z0-9\-]+)', url)
+            if sku_match:
+                product.sku = sku_match.group(1)
+
+        # ── PRODUCT DETAIL PAGE ─────────────────────────────────────────────
+        # Detect detail page by presence of the p-title-main heading
+        is_detail_page = bool(re.search(r'class="[^"]*p-title-main[^"]*"', html_content))
+
+        if is_detail_page:
+            # 1. Name — <h4 class="... p-title-main ...">
+            name_match = re.search(r'<h[1-6][^>]*class="[^"]*p-title-main[^"]*"[^>]*>(.*?)</h[1-6]>', html_content, re.DOTALL)
+            if name_match:
+                product.name = self._clean_text(name_match.group(1))
+
+            # 2. SKU from page (overrides URL if present)
+            sku_page = re.search(r'รหัสสินค้า:\s*([A-Z0-9\-]+)', html_content)
+            if sku_page:
+                product.sku = sku_page.group(1)
+
+            # 3. Price — <h2 class="text-blue1 ...">฿21,870.00</h2>
+            price_match = re.search(r'<h2[^>]*class="[^"]*text-blue1[^"]*"[^>]*>฿([\d,]+(?:\.\d{2})?)</h2>', html_content)
+            if price_match:
+                product.current_price = float(price_match.group(1).replace(',', ''))
+
+            # 4. Original price — look for a second price in price-area (strikethrough/original)
+            #    Pattern: price-area contains two prices (discounted + original)
+            price_area_match = re.search(r'class="[^"]*price-area[^"]*"[^>]*>(.*?)</span>', html_content, re.DOTALL)
+            if price_area_match:
+                price_area_html = price_area_match.group(1)
+                all_prices = re.findall(r'฿([\d,]+(?:\.\d{2})?)', price_area_html)
+                if len(all_prices) >= 2:
+                    # First is current (lowest), second is original
+                    prices_float = [float(p.replace(',', '')) for p in all_prices]
+                    product.current_price = min(prices_float)
+                    product.original_price = max(prices_float)
+
+            # 5. Image — twitter:image meta tag is the reliable product image
+            img_meta = re.search(r'twitter:image["\s][^>]*content="(https://[^"]+)"', html_content)
+            if img_meta:
+                product.images = [img_meta.group(1)]
+            elif product.sku:
+                # Fallback: construct image URL from SKU pattern
+                sku_num = re.match(r'^(\d+)', product.sku)
+                if sku_num:
+                    product.images = [f"https://www.hardwarehouse.co.th/assets/images/{sku_num.group(1)}_1.jpg"]
+
+            # 6. Category — from the product breadcrumb section (anchored by 'หมวดสินค้าทั้งหมด:')
+            #    Extract the section between that label and the SKU line to avoid nav sidebar
+            breadcrumb_section_match = re.search(
+                r'หมวดสินค้าทั้งหมด:</span>(.*?)รหัสสินค้า:', html_content, re.DOTALL)
+            if breadcrumb_section_match:
+                bc_html = breadcrumb_section_match.group(1)
+                # childcategory is most specific
+                child_cat = re.search(r'catalog\?childcategory=([^"&\s]+)', bc_html)
+                if child_cat:
+                    product.category = child_cat.group(1).replace('-', ' ')
+                else:
+                    sub_cat = re.search(r'catalog\?subcategory=([^"&\s]+)', bc_html)
+                    if sub_cat:
+                        product.category = sub_cat.group(1).replace('-', ' ')
+                    else:
+                        cat = re.search(r'catalog\?category=([^"&\s]+)', bc_html)
+                        if cat:
+                            product.category = cat.group(1).replace('-', ' ')
+
+            # 7. Brand — ALL-CAPS word(s) in the product name (may be at start or end)
+            if product.name:
+                # Find all sequences of uppercase-only tokens (brand names like CHAMPION, SCHEPPACH)
+                caps_words = re.findall(r'\b([A-Z][A-Z0-9\-\.]+)\b', product.name)
+                if caps_words:
+                    product.brand = caps_words[-1]  # Last caps word is usually brand
+
+            # 8. Description — p.text-muted contains short description / spec summary
+            desc_match = re.search(r'<p[^>]*class="text-muted"[^>]*>(.*?)</p>', html_content, re.DOTALL)
+            if desc_match:
+                desc = self._clean_text(desc_match.group(1))
+                if desc and desc != product.name:
+                    product.description = desc
+
+            # 9. Set retailer and return early
+            product.retailer = "HardwareWarehouse"
+            return product
+
+        # ── CATALOG / CAROUSEL PAGE (legacy) ────────────────────────────────
+        # Find the product section matching this URL
+        if url and product.sku:
+            # Find the anchor tag that contains titlePd and prices
+            product_block_pattern = rf'<a href="{re.escape(url)}"[^>]*>.*?<h5[^>]*class="[^"]*titlePd[^"]*"[^>]*>(.*?)</a>'
+            product_block_match = re.search(product_block_pattern, html_content, re.DOTALL)
+
+            if product_block_match:
+                product_html = product_block_match.group(0)
+
+                # 1. Extract name from <h5 class="titlePd">
+                name_match = re.search(r'<h5[^>]*class="[^"]*titlePd[^"]*"[^>]*>(.*?)</h5>', product_html, re.DOTALL)
+                if name_match:
+                    name = self._clean_text(name_match.group(1))
+                    if name:
+                        product.name = name
+
+                # 2. Extract prices
+                price_s_match = re.search(r'<div[^>]*class="[^"]*priceS[^"]*"[^>]*>฿([\d,]+(?:\.\d{2})?)\s*<span>\s*฿([\d,]+(?:\.\d{2})?)</span>', product_html, re.DOTALL)
+                if price_s_match:
+                    current_price = price_s_match.group(1).replace(',', '')
+                    original_price = price_s_match.group(2).replace(',', '')
+                    product.current_price = float(current_price)
+                    product.original_price = float(original_price)
+                else:
+                    price_n_match = re.search(r'<div[^>]*class="[^"]*priceN[^"]*"[^>]*>฿([\d,]+(?:\.\d{2})?)</div>', product_html)
+                    if price_n_match:
+                        current_price = price_n_match.group(1).replace(',', '')
+                        product.current_price = float(current_price)
+
+        # Fallback: titlePd anywhere near the SKU
+        if not product.name and product.sku:
+            sku_context_pattern = rf'{re.escape(product.sku)}[^<]*?<h5[^>]*class="[^"]*titlePd[^"]*"[^>]*>(.*?)</h5>'
+            name_match = re.search(sku_context_pattern, html_content, re.DOTALL)
+            if name_match:
+                name = self._clean_text(name_match.group(1))
+                if name:
+                    product.name = name
+
+        # 3. Extract images - look for images inside the product link
+        if url:
+            img_pattern = rf'<div[^>]*class="[^"]*imgpd[^"]*"[^>]*>.*?<a href="{re.escape(url)}"[^>]*>.*?<img[^>]*src="([^"]+)"'
+            img_match = re.search(img_pattern, html_content, re.DOTALL)
+            if img_match:
+                img_url = img_match.group(1)
+                if img_url.startswith('http'):
+                    product.images = [img_url]
+                elif img_url.startswith('/'):
+                    product.images = [f"https://www.hardwarehouse.co.th{img_url}"]
+
+        # 4. Extract brand - try multiple methods
+        # Method 1: Extract from product name (common brands appear at end of name in uppercase)
+        if product.name:
+            # Common Thai hardware brands
+            common_brands = ['NIPPON', '3M', 'TOA', 'BEGER', 'JOTUN', 'DULUX', 'SIKA', 'BOSCH', 'MAKITA',
+                           'DEWALT', 'BLACK DECKER', 'STANLEY', 'SCG', 'TOTO', 'AMERICAN STANDARD']
+            name_upper = product.name.upper()
+            for brand in common_brands:
+                if brand in name_upper:
+                    product.brand = brand
+                    break
+
+        # Method 2: Extract from images if not found in name
+        if not product.brand:
+            brand_img_pattern = r'https://www\.hardwarehouse\.co\.th/assets/images/\d+([a-zA-Z]+)\.(?:png|jpg)'
+            brand_matches = re.findall(brand_img_pattern, html_content)
+            if brand_matches:
+                # Filter out common non-brand words
+                filtered_brands = [b.upper() for b in brand_matches
+                                  if b.lower() not in ['logo', 'icon', 'banner', 'header', 'footer', 'b']]
+                if filtered_brands:
+                    # Take the first real brand found
+                    product.brand = filtered_brands[0]
+
+        # 5. Extract category - try multiple methods
+        # Method 1: From catalog links with category parameters
+        catalog_pattern = r'href="[^"]*catalog\?category=([^"&]+)(?:&amp;subcategory=([^"&]+))?(?:&amp;childcategory=([^"&]+))?'
+        catalog_match = re.search(catalog_pattern, html_content)
+        if catalog_match:
+            categories = []
+            if catalog_match.group(1):
+                categories.append(catalog_match.group(1).replace('-', ' ').replace('+', ' '))
+            if catalog_match.group(2):
+                categories.append(catalog_match.group(2).replace('-', ' ').replace('+', ' '))
+            if catalog_match.group(3):
+                categories.append(catalog_match.group(3).replace('-', ' ').replace('+', ' '))
+            if categories:
+                product.category = ' > '.join(categories)
+
+        # Method 2: From breadcrumb if catalog method didn't work
+        if not product.category:
+            breadcrumb_pattern = r'<nav[^>]*aria-label="breadcrumb"[^>]*>.*?</nav>'
+            breadcrumb_match = re.search(breadcrumb_pattern, html_content, re.DOTALL)
+            if breadcrumb_match:
+                breadcrumb_html = breadcrumb_match.group(0)
+                # Find all link texts in breadcrumb (excluding "Home" and product name)
+                link_texts = re.findall(r'<a[^>]*>([^<]+)</a>', breadcrumb_html)
+                if link_texts:
+                    # Filter out common non-category items
+                    categories = [self._clean_text(text) for text in link_texts
+                                 if text.lower() not in ['home', 'หน้าแรก']]
+                    if categories:
+                        # Join all categories or take the last one
+                        product.category = categories[-1] if len(categories) == 1 else ' > '.join(categories)
+
+        # 6. Set retailer
+        product.retailer = "HardwareWarehouse"
+        return product
 
 
 class MakroExtractor(ProductExtractor):
@@ -3063,6 +3151,8 @@ def get_extractor(url: str) -> ProductExtractor:
         return MegaHomeExtractor(url)
     elif 'globalhouse.co.th' in domain:
         return GlobalHouseExtractor(url)
+    elif 'hardwarehouse.co.th' in domain:
+        return HardwareWarehouseExtractor(url)
     elif 'makro.pro' in domain:
         return MakroExtractor(url)
     else:

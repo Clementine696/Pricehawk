@@ -23,6 +23,11 @@ import {
 } from 'recharts';
 import { trackProductView, trackMatchVerification } from '@/lib/analytics';
 
+// Step price formats:
+// Makro: [[quantity, price], ...] - e.g., [[1, 710], [2, 685]]
+// CFW: [[min_qty, max_qty, discount], ...] - e.g., [[2, 4, 11], [5, null, 16]]
+type StepPrice = [number, number] | [number, number | null, number];
+
 interface Product {
   product_id: number;
   sku: string;
@@ -37,6 +42,7 @@ interface Product {
   retailer_id: string;
   last_updated_at: string | null;
   scrape_fail_count: number;
+  step_prices?: StepPrice[];
 }
 
 interface Match {
@@ -205,6 +211,7 @@ export default function ProductDetailPage() {
   const [allWatchlistGroups, setAllWatchlistGroups] = useState<{group_id: number; name: string}[]>([]);
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<string>('');
   const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
+  const [showStepPrices, setShowStepPrices] = useState(false);
 
   useEffect(() => {
     if (productId) {
@@ -778,6 +785,78 @@ export default function ProductDetailPage() {
                 )}
               </div>
 
+              {/* Step Pricing Section - Show only if step prices exist */}
+              {product.step_prices && product.step_prices.length > 0 && (
+                <div className="mt-4">
+                  <button
+                    onClick={() => setShowStepPrices(!showStepPrices)}
+                    className="w-full flex items-center justify-between px-3 py-2 bg-cyan-50 border border-cyan-200 rounded-lg hover:bg-cyan-100 transition-colors"
+                  >
+                    <span className="text-sm font-medium text-cyan-800">
+                      Step Pricing ({product.step_prices.length} steps)
+                    </span>
+                    {showStepPrices ? (
+                      <ChevronUp className="w-4 h-4 text-cyan-600" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-cyan-600" />
+                    )}
+                  </button>
+                  
+                  {showStepPrices && (
+                    <div className="mt-2 space-y-1.5 bg-white border border-gray-200 rounded-lg p-3">
+                      {product.step_prices.map((stepPrice, index) => {
+                        const isLast = index === product.step_prices!.length - 1;
+                        
+                        // Detect format: 2 elements = Makro [qty, price], 3 elements = CFW [min, max, discount]
+                        const isCFWFormat = stepPrice.length === 3;
+                        
+                        let label = '';
+                        let priceText = '';
+                        
+                        if (isCFWFormat) {
+                          // CFW format: [min_qty, max_qty, discount]
+                          const [minQty, maxQty, discount] = stepPrice as [number, number | null, number];
+                          const finalPrice = product.current_price ? product.current_price - discount : null;
+                          
+                          if (maxQty === null) {
+                            label = `ซื้อ ${minQty} ชิ้นขึ้นไป`;
+                          } else {
+                            label = `ซื้อ ${minQty}-${maxQty} ชิ้น`;
+                          }
+                          priceText = `ลด ${discount} บาท${finalPrice ? ` (฿${finalPrice.toLocaleString()})` : ''}`;
+                        } else {
+                          // Makro format: [quantity, price]
+                          const [quantity, price] = stepPrice as [number, number];
+                          
+                          if (isLast) {
+                            label = `${quantity} หน่วย ขึ้นไป`;
+                          } else {
+                            const nextQuantity = product.step_prices![index + 1][0];
+                            const maxQty = nextQuantity - 1;
+                            if (quantity === maxQty) {
+                              label = `${quantity} หน่วย`;
+                            } else {
+                              label = `${quantity} - ${maxQty} หน่วย`;
+                            }
+                          }
+                          priceText = `฿${typeof price === 'number' ? price.toLocaleString() : price}`;
+                        }
+                        
+                        return (
+                          <div
+                            key={index}
+                            className="flex items-center justify-between py-1.5 px-2 hover:bg-gray-50 rounded"
+                          >
+                            <span className="text-sm text-gray-700">{label}</span>
+                            <span className="text-sm font-semibold text-gray-900">{priceText}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Spacer to push content to bottom */}
               <div className="flex-1"></div>
               </div>
@@ -980,6 +1059,89 @@ export default function ProductDetailPage() {
                                   )}
                                   </div>
                                 </div>
+
+                                {/* Step Pricing Section for Matched Product */}
+                                {match.product.step_prices && match.product.step_prices.length > 0 && (
+                                  <div className="mt-3">
+                                    <button
+                                      onClick={() => {
+                                        const key = `match-${match.match_id}`;
+                                        setCollapsedRetailers(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(key)) {
+                                            next.delete(key);
+                                          } else {
+                                            next.add(key);
+                                          }
+                                          return next;
+                                        });
+                                      }}
+                                      className="w-full flex items-center justify-between px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+                                    >
+                                      <span className="text-sm font-medium text-blue-800">
+                                        Step Pricing ({match.product.step_prices.length} steps)
+                                      </span>
+                                      {collapsedRetailers.has(`match-${match.match_id}`) ? (
+                                        <ChevronDown className="w-4 h-4 text-blue-600" />
+                                      ) : (
+                                        <ChevronUp className="w-4 h-4 text-blue-600" />
+                                      )}
+                                    </button>
+                                    
+                                    {!collapsedRetailers.has(`match-${match.match_id}`) && (
+                                      <div className="mt-2 space-y-1.5 bg-white border border-gray-200 rounded-lg p-3">
+                                        {match.product.step_prices.map((stepPrice, index) => {
+                                          const isLast = index === match.product.step_prices!.length - 1;
+                                          
+                                          // Detect format: 2 elements = Makro [qty, price], 3 elements = CFW [min, max, discount]
+                                          const isCFWFormat = stepPrice.length === 3;
+                                          
+                                          let label = '';
+                                          let priceText = '';
+                                          
+                                          if (isCFWFormat) {
+                                            // CFW format: [min_qty, max_qty, discount]
+                                            const [minQty, maxQty, discount] = stepPrice as [number, number | null, number];
+                                            const finalPrice = match.product.current_price ? match.product.current_price - discount : null;
+                                            
+                                            if (maxQty === null) {
+                                              label = `ซื้อ ${minQty} ชิ้นขึ้นไป`;
+                                            } else {
+                                              label = `ซื้อ ${minQty}-${maxQty} ชิ้น`;
+                                            }
+                                            priceText = `ลด ${discount} บาท${finalPrice ? ` (฿${finalPrice.toLocaleString()})` : ''}`;
+                                          } else {
+                                            // Makro format: [quantity, price]
+                                            const [quantity, price] = stepPrice as [number, number];
+                                            
+                                            if (isLast) {
+                                              label = `${quantity} หน่วย ขึ้นไป`;
+                                            } else {
+                                              const nextQuantity = match.product.step_prices![index + 1][0];
+                                              const maxQty = nextQuantity - 1;
+                                              if (quantity === maxQty) {
+                                                label = `${quantity} หน่วย`;
+                                              } else {
+                                                label = `${quantity} - ${maxQty} หน่วย`;
+                                              }
+                                            }
+                                            priceText = `฿${typeof price === 'number' ? price.toLocaleString() : price}`;
+                                          }
+                                          
+                                          return (
+                                            <div
+                                              key={index}
+                                              className="flex items-center justify-between py-1.5 px-2 hover:bg-gray-50 rounded"
+                                            >
+                                              <span className="text-sm text-gray-700">{label}</span>
+                                              <span className="text-sm font-semibold text-gray-900">{priceText}</span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             ))}
                             {/* Show Manual Add button when all matches are rejected */}
@@ -1006,7 +1168,233 @@ export default function ProductDetailPage() {
             </div>
           </div>
         </div>
-        {/* Price History Chart - COMMENTED OUT TEMPORARILY (no data yet) */}
+        {/* Price History Chart */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex flex-col gap-4 mb-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <h2 className="text-lg font-semibold text-gray-900">Price History</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { days: 1, label: '1 Day' },
+                  { days: 7, label: '1 Week' },
+                  { days: 30, label: '1 Month' },
+                  { days: 90, label: '3 Months' },
+                  { days: 180, label: '6 Months' },
+                  { days: 365, label: '1 Year' },
+                ].map(({ days, label }) => (
+                  <button
+                    key={days}
+                    onClick={() => { setHistoryDays(days); setShowCustomRange(false); }}
+                    className={`px-3 h-8 text-sm rounded-md font-medium transition-colors ${
+                      historyDays === days && !showCustomRange
+                        ? 'bg-cyan-500 text-white hover:bg-cyan-600'
+                        : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setShowCustomRange(!showCustomRange)}
+                  className={`px-3 h-8 text-sm rounded-md font-medium transition-colors ${
+                    showCustomRange
+                      ? 'bg-cyan-500 text-white hover:bg-cyan-600'
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
+                  }`}
+                >
+                  Custom
+                </button>
+                <button
+                  onClick={exportPriceHistory}
+                  disabled={!priceHistory}
+                  className="px-3 h-8 text-sm rounded-md font-medium transition-colors bg-white text-gray-600 hover:bg-gray-100 border border-gray-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download className="h-4 w-4" />
+                  Export
+                </button>
+              </div>
+            </div>
+
+            {showCustomRange && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">From:</label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 hover:bg-cyan-500 hover:border-cyan-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40 text-left relative">
+                        <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
+                        {customStartDate ? format(customStartDate, "MMM d, yyyy") : "Start date"}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start">
+                      <CalendarComponent
+                        mode="single"
+                        selected={customStartDate || undefined}
+                        onSelect={(date: Date | undefined) => {
+                          setCustomStartDate(date || null);
+                          if (date && customEndDate && date > customEndDate) setCustomEndDate(null);
+                        }}
+                        disabled={(date) => date > new Date()}
+                        defaultMonth={customStartDate || new Date()}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">To:</label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="pl-10 pr-3 py-2 text-sm border border-gray-300 bg-white rounded-md text-gray-700 hover:bg-cyan-500 hover:border-cyan-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer transition-colors w-40 text-left relative">
+                        <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
+                        {customEndDate ? format(customEndDate, "MMM d, yyyy") : "End date"}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start">
+                      <CalendarComponent
+                        mode="single"
+                        selected={customEndDate || undefined}
+                        onSelect={(date: Date | undefined) => setCustomEndDate(date || null)}
+                        disabled={(date) => date > new Date() || (customStartDate ? date < customStartDate : false)}
+                        defaultMonth={customEndDate || customStartDate || new Date()}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <button
+                  onClick={() => { if (customStartDate || customEndDate) fetchPriceHistory(); }}
+                  disabled={!customStartDate && !customEndDate}
+                  className="ml-auto px-3 h-9 text-sm rounded-md font-medium bg-cyan-500 text-white hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Apply
+                </button>
+              </div>
+            )}
+          </div>
+
+          {isLoadingHistory ? (
+            <div className="h-[350px] flex items-center justify-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
+            </div>
+          ) : priceHistory && (priceHistory.base_product.history.length > 0 || priceHistory.matched_products.some(p => p.history.length > 0)) ? (
+            <div className="space-y-6">
+              {/* Price Stats Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {(() => {
+                  const allPrices: { price: number; retailer: string; date: string }[] = [];
+                  priceHistory.base_product.history.forEach(h => allPrices.push({ price: h.price, retailer: priceHistory.base_product.retailer, date: h.date }));
+                  priceHistory.matched_products.forEach(mp => mp.history.forEach(h => allPrices.push({ price: h.price, retailer: mp.retailer, date: h.date })));
+                  if (allPrices.length === 0) return null;
+                  const lowestPrice = allPrices.reduce((min, curr) => curr.price < min.price ? curr : min, allPrices[0]);
+                  const highestPrice = allPrices.reduce((max, curr) => curr.price > max.price ? curr : max, allPrices[0]);
+                  return (
+                    <>
+                      <div className="flex items-center gap-3 p-4 bg-green-50 rounded-lg border border-green-200">
+                        <div className="p-2 bg-green-100 rounded-full">
+                          <TrendingDown className="h-5 w-5 text-green-600" />
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Lowest Price</p>
+                          <p className="text-xl font-bold text-green-600">฿{lowestPrice.price.toLocaleString()}</p>
+                          <p className="text-xs text-gray-500">{lowestPrice.retailer} • {new Date(lowestPrice.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 p-4 bg-red-50 rounded-lg border border-red-200">
+                        <div className="p-2 bg-red-100 rounded-full">
+                          <TrendingUp className="h-5 w-5 text-red-600" />
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Highest Price</p>
+                          <p className="text-xl font-bold text-red-600">฿{highestPrice.price.toLocaleString()}</p>
+                          <p className="text-xs text-gray-500">{highestPrice.retailer} • {new Date(highestPrice.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* Chart */}
+              <div className="h-[350px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={(() => {
+                      const allDates = new Set<string>();
+                      priceHistory.base_product.history.forEach(h => allDates.add(h.date.split('T')[0]));
+                      priceHistory.matched_products.forEach(p => p.history.forEach(h => allDates.add(h.date.split('T')[0])));
+                      const sortedDates = Array.from(allDates).sort();
+                      return sortedDates.map(date => {
+                        const point: Record<string, string | number | null> = { date };
+                        const basePrice = priceHistory.base_product.history.find(h => h.date.split('T')[0] === date);
+                        point[priceHistory.base_product.retailer] = basePrice?.price ?? null;
+                        priceHistory.matched_products.forEach(mp => {
+                          const mpPrice = mp.history.find(h => h.date.split('T')[0] === date);
+                          point[mp.retailer] = mpPrice?.price ?? null;
+                        });
+                        return point;
+                      });
+                    })()}
+                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis dataKey="date" tick={{ fontSize: 12 }} tickFormatter={(value: string) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(value: number) => `฿${value.toLocaleString()}`} />
+                    <Tooltip
+                      content={({ active, payload, label }: any) => {
+                        if (active && payload && payload.length) {
+                          return (
+                            <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
+                              <p className="text-sm font-medium text-gray-700 mb-2">
+                                {new Date(label).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              </p>
+                              {payload.map((entry: any, index: number) => (
+                                entry.value !== null && (
+                                  <p key={index} className="text-sm" style={{ color: entry.stroke }}>
+                                    {entry.dataKey}: ฿{entry.value?.toLocaleString()}
+                                  </p>
+                                )
+                              ))}
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Legend wrapperStyle={{ paddingTop: '20px' }} content={(props) => (
+                      <ul className="flex justify-center gap-4 flex-wrap">
+                        {props.payload?.map((entry: any, index: number) => (
+                          <li key={index} className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
+                            <span className="text-sm text-gray-600">{entry.value}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )} />
+                    <Line type="monotone" dataKey={priceHistory.base_product.retailer} stroke="#0891b2" strokeWidth={3} dot={false} connectNulls />
+                    {priceHistory.matched_products.map((mp, index) => {
+                      const colors = ['#f97316', '#8b5cf6', '#ec4899', '#14b8a6', '#f59e0b'];
+                      return (
+                        <Line key={mp.product_id} type="monotone" dataKey={mp.retailer} stroke={colors[index % colors.length]} strokeWidth={2} dot={false} connectNulls />
+                      );
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="text-sm text-gray-500">
+                Showing {(() => {
+                  const allDates = new Set<string>();
+                  priceHistory.base_product.history.forEach(h => allDates.add(h.date.split('T')[0]));
+                  priceHistory.matched_products.forEach(p => p.history.forEach(h => allDates.add(h.date.split('T')[0])));
+                  return allDates.size;
+                })()} data points
+              </div>
+            </div>
+          ) : (
+            <div className="h-[350px] flex items-center justify-center text-gray-500">
+              No price history data available for the selected period
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Add to Watchlist Modal */}

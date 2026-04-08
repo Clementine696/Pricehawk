@@ -1,0 +1,6 @@
+watchlist, /
+price history,
+export, /
+price formula config /,
+price by location,
+price alert,

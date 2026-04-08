@@ -31,6 +31,7 @@ class ProductData:
     has_discount: bool = False
     discount_percent: Optional[float] = None
     discount_amount: Optional[float] = None
+    step_prices: List[List[Union[int, float]]] = field(default_factory=list)  # [[qty, price], ...]
 
     # Product details
     brand: Optional[str] = None
@@ -233,6 +234,19 @@ PRODUCT_JSON_SCHEMA = {
             "type": ["number", "null"],
             "minimum": 0,
             "description": "Discount amount in currency"
+        },
+        "step_prices": {
+            "type": "array",
+            "items": {
+                "type": "array",
+                "items": [
+                    {"type": "number"},
+                    {"type": "number"}
+                ],
+                "minItems": 2,
+                "maxItems": 2
+            },
+            "description": "Step pricing tiers [[quantity, price], ...]"
         },
         "brand": {
             "type": ["string", "null"],
@@ -475,6 +489,16 @@ def normalize_product_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:
             normalized['images'] = []
     else:
         normalized['images'] = []
+
+    # Step prices array
+    if 'step_prices' in raw_data:
+        step_prices = raw_data['step_prices']
+        if isinstance(step_prices, list):
+            normalized['step_prices'] = step_prices
+        else:
+            normalized['step_prices'] = []
+    else:
+        normalized['step_prices'] = []
 
     # Timestamp
     normalized['scraped_at'] = datetime.now().isoformat()

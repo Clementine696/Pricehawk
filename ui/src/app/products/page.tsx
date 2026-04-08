@@ -277,6 +277,8 @@ function ProductsContent() {
       if (search) params.append('search', search);
       if (selectedCategories.length > 0) params.append('category', selectedCategories.join(','));
       if (selectedBrands.length > 0) params.append('brand', selectedBrands.join(','));
+      if (matchStatus) params.append('match_status', matchStatus);
+      if (priceStatus) params.append('price_status', priceStatus);
 
       const response = await apiFetch(`/api/products/export?${params}`);
       if (!response.ok) {

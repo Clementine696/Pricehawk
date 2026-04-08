@@ -38,6 +38,8 @@ python ./backend/scraper-url/adws/adw_ecommerce_product_scraper.py --urls-file h
 python ./backend/scraper-url/adws/adw_ecommerce_product_scraper.py --urls-file makro.txt
 
 
+
+
 CFW
 temp/cfw_products.json
 temp\import_matches.py

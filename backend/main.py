@@ -14,6 +14,10 @@ import os
 import logging
 
 from database import get_user_by_username, get_db
+import io
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 # Configure logging
 logging.basicConfig(
@@ -575,6 +579,174 @@ def get_products(
             }
 
 
+@app.get("/api/products/export")
+def export_products(
+    user: dict = Depends(get_current_user),
+    search: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    brand: Optional[str] = Query(None),
+    match_status: Optional[str] = Query(None),
+    price_status: Optional[str] = Query(None),
+):
+    """Export CFW products with Makro matched price to Excel"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            where_parts = ["p.retailer_id = 'cfw'"]
+            params = []
+
+            if search:
+                search_tokens = _parse_search_input(search)
+                for token in search_tokens:
+                    where_parts.append(
+                        "(p.name ILIKE %s OR p.name_en ILIKE %s OR p.sku ILIKE %s OR p.barcode ILIKE %s)"
+                    )
+                    pattern = f"%{token}%"
+                    params.extend([pattern, pattern, pattern, pattern])
+
+            if category:
+                category_ids = [c.strip() for c in category.split(',') if c.strip()]
+                if category_ids:
+                    placeholders = ','.join(['%s'] * len(category_ids))
+                    where_parts.append(f"p.category_id IN ({placeholders})")
+                    params.extend(category_ids)
+
+            if brand:
+                brands = [b.strip() for b in brand.split(',') if b.strip()]
+                if brands:
+                    placeholders = ','.join(['%s'] * len(brands))
+                    where_parts.append(f"p.brand IN ({placeholders})")
+                    params.extend(brands)
+
+            if match_status == 'no_match':
+                where_parts.append("""
+                    NOT EXISTS (
+                        SELECT 1 FROM product_matches pm
+                        WHERE pm.cfw_product_id = p.id
+                        AND (pm.is_verified = FALSE OR pm.is_same = TRUE)
+                    )
+                """)
+            elif match_status == 'unverified':
+                where_parts.append("""
+                    EXISTS (SELECT 1 FROM product_matches pm WHERE pm.cfw_product_id = p.id AND pm.is_verified = FALSE)
+                """)
+            elif match_status == 'verified':
+                where_parts.append("""
+                    EXISTS (SELECT 1 FROM product_matches pm WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE)
+                """)
+
+            if price_status == 'no_match':
+                where_parts.append("""
+                    NOT EXISTS (SELECT 1 FROM product_matches pm WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE)
+                """)
+            elif price_status in ['lower', 'higher', 'same']:
+                cmp = {'lower': '<', 'higher': '>', 'same': '='}[price_status]
+                where_parts.append(f"""
+                    EXISTS (
+                        SELECT 1 FROM product_matches pm
+                        JOIN products mp ON pm.makro_product_id = mp.id
+                        WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                        AND p.current_price IS NOT NULL AND mp.current_price IS NOT NULL
+                        AND p.current_price {cmp} mp.current_price
+                    )
+                """)
+
+            where_clause = " AND ".join(where_parts)
+
+            cur.execute(f"""
+                SELECT
+                    p.sku,
+                    p.barcode,
+                    p.name,
+                    p.brand,
+                    c.category_name,
+                    p.current_price as cfw_price,
+                    (SELECT mp.current_price FROM product_matches pm
+                     JOIN products mp ON pm.makro_product_id = mp.id
+                     WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                     LIMIT 1) as makro_price,
+                    (SELECT mp.name FROM product_matches pm
+                     JOIN products mp ON pm.makro_product_id = mp.id
+                     WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                     LIMIT 1) as makro_name
+                FROM products p
+                LEFT JOIN categories c ON p.retailer_id = c.retailer_id AND p.category_id = c.category_id
+                WHERE {where_clause}
+                ORDER BY p.sku
+            """, params)
+            rows = cur.fetchall()
+
+    # Build Excel
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Products"
+
+    header_fill = PatternFill(start_color="0E7490", end_color="0E7490", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_border = Border(bottom=Side(style='thin', color='CCCCCC'))
+
+    headers = ["SKU", "Barcode", "CFW Name", "Brand", "Category", "CFW Price", "Makro Price", "Diff (%)", "Makro Name"]
+    col_widths = [14, 16, 45, 20, 25, 14, 14, 10, 45]
+
+    for col, (header, width) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = header_border
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+    ws.row_dimensions[1].height = 22
+
+    green_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    red_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+
+    for row_idx, row in enumerate(rows, 2):
+        cfw_price = row["cfw_price"]
+        makro_price = row["makro_price"]
+
+        if cfw_price and makro_price:
+            diff = ((makro_price - cfw_price) / cfw_price) * 100
+            diff_str = f"{'+' if diff > 0 else ''}{diff:.1f}%"
+        else:
+            diff = None
+            diff_str = "—"
+
+        values = [
+            row["sku"],
+            row["barcode"],
+            row["name"],
+            row["brand"],
+            row["category_name"],
+            cfw_price,
+            makro_price,
+            diff_str,
+            row["makro_name"],
+        ]
+
+        for col, value in enumerate(values, 1):
+            cell = ws.cell(row=row_idx, column=col, value=value)
+            cell.alignment = Alignment(vertical='center')
+            if col in (6, 7) and value is not None:
+                cell.number_format = '#,##0.00'
+            if diff is not None:
+                if diff < 0:
+                    cell.fill = green_fill
+                elif diff > 0:
+                    cell.fill = red_fill
+
+        ws.row_dimensions[row_idx].height = 18
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=products_export.xlsx"}
+    )
+
+
 @app.get("/api/products/{sku}")
 def get_product_detail(
     sku: str,
@@ -596,6 +768,7 @@ def get_product_detail(
                     p.category_id,
                     c.category_name,
                     p.current_price,
+                    p.step_prices,
                     p.url,
                     p.image_url,
                     p.is_active,
@@ -630,6 +803,7 @@ def get_product_detail(
                     p2.brand as matched_brand,
                     c2.category_name as matched_category_name,
                     p2.current_price as matched_price,
+                    p2.step_prices as matched_step_prices,
                     p2.url as matched_url,
                     p2.image_url as matched_image,
                     p2.updated_at as matched_updated_at
@@ -668,6 +842,7 @@ def get_product_detail(
                         "category": row["matched_category_name"],
                         "current_price": float(row["matched_price"]) if row["matched_price"] else None,
                         "original_price": None,
+                        "step_prices": row["matched_step_prices"] if row["matched_step_prices"] else [],
                         "link": row["matched_url"],
                         "image": row["matched_image"],
                         "retailer_id": row["matched_retailer_id"],
@@ -688,6 +863,7 @@ def get_product_detail(
                 "category_id": product["category_id"],
                 "category_name": product["category_name"],
                 "current_price": float(product["current_price"]) if product["current_price"] else None,
+                "step_prices": product["step_prices"] if product["step_prices"] else [],
                 "url": product["url"],
                 "image": product["image_url"],  # Frontend expects "image"
                 "is_active": product["is_active"],
@@ -702,40 +878,95 @@ def get_product_detail(
             }
 
 
-@app.get("/api/products/{product_id}/price-history")
+@app.get("/api/products/{sku}/price-history")
 def get_price_history(
-    product_id: int,
+    sku: str,
     user: dict = Depends(get_current_user),
-    days: int = Query(30, ge=1, le=365)
+    days: int = Query(30, ge=1, le=365),
+    start_date: str = Query(None),
+    end_date: str = Query(None)
 ):
-    """Get price history for a product"""
+    """Get price history for a product and its verified matches"""
     with get_db() as conn:
         with conn.cursor() as cur:
+            # Get base product info by SKU (CFW products)
             cur.execute(
-                """
-                SELECT 
-                    price,
-                    step_prices,
-                    recorded_at
+                "SELECT id, name, retailer_id FROM products WHERE sku = %s AND retailer_id = 'cfw'",
+                (sku,)
+            )
+            base = cur.fetchone()
+            if not base:
+                raise HTTPException(status_code=404, detail="Product not found")
+
+            # Build date filter
+            if start_date and end_date:
+                date_filter = "AND recorded_at >= %s::date AND recorded_at < %s::date + interval '1 day'"
+                date_params_extra = (start_date, end_date)
+            else:
+                date_filter = "AND recorded_at >= NOW() - make_interval(days => %s)"
+                date_params_extra = (days,)
+
+            base_id = base["id"]
+
+            cur.execute(
+                f"""
+                SELECT price, recorded_at
                 FROM price_history
-                WHERE product_id = %s
-                    AND recorded_at >= NOW() - INTERVAL '%s days'
+                WHERE product_id = %s {date_filter}
                 ORDER BY recorded_at ASC
                 """,
-                (product_id, days)
+                (base_id,) + date_params_extra
             )
-            history = cur.fetchall()
-            
+            base_history = cur.fetchall()
+
+            # Get verified matched products
+            cur.execute(
+                """
+                SELECT p.id, p.name, p.retailer_id
+                FROM product_matches pm
+                JOIN products p ON (
+                    CASE WHEN pm.cfw_product_id = %s THEN pm.makro_product_id ELSE pm.cfw_product_id END = p.id
+                )
+                WHERE (pm.cfw_product_id = %s OR pm.makro_product_id = %s)
+                  AND pm.is_verified = TRUE
+                """,
+                (base_id, base_id, base_id)
+            )
+            matched = cur.fetchall()
+
+            matched_products = []
+            for mp in matched:
+                cur.execute(
+                    f"""
+                    SELECT price, recorded_at
+                    FROM price_history
+                    WHERE product_id = %s {date_filter}
+                    ORDER BY recorded_at ASC
+                    """,
+                    (mp["id"],) + date_params_extra
+                )
+                mp_history = cur.fetchall()
+                matched_products.append({
+                    "product_id": mp["id"],
+                    "name": mp["name"],
+                    "retailer": mp["retailer_id"],
+                    "history": [
+                        {"price": float(h["price"]) if h["price"] else None, "date": h["recorded_at"].isoformat()}
+                        for h in mp_history
+                    ]
+                })
+
             return {
-                "product_id": product_id,
-                "history": [
-                    {
-                        "price": float(h["price"]) if h["price"] else None,
-                        "step_prices": h["step_prices"],
-                        "recorded_at": h["recorded_at"].isoformat()
-                    }
-                    for h in history
-                ]
+                "base_product": {
+                    "product_id": base["id"],
+                    "name": base["name"],
+                    "retailer": base["retailer_id"],
+                    "history": [
+                        {"price": float(h["price"]) if h["price"] else None, "date": h["recorded_at"].isoformat()}
+                        for h in base_history
+                    ]
+                },
+                "matched_products": matched_products
             }
 
 
@@ -798,6 +1029,419 @@ def undo_match(
     return {"match_id": match_id, "is_verified": False, "is_same": None}
 
 
+@app.get("/api/price-formula")
+def get_price_formula_matches(
+    user: dict = Depends(get_current_user),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """List all verified matches for price formula configuration"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            where_parts = ["pm.is_verified = TRUE", "pm.is_same = TRUE"]
+            params = []
+
+            if search:
+                where_parts.append(
+                    "(cp.name ILIKE %s OR cp.sku ILIKE %s OR mp.name ILIKE %s OR mp.sku ILIKE %s)"
+                )
+                pattern = f"%{search}%"
+                params.extend([pattern, pattern, pattern, pattern])
+
+            where_clause = " AND ".join(where_parts)
+
+            cur.execute(
+                f"SELECT COUNT(*) as count FROM product_matches pm "
+                f"JOIN products cp ON pm.cfw_product_id = cp.id "
+                f"JOIN products mp ON pm.makro_product_id = mp.id "
+                f"WHERE {where_clause}",
+                params
+            )
+            total = cur.fetchone()["count"]
+
+            offset = (page - 1) * page_size
+            cur.execute(f"""
+                SELECT
+                    pm.match_id,
+                    pm.price_formula,
+                    cp.id as cfw_id, cp.sku as cfw_sku, cp.name as cfw_name,
+                    cp.brand as cfw_brand, cp.current_price as cfw_price, cp.image_url as cfw_image,
+                    mp.id as makro_id, mp.sku as makro_sku, mp.name as makro_name,
+                    mp.current_price as makro_price, mp.image_url as makro_image
+                FROM product_matches pm
+                JOIN products cp ON pm.cfw_product_id = cp.id
+                JOIN products mp ON pm.makro_product_id = mp.id
+                WHERE {where_clause}
+                ORDER BY cp.sku
+                LIMIT %s OFFSET %s
+            """, params + [page_size, offset])
+            rows = cur.fetchall()
+
+            return {
+                "matches": [dict(r) for r in rows],
+                "total": total,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": (total + page_size - 1) // page_size
+                }
+            }
+
+
+@app.patch("/api/price-formula/{match_id}")
+def save_price_formula(
+    match_id: int,
+    body: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Save or clear price formula for a verified match"""
+    formula = body.get("price_formula", None)
+
+    # Validate formula if provided
+    if formula is not None:
+        formula = formula.strip() or None
+        if formula:
+            import re
+            if not re.match(r'^[*/][0-9]+(\.[0-9]+)?(/[0-9]+(\.[0-9]+)?)?$', formula):
+                raise HTTPException(status_code=400, detail="Invalid formula. Use format like *5, /2, *5/2")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE product_matches SET price_formula = %s, updated_at = NOW() WHERE match_id = %s RETURNING match_id",
+                (formula, match_id)
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Match not found")
+            conn.commit()
+
+    return {"match_id": match_id, "price_formula": formula}
+
+
+# ---------------------------------------------------------------------------
+# Price by Location Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/pbl/locations")
+def get_pbl_locations(user: dict = Depends(get_current_user)):
+    """Get all Makro locations"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM makro_locations ORDER BY name")
+            return {"locations": [dict(r) for r in cur.fetchall()]}
+
+
+@app.post("/api/pbl/locations")
+def create_pbl_location(body: dict, user: dict = Depends(get_current_user)):
+    """Add a new Makro branch location"""
+    name = (body.get("name") or "").strip()
+    branch_code = (body.get("branch_code") or "").strip()
+    region = (body.get("region") or "").strip() or None
+    if not name or not branch_code:
+        raise HTTPException(status_code=400, detail="name and branch_code are required")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "INSERT INTO makro_locations (name, branch_code, region) VALUES (%s, %s, %s) RETURNING *",
+                    (name, branch_code, region)
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return dict(row)
+            except Exception:
+                raise HTTPException(status_code=409, detail=f"Branch code '{branch_code}' already exists")
+
+
+@app.delete("/api/pbl/locations/{location_id}")
+def delete_pbl_location(location_id: int, user: dict = Depends(get_current_user)):
+    """Delete a Makro branch location"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM makro_locations WHERE id = %s RETURNING id", (location_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Location not found")
+            conn.commit()
+    return {"success": True}
+
+
+@app.get("/api/pbl/settings")
+def get_pbl_settings(user: dict = Depends(get_current_user)):
+    """Get currently monitored watchlists and locations"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT watchlist_id FROM pbl_monitored_watchlists")
+            watchlist_ids = [r["watchlist_id"] for r in cur.fetchall()]
+            cur.execute("SELECT location_id FROM pbl_monitored_locations")
+            location_ids = [r["location_id"] for r in cur.fetchall()]
+    return {"watchlist_ids": watchlist_ids, "location_ids": location_ids}
+
+
+@app.post("/api/pbl/settings")
+def save_pbl_settings(body: dict, user: dict = Depends(get_current_user)):
+    """Save monitored watchlists and locations (replace all)"""
+    watchlist_ids = body.get("watchlist_ids", [])
+    location_ids = body.get("location_ids", [])
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM pbl_monitored_watchlists")
+            for wid in watchlist_ids:
+                cur.execute("INSERT INTO pbl_monitored_watchlists (watchlist_id) VALUES (%s) ON CONFLICT DO NOTHING", (wid,))
+            cur.execute("DELETE FROM pbl_monitored_locations")
+            for lid in location_ids:
+                cur.execute("INSERT INTO pbl_monitored_locations (location_id) VALUES (%s) ON CONFLICT DO NOTHING", (lid,))
+            conn.commit()
+    return {"success": True, "watchlist_ids": watchlist_ids, "location_ids": location_ids}
+
+
+@app.get("/api/pbl/products")
+def get_pbl_products(
+    user: dict = Depends(get_current_user),
+    search: Optional[str] = Query(None),
+    watchlist_id: Optional[int] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """Get CFW products in monitored watchlists with Makro location prices"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Get monitored locations (ordered)
+            cur.execute("""
+                SELECT ml.id, ml.name, ml.branch_code as postal_code
+                FROM pbl_monitored_locations pml
+                JOIN makro_locations ml ON pml.location_id = ml.id
+                WHERE ml.is_active = TRUE
+                ORDER BY ml.branch_code
+            """)
+            locations = [dict(r) for r in cur.fetchall()]
+
+            # Build product query
+            where_parts = ["pw.watchlist_id IN (SELECT watchlist_id FROM pbl_monitored_watchlists)"]
+            params = []
+
+            if watchlist_id:
+                where_parts.append("pw.watchlist_id = %s")
+                params.append(watchlist_id)
+
+            if search:
+                where_parts.append("(cfw.name ILIKE %s OR cfw.sku ILIKE %s)")
+                pattern = f"%{search}%"
+                params.extend([pattern, pattern])
+
+            where_clause = " AND ".join(where_parts)
+
+            cur.execute(
+                f"SELECT COUNT(DISTINCT cfw.id) as count FROM watchlist_products pw JOIN products cfw ON pw.product_id = cfw.id WHERE {where_clause}",
+                params
+            )
+            total = cur.fetchone()["count"]
+
+            offset = (page - 1) * page_size
+            cur.execute(f"""
+                SELECT DISTINCT
+                    cfw.id as cfw_id, cfw.sku as cfw_sku, cfw.name as cfw_name,
+                    cfw.brand, cfw.current_price as cfw_price, cfw.image_url,
+                    c.category_name,
+                    mp.id as makro_id, mp.sku as makro_sku, mp.name as makro_name,
+                    mp.current_price as makro_price_default,
+                    pw.watchlist_id,
+                    w.name as watchlist_name
+                FROM watchlist_products pw
+                JOIN products cfw ON pw.product_id = cfw.id
+                JOIN watchlists w ON pw.watchlist_id = w.id
+                LEFT JOIN categories c ON cfw.retailer_id = c.retailer_id AND cfw.category_id = c.category_id
+                JOIN product_matches pm ON pm.cfw_product_id = cfw.id
+                    AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                JOIN products mp ON pm.makro_product_id = mp.id
+                WHERE {where_clause}
+                ORDER BY cfw.sku
+                LIMIT %s OFFSET %s
+            """, params + [page_size, offset])
+            rows = cur.fetchall()
+
+            # Fetch location prices for these makro products
+            if rows and locations:
+                makro_ids = list({r["makro_id"] for r in rows})
+                loc_ids = [l["id"] for l in locations]
+                placeholders_p = ','.join(['%s'] * len(makro_ids))
+                placeholders_l = ','.join(['%s'] * len(loc_ids))
+                cur.execute(f"""
+                    SELECT makro_product_id, location_id, price
+                    FROM makro_location_prices
+                    WHERE makro_product_id IN ({placeholders_p})
+                      AND location_id IN ({placeholders_l})
+                """, makro_ids + loc_ids)
+                price_map = {}
+                for pr in cur.fetchall():
+                    price_map[(pr["makro_product_id"], pr["location_id"])] = pr["price"]
+            else:
+                price_map = {}
+
+            # Build response rows
+            products = []
+            for r in rows:
+                loc_prices = []
+                for loc in locations:
+                    price = price_map.get((r["makro_id"], loc["id"]))
+                    loc_prices.append({
+                        "location_id": loc["id"],
+                        "name": loc["name"],
+                        "postal_code": loc["postal_code"],
+                        "price": float(price) if price is not None else None,
+                    })
+                products.append({
+                    **dict(r),
+                    "location_prices": loc_prices,
+                })
+
+            # Get monitored watchlists for filter dropdown
+            cur.execute("""
+                SELECT w.id, w.name FROM pbl_monitored_watchlists pmw
+                JOIN watchlists w ON pmw.watchlist_id = w.id
+                ORDER BY w.name
+            """)
+            watchlists = [dict(r) for r in cur.fetchall()]
+
+            return {
+                "products": products,
+                "locations": locations,
+                "watchlists": watchlists,
+                "total": total,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": (total + page_size - 1) // page_size,
+                }
+            }
+
+
+@app.get("/api/pbl/products/{cfw_sku}")
+def get_pbl_product_detail(cfw_sku: str, user: dict = Depends(get_current_user)):
+    """Get location price detail for a single CFW product"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # CFW product
+            cur.execute("""
+                SELECT p.id, p.sku, p.name, p.brand, p.current_price, p.image_url,
+                       c.category_name
+                FROM products p
+                LEFT JOIN categories c ON p.retailer_id = c.retailer_id AND p.category_id = c.category_id
+                WHERE p.sku = %s AND p.retailer_id = 'cfw'
+            """, (cfw_sku,))
+            cfw = cur.fetchone()
+            if not cfw:
+                raise HTTPException(status_code=404, detail="CFW product not found")
+
+            # Verified Makro match
+            cur.execute("""
+                SELECT mp.id, mp.sku, mp.name, mp.current_price
+                FROM product_matches pm
+                JOIN products mp ON pm.makro_product_id = mp.id
+                WHERE pm.cfw_product_id = %s AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                LIMIT 1
+            """, (cfw["id"],))
+            makro = cur.fetchone()
+
+            # Location prices
+            cur.execute("""
+                SELECT
+                    ml.id as location_id,
+                    ml.name as branch_name,
+                    ml.branch_code as postal_code,
+                    mlp.price as makro_price,
+                    mlp.scraped_at
+                FROM makro_locations ml
+                LEFT JOIN makro_location_prices mlp
+                    ON mlp.location_id = ml.id
+                    AND mlp.makro_product_id = %s
+                WHERE ml.id IN (SELECT location_id FROM pbl_monitored_locations)
+                  AND ml.is_active = TRUE
+                ORDER BY ml.branch_code
+            """, (makro["id"] if makro else -1,))
+            locations = [dict(r) for r in cur.fetchall()]
+
+            return {
+                "cfw": dict(cfw),
+                "makro": dict(makro) if makro else None,
+                "locations": locations,
+            }
+
+
+# ---------------------------------------------------------------------------
+# Price Alert Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/price-alerts/settings")
+def get_alert_settings(user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM price_alert_settings LIMIT 1")
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Settings not found")
+            return dict(row)
+
+
+@app.put("/api/price-alerts/settings")
+def update_alert_settings(body: dict, user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE price_alert_settings SET
+                    schedule_frequency = %s,
+                    schedule_time = %s,
+                    schedule_day = %s,
+                    enabled = %s,
+                    updated_at = NOW()
+            """, (
+                body.get("schedule_frequency", "daily"),
+                body.get("schedule_time", "09:00:00"),
+                body.get("schedule_day"),
+                body.get("enabled", True),
+            ))
+            conn.commit()
+    return {"success": True}
+
+
+@app.get("/api/price-alerts/emails")
+def get_alert_emails(user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM price_alert_emails ORDER BY created_at DESC")
+            return [dict(r) for r in cur.fetchall()]
+
+
+@app.post("/api/price-alerts/emails")
+def add_alert_email(body: dict, user: dict = Depends(get_current_user)):
+    email = (body.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "INSERT INTO price_alert_emails (email, verified) VALUES (%s, TRUE) RETURNING *",
+                    (email,)
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return dict(row)
+            except Exception:
+                raise HTTPException(status_code=409, detail="Email already exists")
+
+
+@app.delete("/api/price-alerts/emails/{email_id}")
+def delete_alert_email(email_id: int, user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM price_alert_emails WHERE email_id = %s RETURNING email_id", (email_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Email not found")
+            conn.commit()
+    return {"success": True}
+
+
 @app.get("/api/categories")
 def get_categories(
     user: dict = Depends(get_current_user),
@@ -831,6 +1475,231 @@ def get_categories(
             categories = cur.fetchall()
             
             return {"categories": categories}
+
+
+# ---------------------------------------------------------------------------
+# Watchlist Endpoints
+# ---------------------------------------------------------------------------
+
+class WatchlistCreateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+@app.get("/api/watchlists")
+def get_watchlists(user: dict = Depends(get_current_user)):
+    """List all watchlists with product count"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT w.id, w.name, w.description, w.created_at,
+                       COUNT(wp.id) as product_count
+                FROM watchlists w
+                LEFT JOIN watchlist_products wp ON w.id = wp.watchlist_id
+                GROUP BY w.id, w.name, w.description, w.created_at
+                ORDER BY w.created_at DESC
+            """)
+            rows = cur.fetchall()
+            return {"watchlists": [dict(r) for r in rows]}
+
+
+@app.post("/api/watchlists")
+def create_watchlist(data: WatchlistCreateRequest, user: dict = Depends(get_current_user)):
+    """Create a new watchlist"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    INSERT INTO watchlists (name, description)
+                    VALUES (%s, %s) RETURNING id, name, description, created_at
+                """, (data.name.strip(), data.description))
+                row = cur.fetchone()
+                conn.commit()
+                return dict(row)
+            except Exception:
+                raise HTTPException(status_code=409, detail=f"Watchlist '{data.name}' already exists")
+
+
+@app.delete("/api/watchlists/{watchlist_id}")
+def delete_watchlist(watchlist_id: int, user: dict = Depends(get_current_user)):
+    """Delete a watchlist and all its products"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM watchlists WHERE id = %s RETURNING id", (watchlist_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Watchlist not found")
+            conn.commit()
+    return {"success": True}
+
+
+@app.get("/api/watchlists/{watchlist_id}/products")
+def get_watchlist_products(watchlist_id: int, user: dict = Depends(get_current_user)):
+    """Get all CFW products in a watchlist with their matched Makro price"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Verify watchlist exists
+            cur.execute("SELECT id, name FROM watchlists WHERE id = %s", (watchlist_id,))
+            watchlist = cur.fetchone()
+            if not watchlist:
+                raise HTTPException(status_code=404, detail="Watchlist not found")
+
+            cur.execute("""
+                SELECT
+                    p.id, p.sku, p.name, p.brand, p.current_price,
+                    p.image_url, p.url,
+                    c.category_name,
+                    wp.added_at,
+                    -- verified Makro match price
+                    (SELECT mp.current_price FROM product_matches pm
+                     JOIN products mp ON pm.makro_product_id = mp.id
+                     WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                     LIMIT 1) as makro_price,
+                    (SELECT mp.name FROM product_matches pm
+                     JOIN products mp ON pm.makro_product_id = mp.id
+                     WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                     LIMIT 1) as makro_name
+                FROM watchlist_products wp
+                JOIN products p ON wp.product_id = p.id
+                LEFT JOIN categories c ON p.retailer_id = c.retailer_id AND p.category_id = c.category_id
+                WHERE wp.watchlist_id = %s
+                ORDER BY wp.added_at DESC
+            """, (watchlist_id,))
+            products = cur.fetchall()
+
+            return {
+                "watchlist": dict(watchlist),
+                "products": [dict(r) for r in products]
+            }
+
+
+@app.get("/api/watchlists/{watchlist_id}/export")
+def export_watchlist(watchlist_id: int, user: dict = Depends(get_current_user)):
+    """Export watchlist products to Excel"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM watchlists WHERE id = %s", (watchlist_id,))
+            watchlist = cur.fetchone()
+            if not watchlist:
+                raise HTTPException(status_code=404, detail="Watchlist not found")
+
+            cur.execute("""
+                SELECT
+                    p.sku, p.name, p.brand, c.category_name,
+                    p.current_price as cfw_price,
+                    (SELECT mp.current_price FROM product_matches pm
+                     JOIN products mp ON pm.makro_product_id = mp.id
+                     WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                     LIMIT 1) as makro_price,
+                    (SELECT mp.name FROM product_matches pm
+                     JOIN products mp ON pm.makro_product_id = mp.id
+                     WHERE pm.cfw_product_id = p.id AND pm.is_verified = TRUE AND pm.is_same = TRUE
+                     LIMIT 1) as makro_name
+                FROM watchlist_products wp
+                JOIN products p ON wp.product_id = p.id
+                LEFT JOIN categories c ON p.retailer_id = c.retailer_id AND p.category_id = c.category_id
+                WHERE wp.watchlist_id = %s
+                ORDER BY wp.added_at DESC
+            """, (watchlist_id,))
+            rows = cur.fetchall()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = watchlist["name"][:31]
+
+    header_fill = PatternFill(start_color="0E7490", end_color="0E7490", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+
+    headers = ["SKU", "CFW Name", "Brand", "Category", "CFW Price", "Makro Price", "Diff (%)", "Makro Name"]
+    col_widths = [14, 45, 20, 25, 14, 14, 10, 45]
+
+    for col, (header, width) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.row_dimensions[1].height = 22
+
+    green_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    red_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+
+    for row_idx, row in enumerate(rows, 2):
+        cfw_price = row["cfw_price"]
+        makro_price = row["makro_price"]
+        if cfw_price and makro_price:
+            diff = ((makro_price - cfw_price) / cfw_price) * 100
+            diff_str = f"{'+' if diff > 0 else ''}{diff:.1f}%"
+        else:
+            diff = None
+            diff_str = "—"
+
+        values = [row["sku"], row["name"], row["brand"], row["category_name"],
+                  cfw_price, makro_price, diff_str, row["makro_name"]]
+
+        for col, value in enumerate(values, 1):
+            cell = ws.cell(row=row_idx, column=col, value=value)
+            cell.alignment = Alignment(vertical='center')
+            if col in (5, 6) and value is not None:
+                cell.number_format = '#,##0.00'
+            if diff is not None:
+                cell.fill = green_fill if diff < 0 else red_fill
+        ws.row_dimensions[row_idx].height = 18
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe_name = watchlist["name"].replace(" ", "_")
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=watchlist_{safe_name}.xlsx"}
+    )
+
+
+@app.post("/api/watchlists/{watchlist_id}/products")
+def add_watchlist_product(watchlist_id: int, body: dict, user: dict = Depends(get_current_user)):
+    """Add a CFW product to a watchlist by SKU"""
+    sku = (body.get("sku") or "").strip()
+    if not sku:
+        raise HTTPException(status_code=400, detail="sku is required")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM watchlists WHERE id = %s", (watchlist_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Watchlist not found")
+
+            cur.execute("SELECT id, name FROM products WHERE sku = %s AND retailer_id = 'cfw'", (sku,))
+            product = cur.fetchone()
+            if not product:
+                raise HTTPException(status_code=404, detail=f"CFW product with SKU '{sku}' not found")
+
+            try:
+                cur.execute("""
+                    INSERT INTO watchlist_products (watchlist_id, product_id)
+                    VALUES (%s, %s)
+                """, (watchlist_id, product["id"]))
+                conn.commit()
+            except Exception:
+                raise HTTPException(status_code=409, detail="Product already in this watchlist")
+
+    return {"success": True, "product_id": product["id"], "name": product["name"]}
+
+
+@app.delete("/api/watchlists/{watchlist_id}/products/{product_id}")
+def remove_watchlist_product(watchlist_id: int, product_id: int, user: dict = Depends(get_current_user)):
+    """Remove a product from a watchlist"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM watchlist_products
+                WHERE watchlist_id = %s AND product_id = %s RETURNING id
+            """, (watchlist_id, product_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Product not in watchlist")
+            conn.commit()
+    return {"success": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1077,6 +1946,65 @@ def scrape_urls(
 # Manual Comparison Endpoints
 # ---------------------------------------------------------------------------
 
+def _fetch_makro_price(url: str) -> dict:
+    """Fetch Makro product price via plain HTTP (no browser needed — uses __NEXT_DATA__ JSON)."""
+    import urllib.request
+    import re as _re
+    import json as _json2
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "th-TH,th;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    match = _re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, _re.DOTALL)
+    if not match:
+        return {"success": False, "error": "__NEXT_DATA__ not found"}
+
+    try:
+        data = _json2.loads(match.group(1))
+    except Exception as e:
+        return {"success": False, "error": f"JSON parse error: {e}"}
+
+    p = data.get("props", {}).get("pageProps", {}).get("product")
+    if not p:
+        return {"success": False, "error": "product not found in __NEXT_DATA__"}
+
+    current_price = None
+    try:
+        current_price = float(p.get("displayPrice") or 0) or None
+    except (TypeError, ValueError):
+        pass
+
+    # Step prices from slabPriceTiers
+    step_prices = []
+    slab_data = p.get("slabPrices")
+    if slab_data and isinstance(slab_data, dict):
+        tiers = sorted(slab_data.get("slabPriceTiers") or [], key=lambda t: t.get("tier", 0))
+        if tiers and current_price:
+            step_prices = [[1, current_price]] + [
+                [t["quantity"], float(t["priceInVat"])]
+                for t in tiers
+                if t.get("quantity") is not None and t.get("priceInVat") is not None
+            ]
+
+    images = p.get("imageUrls") or []
+
+    return {
+        "success": True,
+        "current_price": current_price,
+        "step_prices": step_prices,
+        "image": images[0] if images else None,
+    }
+
+
 @app.post("/api/products/{sku}/rescrape")
 def rescrape_product(
     sku: str,
@@ -1110,12 +2038,11 @@ def rescrape_product(
     failed = 0
 
     for mp in makro_products:
-        result = scrape_single_url(mp["url"])
+        result = _fetch_makro_price(mp["url"])
         if result["success"]:
-            scraped = result["data"]
-            new_price = scraped.get("current_price")
-            new_step_prices = _json.dumps(scraped.get("step_prices") or [])
-            new_image = (scraped.get("images") or [None])[0]
+            new_price = result.get("current_price")
+            new_step_prices = _json.dumps(result.get("step_prices") or [])
+            new_image = result.get("image")
 
             with get_db() as conn:
                 with conn.cursor() as cur:

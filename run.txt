@@ -44,3 +44,6 @@ CFW
 temp/cfw_products.json
 temp\import_matches.py
 temp\import_to_database.py
+
+backend\update_makro_prices.py
+backend\update_makro_location_prices.py

@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Search, RotateCcw, Settings, Download, Loader2, ChevronDown, X } from 'lucide-react';
+import { Search, RotateCcw, Settings, Download, Loader2, ChevronDown, X, Check } from 'lucide-react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
 import { MultiSelect } from '@/components/ui/MultiSelect';

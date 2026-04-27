@@ -12,6 +12,7 @@ import {
   Package,
   Upload,
   Download,
+  ChevronDown,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { MultiSelect } from "@/components/ui/MultiSelect";

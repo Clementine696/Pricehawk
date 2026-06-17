@@ -12,26 +12,73 @@ Use the template at `ai_sum/past-implement/TEMPLATE.md` as a guide. Cover: what 
 
 ---
 
+## Project Overview
+
+**PriceHawk** started as a home improvement price comparison tool for **Thai Watsadu (TWD)** vs competitors (HomePro, Global House, MegaHome, Do Home). That original codebase lives on the `main` branch.
+
+This branch (`cfw-main` / `cfw-uat`) is a **copy of that codebase adapted for food wholesale**:
+- **CFW** (Central Food Wholesale) = base retailer (replaces TWD)
+- **Makro** = competitor (replaces the home improvement competitors)
+
+The code structure, patterns, and conventions are the same — only the retailer IDs and some schema details differ.
+
+**Hosting**: Frontend → Vercel | Backend → Railway | Database → Neon (serverless PostgreSQL)
+
+---
+
 ## Project Structure
+
 ```
-backend/          # FastAPI + psycopg2 (PostgreSQL) — all API endpoints in main.py
-  services/       # alert_service.py, email_service.py, price_updater.py
-  scraper-url/adws/  # Playwright-based scraper modules
-backend/db_pool.py            # asyncpg connection pool (used by alert/email services)
-backend/location_price_updater.py  # GBH branch price scraper (run as cron)
-backend/update_prices.py     # Cron entry point — calls services/price_updater.py
-backend/alert_checker.py     # Cron entry point — runs alert checks
-ui/               # Next.js 14 App Router, TypeScript, Tailwind CSS
-  src/app/        # Pages (App Router)
-  src/components/ # Shared components (layout, ui)
-  src/lib/api.ts  # apiFetch() utility + auth token helpers
-  src/context/AuthContext.tsx # Auth state management
-database/init/    # SQL schemas (01_schema.sql)
-temp/             # One-off scripts, not deployed
-ai_sum/           # Documentation hub
-  SUMMARY.md      # Main project docs — read this first
-  sessions/       # Session logs
+backend/
+  main.py                     # App entry point — FastAPI init + CORS + router includes
+  main_cfw.py                 # Alternative entry point (same as main.py)
+  database.py                 # get_db() sync connection (psycopg2 + RealDictCursor)
+  db_pool.py                  # asyncpg pool — used by alert/email services only
+  routers/
+    deps.py                   # Shared: sessions dict, get_current_user(), SESSION_EXPIRE_MINUTES
+    auth.py                   # /api/auth/* (login, logout, me, health)
+    dashboard.py              # /api/dashboard/stats, /api/retailers
+    products.py               # /api/products/* (list, detail, export, price-history)
+    matches.py                # /api/matches/* (verify, undo)
+    price_formula.py          # /api/price-formula/*
+    price_by_location.py      # /api/pbl/*
+    alerts.py                 # /api/price-alerts/*
+    categories.py             # /api/categories
+    watchlists.py             # /api/watchlists/*
+    scraper.py                # /api/scrape, /api/*/rescrape, /api/comparison/manual
+  services/
+    alert_service.py          # Price change detection (async)
+    email_service.py          # HTML email builder (async)
+    price_updater.py          # Cron: scrape + update prices
+  scraper-url/adws/           # Playwright scraper modules
+  update_prices.py            # Cron entry point → services/price_updater.py
+  alert_checker.py            # Cron entry point → services/alert_service.py
+  location_price_updater.py   # Makro branch price scraper (cron)
+
+ui/
+  src/app/                    # Next.js 14 App Router pages
+  src/components/
+    layout/Sidebar.tsx        # Navigation — add new pages here
+    ui/Button.tsx             # Shared button component
+    ui/MultiSelect.tsx        # Shared multi-select dropdown
+  src/lib/api.ts              # apiFetch() — auth headers, 401 redirect, timeout
+  src/context/AuthContext.tsx # Auth state
+
+database/
+  cfw/                        # SQL migration files (01_schema.sql → 09_*.sql)
+
+temp/
+  import_match_cfw/           # Match import scripts (not deployed)
+    import_matches_interest.py  # Reusable match importer (see --help)
+    matched_release*.json       # Match datasets — script auto-picks latest
+    interest.txt                # 193 CFW SKUs of interest
+
+ai_sum/
+  SUMMARY.md                  # Main project docs — read this first
+  past-implement/             # Session summaries
 ```
+
+---
 
 ## Development Commands
 
@@ -52,114 +99,118 @@ npm run dev
 npm run build   # Production build (used by Vercel)
 ```
 
-### Price Updater (manual run)
+### Match Import (temp script)
 ```bash
-cd backend
-python services/price_updater.py --parallel 3 --batch-size 50
-python services/price_updater.py --retailer twd --dry-run  # Test without DB writes
-```
+# Auto-detects latest matched_release*.json, imports only interest.txt SKUs
+python temp/import_match_cfw/import_matches_interest.py --dry-run
+python temp/import_match_cfw/import_matches_interest.py
 
-### Location Price Updater (GBH branches)
-```bash
-cd backend
-python location_price_updater.py
+# Options
+--include-review    # Also import review_queue items (score 0.38-0.42)
+--min-score 0.45   # Override score threshold
+--no-interest       # Import all SKUs, not just interest.txt
+--file path.json    # Use specific file instead of auto-detect
 ```
 
 ---
 
 ## Deployment
-- **Frontend**: Vercel — env var `NEXT_PUBLIC_API_URL`
-- **Backend**: Railway — env vars `DATABASE_URL`, `CORS_ORIGINS`, `FRONTEND_URL`
-- **Database**: Neon (serverless PostgreSQL)
-- Backend start: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`
-- Railway uses `nixpacks.toml` to install Playwright/Chromium deps at build time
+
+| | Service | Key Env Vars |
+|--|---------|-------------|
+| Frontend | Vercel | `NEXT_PUBLIC_API_URL=https://<railway-url>` (must include `https://`) |
+| Backend | Railway | `CORS_ORIGINS=https://<vercel-url>` (must include `https://`), `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`, `DB_SSLMODE` |
+| Database | Neon | — |
+
+- Backend start command: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`
+- Railway uses `nixpacks.toml` to install Playwright/Chromium at build time
+- Vercel Framework Preset **must be "Next.js"** (not "Other")
+- **Common CORS mistake**: `CORS_ORIGINS` value must have `https://` prefix — e.g. `https://pricehawk-cfw-nonprod.vercel.app`, not just `pricehawk-cfw-nonprod.vercel.app`
+
+---
 
 ## DB Connection
-Two connection systems exist side by side:
-- **Sync** (`get_db()` in `main.py`): psycopg2 + `RealDictCursor` — used by all API endpoints in `main.py`
-- **Async** (`db_pool.py`): asyncpg pool — used exclusively by `services/alert_service.py` and `services/email_service.py`
 
-Backend reads `backend/.env` for individual vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSLMODE`.
-Scripts in `temp/` can use `temp/.env` if present. `DATABASE_URL` is supported as fallback in `db_pool.py`.
+Two systems side by side:
+- **Sync** (`get_db()` in `backend/database.py`): psycopg2 + `RealDictCursor` — used by all router endpoints
+- **Async** (`db_pool.py`): asyncpg pool — used only by `services/alert_service.py` and `services/email_service.py`
+
+Env vars read from `backend/.env`: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSLMODE`.
+Scripts in `temp/` read from `temp/.env`.
 
 ---
 
 ## Key Conventions
 
 ### Retailer IDs
-- `twd` — Thai Watsadu (base retailer for all comparisons)
-- `gbh` — Global House
-- `dh` — Do Home
-- `hp` — HomePro
-- `btv` — Boonthavorn
-- `mgh` — Mega Home
+- `cfw` — Central Food Wholesale (base retailer)
+- `makro` — Makro (competitor)
 
-### Database Tables
-- `products` — all retailer products (retailer_id + sku + link + current_price; `scrape_fail_count >= 3` = skip)
-- `product_matches` — cross-retailer matches; `verified_by_user=TRUE AND is_same=TRUE` = confirmed match
+### Database Tables (CFW/Makro schema)
+- `products` — all retailer products (`retailer_id` + `sku` + `barcode` + `link` + `current_price`; PK is `id`)
+- `product_matches` — CFW ↔ Makro matches; `is_verified=TRUE` = confirmed match
 - `price_history` — historical prices per product
-- `product_location_prices` — GlobalHouse branch-level prices
-- `location_monitored_groups` / `location_monitored_locations` — GBH branch scraping config
-- `watchlist_sku_groups` / `watchlist_sku_group_products` — SKU-based watchlist feature
-- `users` — session-based auth (7-day expiry, `SESSION_EXPIRE_MINUTES = 10080`)
+- `product_location_prices` — Makro branch-level prices
+- `location_monitored_groups` / `location_monitored_locations` — branch scraping config
+- `watchlist_groups` / `watchlist_group_products` — category-based watchlist
+- `watchlist_sku_groups` / `watchlist_sku_group_products` — SKU-based watchlist
+- `users` — session auth (`SESSION_EXPIRE_MINUTES = 10080`, 7 days)
+
+### product_matches schema (CFW)
+- Uses `is_verified` (single boolean) — NOT `verified_by_user`/`is_same` (that's the TWD schema)
+- Conflict key: `(cfw_product_id, makro_product_id)`
 
 ### Authentication
 - Session-based, 7-day expiry
 - Bearer token in localStorage (primary) + HTTP-only cookie (fallback)
-- All API endpoints require `user: dict = Depends(get_current_user)`
+- All endpoints require `user: dict = Depends(get_current_user)` from `routers/deps.py`
+- Sessions stored in memory dict in `routers/deps.py` — resets on server restart
+
+### SQL Parameterization
+- Use `make_interval(days => %s)` instead of `INTERVAL '%s days'` — psycopg2 quotes the param, breaking the latter
+- Products PK is `id` — never `product_id`
 
 ### Frontend Patterns
 - Primary color: `cyan-500` / `cyan-600`; Success: `emerald-500`; Danger: `red-500`
-- Icons: `lucide-react`
+- Icons: `lucide-react` — always import explicitly (e.g. `import { X, Check, ChevronDown } from 'lucide-react'`)
 - All pages wrapped in `<MainLayout>`
 - Pages using `useSearchParams` must be wrapped in `<Suspense>`
-- `apiFetch()` from `@/lib/api` for all API calls — handles auth headers, 401 redirect, and optional timeout
-- Shared UI components in `ui/src/components/ui/`:
-  - `Button` — use for all action buttons; variants: `primary`, `danger`, `success`, `outline`, `ghost`, `outline-success`, `outline-primary`; props: `loading`, `icon`, `size` (sm/md/lg)
-  - `MultiSelect` — multi-select dropdown; used on products, watchlist-sku, price-by-location pages
+- `apiFetch()` from `@/lib/api` for all API calls
 
 ### Backend Patterns
-- All endpoints in `backend/main.py` (~5000+ lines)
-- Use `get_db()` context manager for DB connections with `RealDictCursor`
+- Router files in `backend/routers/` — one file per feature domain
+- Use `get_db()` from `backend/database.py` for all DB connections
 - Excel exports use `openpyxl`, return as `Response` with `content-disposition` header
-- Scraping runs as subprocess via `subprocess.Popen` (not `subprocess.run`) to allow process tree cleanup
-- `cleanup_zombie_browser_processes()` in `main.py` kills headless Chrome processes safely (checks for `--headless` flag, excludes user-profile Chrome)
-
-### Excel Export Status Logic (consistent across all 3 export functions)
-- All prices equal → `Same Price`, no color
-- TWD uniquely cheapest → `Cheapest`, dark green
-- TWD cheapest tied → `Cheapest (Shared)`, light green
-- TWD uniquely most expensive → `Most Expensive`, dark red
-- TWD most expensive tied → `Most Expensive (Shared)`, light red
-- TWD in middle → blank status
-- Only 1 price → `No Competitor Data`
-
-### "Needs Review" Logic (shared across dashboard, products filter, export filter)
-A retailer needs review if: no verified correct match (`verified_by_user=TRUE AND is_same=TRUE`) AND unreviewed matches exist (`verified_by_user=FALSE`).
-
-### Retailer Name Aliases
-MegaHome stored as "Mega Home" in DB. Alias maps exist in:
-- Frontend: `RETAILER_NAME_ALIASES` in `ui/src/app/products/page.tsx`
-- Backend export: `retailer_aliases` dict in `backend/main.py` (~line 730)
+- Scraping runs as `subprocess.Popen` (not `subprocess.run`) for process tree cleanup
+- `BACKEND_DIR` in `routers/scraper.py` = `os.path.dirname(os.path.dirname(os.path.abspath(__file__)))` (one level up from routers/)
 
 ---
 
 ## Frontend Pages
-- `/login` — auth
-- `/dashboard` — stats overview
-- `/products` — list with search/filter/export; "Watched Only" checkbox; price trend arrows
-- `/products/[id]` — detail with matches, price history chart (Recharts), rescrape button
-- `/comparison` — match verification (search by name or SKU)
-- `/manual-add` — 4-step wizard: input URLs → review → scrape → compare
-- `/watchlist` — category-based watchlist with export
-- `/watchlist-sku` — SKU group watchlist with Excel bulk import/export
-- `/price-by-location` — GBH branch-level price view
-- `/price-by-location/settings` — manage monitored GBH locations
-- `/price-by-location/[sku]` — per-SKU branch prices
+
+| Route | Description |
+|-------|-------------|
+| `/login` | Auth |
+| `/dashboard` | Stats overview |
+| `/products` | List with search/filter/export; price trend arrows |
+| `/products/[id]` | Detail: price history chart (Recharts), matches, rescrape |
+| `/comparison` | Match verification (search by name or SKU) |
+| `/manual-add` | 4-step wizard: URLs → review → scrape → compare |
+| `/watchlist` | Category-based watchlist with export |
+| `/watchlist-sku` | SKU group watchlist with Excel bulk import/export |
+| `/price-by-location` | Makro branch-level price view |
+| `/price-by-location/settings` | Manage monitored branches |
+| `/price-formula` | Price formula configuration per match |
+| `/alert` | Price alert email recipients |
 
 ## Important Files
-- `backend/main.py` — all API endpoints (~4800+ lines)
-- `backend/services/email_service.py` — email alert HTML builder
-- `backend/services/alert_service.py` — price change detection logic
-- `ui/src/components/layout/Sidebar.tsx` — navigation (add new pages here)
-- `database/init/01_schema.sql` — DB schema
+
+| File | Purpose |
+|------|---------|
+| `backend/main.py` | App entry — router includes, CORS setup |
+| `backend/routers/deps.py` | Shared auth state + `get_current_user()` |
+| `backend/routers/products.py` | Products list, detail, export, price history |
+| `backend/database.py` | `get_db()` sync connection |
+| `ui/src/components/layout/Sidebar.tsx` | Navigation — add new routes here |
+| `ui/src/lib/api.ts` | `apiFetch()` with auth + timeout |
+| `database/cfw/01_schema.sql` | Base DB schema |
